@@ -1,0 +1,200 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>User Dashboard - WAI</title>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Roboto:ital,wght@0,100..900;1,100..900&display=swap');
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+            font-family: "Roboto", sans-serif;
+        }  
+        body {
+            margin: 0;
+            font-family: Arial, sans-serif;
+            background: #f5f7fa;
+            display: flex;
+            height: 100vh;
+        }
+        .sidebar {
+            width: 220px;
+            background: #cbcbcb33;
+            color: #000;
+            padding-top: 20px;
+            display: flex;
+            flex-direction: column;
+        }
+        .sidebar h2 {
+            text-align: center;
+            margin-bottom: 30px;
+        }
+        .sidebar button {
+            background: none;
+            border: 1px solid #7B83EB;
+            color: #7b83eb;
+            padding: 7px 15px;
+            text-align: left;
+            font-size: 14px;
+            cursor: pointer;
+            transition: background 0.3s;
+            margin: 15px;
+            border-radius: 5px;
+        }
+        .sidebar button:hover {
+            background: #7B83EB;
+            color: #fff;
+        }
+        .main {
+            flex: 1;
+            padding: 20px;
+            overflow-y: auto;
+        }
+        .dasboard-title {
+            text-align: center;
+        }
+        .card {
+            background: #fff;
+            padding: 20px;
+            border-radius: 12px;
+            box-shadow: 0 4px 8px rgba(0,0,0,0.05);
+            max-width: 700px;
+        }
+        .card h3 {
+            margin-top: 0;
+        }
+        .btn {
+            background: none;
+            color: #7B83EB;
+            padding: 10px 15px;
+            border: 1px solid #7B83EB;
+            border-radius: 6px;
+            cursor: pointer;
+            margin-right: 10px;
+        }
+        .btn:hover {
+            background: #7B83EB;
+            color: #fff;
+        }
+        .sidebar .username {
+            text-align: center;
+            font-size: 16px;
+            margin-bottom: 20px;
+            color: #333;
+        }
+                .sidebar .signout-btn {
+            margin-top: auto; /* Push to bottom of sidebar */
+        }
+    </style>
+</head>
+<body>
+    <div class="sidebar">
+        <h2>∞ Tychons <span class="logo">wi</span></h2>
+        <div class="username">Welcome, {{ session['username'] | default('User') }}</div>
+        <button class="chatbot-btn" onclick="connectToChatbot()">Chatbot</button>
+        <button class="signout-btn" onclick="window.location.href='/auth/logout'">Sign Out</button>
+
+    </div>
+
+    <div class="main" id="main-content">
+        <div class="dasboard-title">
+            <h2>User Dashboard</h2>
+            <p>Welcome, {{ session['username'] | default('User') }}! Access your chatbot from the sidebar.</p>
+        </div>
+    </div>
+
+    <link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/npm/toastify-js/src/toastify.min.css">
+    <script type="text/javascript" src="https://cdn.jsdelivr.net/npm/toastify-js"></script>
+    <script>
+        function showSuccessMessage(message) {
+            Toastify({
+                text: message,
+                backgroundColor: "#48bb78", // green
+                gravity: "top",
+                position: "center",
+                duration: 2000
+            }).showToast();
+        }
+
+        function showErrorMessage(message) {
+            Toastify({
+                text: message,
+                backgroundColor: "#f56565", // red
+                gravity: "top",
+                position: "center",
+                duration: 2000
+            }).showToast();
+        }
+
+        function connectVanna(workspaceId) {
+            fetch(`/get_workspace/${workspaceId}`, {
+                method: 'GET',
+                headers: { 'Content-Type': 'application/json' }
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.error) {
+                    showErrorMessage(data.error || 'Failed to fetch workspace data.');
+                    return;
+                }
+                const requestData = {
+                    workspace_id: workspaceId,
+                    llm_details: {
+                        model_name: data.llm_config.model_name || '',
+                        model_type: data.llm_config.model_type || '',
+                        api_key: data.llm_config.api_key || '',
+                        base_url: data.llm_config.ollama_base_url || ''
+                    },
+                    db_details: {
+                        serverName: data.db_config.serverName || '',
+                        port: data.db_config.port || '',
+                        databaseName: data.db_config.databaseName || '',
+                        username: data.db_config.username || '',
+                        password: data.db_config.password || ''
+                    },
+                    teams_config: {
+                        webhookUrl: data.teams_config?.webhookUrl || '',
+                        callbackUrl: data.teams_config?.callbackUrl || ''
+                    }
+                };
+                return fetch('/connect-vanna', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(requestData)
+                });
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.success) {
+                    showSuccessMessage(data.message || 'Connected to Vanna successfully!');
+                    setTimeout(() => {
+                        window.location.href = `/home?workspace_id=${workspaceId}`;
+                    }, 1000);
+                } else {
+                    showErrorMessage(data.error || 'Failed to connect to Vanna.');
+                }
+            })
+            .catch(error => showErrorMessage('Error connecting to Vanna: ' + error));
+        }
+
+        function connectToChatbot() {
+            fetch('/api/get_user_workspace_id')
+                .then(response => response.json())
+                .then(data => {
+                    if (data.error) {
+                        showErrorMessage(data.error || 'Failed to fetch workspace ID.');
+                        return;
+                    }
+                    const workspaceId = data.workspace_id;
+                    if (workspaceId) {
+                        connectVanna(workspaceId);
+                    } else {
+                        showErrorMessage('No workspace ID found for user.');
+                    }
+                })
+                .catch(error => showErrorMessage('Error fetching workspace ID: ' + error));
+        }
+    </script>
+</body>
+</html>

@@ -1,0 +1,35 @@
+# Secrets
+.env
+
+# Virtual environments (rebuild from requirements.txt, never commit)
+venv/
+venv_py314/
+
+# Backups made during migration work
+vanna_customized_backup_*/
+
+# ChromaDB local data stores (contain real user password hashes / workspace data)
+chroma/
+chroma_db/
+chroma.sqlite3
+chromadb_store/
+
+# ChromaDB HNSW segment folders (UUID-named directories at project root)
+[0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f]-[0-9a-f][0-9a-f][0-9a-f][0-9a-f]-[0-9a-f][0-9a-f][0-9a-f][0-9a-f]-[0-9a-f][0-9a-f][0-9a-f][0-9a-f]-[0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f]/
+
+# Logs
+Logs/
+*.log
+
+# Diagnostic/migration scratch files
+pip_install_log*.txt
+pip_failed_packages.txt
+pip_still_failed.txt
+
+# Python
+__pycache__/
+*.pyc
+
+# Editor/tooling
+.vscode/
+.claude/

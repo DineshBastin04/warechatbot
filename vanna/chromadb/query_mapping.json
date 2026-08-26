@@ -1,0 +1,774 @@
+{
+  "vendor_summary": {
+    "table": "t_vendor",
+    "columns": [
+      "vendor_id",
+      "vendor_code",
+      "vendor_name",
+      "inspection_flag",
+      "ownership_control",
+      "audit_percent",
+      "vqm_profile"
+    ],
+    "conditions": {
+      "JOIN": [
+        "t_po_master ON t_vendor.vendor_code = t_po_master.vendor_code",
+        "t_receipt ON t_vendor.vendor_code = t_receipt.vendor_code",
+        "t_transfer_receipt ON t_vendor.vendor_code = t_transfer_receipt.vendor_code",
+        "t_unknown_receipt ON t_vendor.vendor_code = t_unknown_receipt.vendor_code",
+        "t_isn_outbound_receipt ON t_vendor.vendor_code = t_isn_outbound_receipt.vendor_code",
+        "t_al_host_receipt ON t_vendor.vendor_code = t_al_host_receipt.vendor_code",
+        "t_vendor_asn_master ON t_vendor.vendor_code = t_vendor_asn_master.vendor_code",
+        "t_item_master ON t_vendor.vendor_name = t_item_master.vendor"
+      ],
+      "WHERE": "t_vendor.audit_percent > 0 OR t_vendor.inspection_flag IN ('YES', 'Y')"
+    },
+    "description": "Technical query for This data represents vendor or supplier master information in the WMS. The 't_vendor' table stores vendor identification, inspection settings, ownership control, and audit details. It joins directly with key operational tables like purchase orders, receipts, transfers, ASNs, and items to maintain end-to-end traceability of supplier activities. This information supports procurement, inbound processing, and quality control workflows."
+  },
+  "item_comment_summary": {
+    "table": "t_item_comment",
+    "columns": [
+      "item_number",
+      "wh_id",
+      "activity_type",
+      "comment_seq",
+      "comment_text"
+    ],
+    "conditions": {
+      "JOIN": [
+        "t_adjustment_comment ON t_item_comment.item_number = t_adjustment_comment.item_number AND t_item_comment.wh_id = t_adjustment_comment.wh_id",
+        "t_bom_detail ON t_item_comment.item_number = t_bom_detail.item_number AND t_item_comment.wh_id = t_bom_detail.wh_id",
+        "t_bulk_pick_summary ON t_item_comment.item_number = t_bulk_pick_summary.item_number AND t_item_comment.wh_id = t_bulk_pick_summary.wh_id",
+        "t_container ON t_item_comment.item_number = t_container.item_number AND t_item_comment.wh_id = t_container.wh_id",
+        "t_container_prod ON t_item_comment.item_number = t_container_prod.item_number AND t_item_comment.wh_id = t_container_prod.wh_id",
+        "t_cycle_count ON t_item_comment.item_number = t_cycle_count.item_number AND t_item_comment.wh_id = t_cycle_count.wh_id",
+        "t_flash_kit_unpick ON t_item_comment.item_number = t_flash_kit_unpick.item_number AND t_item_comment.wh_id = t_flash_kit_unpick.wh_id",
+        "t_fwd_pick ON t_item_comment.item_number = t_fwd_pick.item_number AND t_item_comment.wh_id = t_fwd_pick.wh_id",
+        "t_hu_detail ON t_item_comment.item_number = t_hu_detail.item_number AND t_item_comment.wh_id = t_hu_detail.wh_id",
+        "t_hu_uom ON t_item_comment.item_number = t_hu_uom.item_number AND t_item_comment.wh_id = t_hu_uom.wh_id",
+        "t_invoice_detail ON t_item_comment.item_number = t_invoice_detail.item_number AND t_item_comment.wh_id = t_invoice_detail.wh_id",
+        "t_isn_inventory_adjustments ON t_item_comment.item_number = t_isn_inventory_adjustments.item_number AND t_item_comment.wh_id = t_isn_inventory_adjustments.wh_id",
+        "t_isn_item_dim_validation ON t_item_comment.item_number = t_isn_item_dim_validation.item_number AND t_item_comment.wh_id = t_isn_item_dim_validation.wh_id",
+        "t_isn_item_number_conversion ON t_item_comment.item_number = t_isn_item_number_conversion.old_item_number",
+        "t_isn_item_update ON t_item_comment.item_number = t_isn_item_update.item_number AND t_item_comment.wh_id = t_isn_item_update.wh_id",
+        "t_isn_item_velocity ON t_item_comment.item_number = t_isn_item_velocity.item_number AND t_item_comment.wh_id = t_isn_item_velocity.wh_id",
+        "t_isn_outbound_receipt ON t_item_comment.item_number = t_isn_outbound_receipt.item_number AND t_item_comment.wh_id = t_isn_outbound_receipt.wh_id",
+        "t_isn_serial_number ON t_item_comment.item_number = t_isn_serial_number.item_number AND t_item_comment.wh_id = t_isn_serial_number.wh_id",
+        "t_isn_short_shipped_items ON t_item_comment.item_number = t_isn_short_shipped_items.item_number AND t_item_comment.wh_id = t_isn_short_shipped_items.wh_id",
+        "t_item_image ON t_item_comment.item_number = t_item_image.item_number AND t_item_comment.wh_id = t_item_image.wh_id",
+        "t_item_master ON t_item_comment.item_number = t_item_master.item_number AND t_item_comment.wh_id = t_item_master.wh_id",
+        "t_item_uom ON t_item_comment.item_number = t_item_uom.item_number AND t_item_comment.wh_id = t_item_uom.wh_id",
+        "t_item_upc ON t_item_comment.item_number = t_item_upc.item_number AND t_item_comment.wh_id = t_item_upc.wh_id",
+        "t_item_vendor ON t_item_comment.item_number = t_item_vendor.item_number AND t_item_comment.wh_id = t_item_vendor.wh_id",
+        "t_lithium ON t_item_comment.item_number = t_lithium.item_number",
+        "t_order_detail ON t_item_comment.item_number = t_order_detail.item_number AND t_item_comment.wh_id = t_order_detail.wh_id",
+        "t_order_detail_comment ON t_item_comment.item_number = t_order_detail_comment.item_number AND t_item_comment.wh_id = t_order_detail_comment.wh_id",
+        "t_order_uom ON t_item_comment.item_number = t_order_uom.item_number AND t_item_comment.wh_id = t_order_uom.wh_id",
+        "t_pick_detail ON t_item_comment.item_number = t_pick_detail.item_number AND t_item_comment.wh_id = t_pick_detail.wh_id",
+        "t_po_detail ON t_item_comment.item_number = t_po_detail.item_number AND t_item_comment.wh_id = t_po_detail.wh_id",
+        "t_receipt ON t_item_comment.item_number = t_receipt.item_number AND t_item_comment.wh_id = t_receipt.wh_id",
+        "t_returns ON t_item_comment.item_number = t_returns.item_number AND t_item_comment.wh_id = t_returns.wh_id",
+        "t_robot_job_q ON t_item_comment.item_number = t_robot_job_q.item_number AND t_item_comment.wh_id = t_robot_job_q.wh_id"
+      ],
+      "WHERE": "t_item_comment.comment_text IS NOT NULL"
+    },
+    "description": "The 't_item_comment' table stores comments or notes associated with inventory items in the WMS. It links to multiple operational tables that track items in adjustments, BOMs, picks, containers, shipments, serial numbers, and orders. This enables end-to-end traceability of item-related events and commentary for reporting, audit, and operational analysis."
+  },
+  "hu_detail_master": {
+    "table": "t_hu_detail",
+    "columns": [
+      "hu_id",
+      "item_number",
+      "actual_qty",
+      "planned_qty",
+      "loaded_qty",
+      "qty_received",
+      "status",
+      "wh_id",
+      "location_id",
+      "fifo_date",
+      "expiration_date",
+      "lot_number",
+      "serial_number",
+      "inspection_code",
+      "line_number",
+      "ver_flag",
+      "picking_flow",
+      "employee_id",
+      "sequence",
+      "freight_class_id",
+      "commodity_type_id",
+      "owner_id",
+      "storage_type"
+    ],
+    "conditions": {
+      "JOIN": [
+        "t_hu_master ON t_hu_detail.hu_id = t_hu_master.hu_id AND t_hu_detail.wh_id = t_hu_master.wh_id",
+        "t_adjustment_comment ON t_hu_detail.hu_id = t_adjustment_comment.hu_id AND t_hu_detail.item_number = t_adjustment_comment.item_number AND t_hu_detail.wh_id = t_adjustment_comment.wh_id AND t_hu_detail.location_id = t_adjustment_comment.location_id",
+        "t_employee ON t_hu_detail.employee_id = t_employee.id AND t_hu_detail.wh_id = t_employee.wh_id",
+        "t_exception_log ON t_hu_detail.hu_id = t_exception_log.hu_id AND t_hu_detail.item_number = t_exception_log.item_number AND t_hu_detail.wh_id = t_exception_log.wh_id AND t_hu_detail.location_id = t_exception_log.location_id AND t_hu_detail.line_number = t_exception_log.line_number",
+        "t_flash_kit_unpick ON t_hu_detail.hu_id = t_flash_kit_unpick.hu_id AND t_hu_detail.item_number = t_flash_kit_unpick.item_number AND t_hu_detail.wh_id = t_flash_kit_unpick.wh_id AND t_hu_detail.location_id = t_flash_kit_unpick.location_id AND t_hu_detail.line_number = t_flash_kit_unpick.line_number",
+        "t_hu_uom ON t_hu_detail.hu_id = t_hu_uom.hu_id AND t_hu_detail.item_number = t_hu_uom.item_number AND t_hu_detail.wh_id = t_hu_uom.wh_id AND t_hu_detail.line_number = t_hu_uom.line_number AND t_hu_detail.lot_number = t_hu_uom.lot_number",
+        "t_isn_outbound_receipt ON t_hu_detail.hu_id = t_isn_outbound_receipt.hu_id AND t_hu_detail.item_number = t_isn_outbound_receipt.item_number AND t_hu_detail.wh_id = t_isn_outbound_receipt.wh_id AND t_hu_detail.line_number = t_isn_outbound_receipt.line_number",
+        "t_isn_serial_number ON t_hu_detail.hu_id = t_isn_serial_number.hu_id AND t_hu_detail.item_number = t_isn_serial_number.item_number AND t_hu_detail.wh_id = t_isn_serial_number.wh_id AND t_hu_detail.line_number = t_isn_serial_number.line_number AND t_hu_detail.serial_number = t_isn_serial_number.serial_number",
+        "t_shipment_track ON t_hu_detail.hu_id = t_shipment_track.hu_id AND t_hu_detail.item_number = t_shipment_track.item_number",
+        "t_tran_log ON t_hu_detail.hu_id = t_tran_log.hu_id AND t_hu_detail.item_number = t_tran_log.item_number AND t_hu_detail.wh_id = t_tran_log.wh_id AND t_hu_detail.location_id = t_tran_log.location_id AND t_hu_detail.line_number = t_tran_log.line_number"
+      ]
+    },
+    "description": "This data represents the details of handling units (HUs) in the warehouse. It includes quantities, status, location, lot/serial numbers, ownership, and other operational attributes. It is essential for tracking, receiving, putaway, picking, shipping, and inventory adjustments in WMS workflows. Users may refer to it as HU detail, unit-level inventory, or warehouse stock record."
+  },
+  "pick_task_uom_summary": {
+    "table": "t_pick_task_uom",
+    "columns": [
+      "wh_id",
+      "cartonization_batch_id",
+      "planned_actual",
+      "line_number",
+      "pick_id",
+      "item_number",
+      "lot_number",
+      "uom",
+      "pattern",
+      "qty"
+    ],
+    "conditions": {
+      "JOIN": [
+        "t_pick_detail ON t_pick_task_uom.pick_id = t_pick_detail.pick_id",
+        "t_item_master ON t_pick_task_uom.item_number = t_item_master.item_number",
+        "t_stored_item ON t_pick_task_uom.item_number = t_stored_item.lot_number",
+        "t_cartonization_batch ON t_pick_task_uom.cartonization_batch_id = t_cartonization_batch.cartonization_batch_id"
+      ],
+      "WHERE": "t_pick_task_uom.qty > 0 AND t_pick_task_uom.planned_actual IN ('P') AND t_pick_task_uom.wh_id IS NOT NULL AND t_pick_detail.status NOT IN ('CANCELLED', 'VOID') AND t_item_master.status = 'ACTIVE' AND t_wh.status = 'ACTIVE'"
+    },
+    "description": "Technical query for This data represents the Unit of Measure (UOM) and quantity information for each pick task line in warehouse operations. The 't_pick_task_uom' table captures item-level picking details such as warehouse ID, lot number, cartonization batch, and planned vs actual quantities. It joins with 't_pick_detail' for task context, 't_item_master' for item reference, 't_wh' for warehouse data, 't_lot_master' for lot traceability, and 't_cartonization_batch' for carton grouping. This data supports cartonization validation, inventory accuracy, and analysis of pick efficiency in WMS workflows."
+  },
+  "message_summary": {
+    "table": "t_message",
+    "columns": [
+      "message_id",
+      "employee",
+      "wh_id",
+      "dept",
+      "message",
+      "priority",
+      "create_date",
+      "create_time",
+      "read_date",
+      "read_time",
+      "respond_date",
+      "respond_time",
+      "req_response",
+      "response",
+      "msg_read"
+    ],
+    "conditions": {
+      "JOIN": [
+        "t_emp_equipment ON t_message.employee = t_emp_equipment.employee_id AND t_message.wh_id = t_emp_equipment.wh_id",
+        "t_employee ON t_message.employee = t_employee.employee_id"
+      ],
+      "WHERE": "t_message.msg_read IN ('Y', 'N') AND t_message.wh_id IS NOT NULL AND t_message.employee IS NOT NULL"
+    },
+    "description": "Technical query for message tracking in warehouse operations. The 't_message' table captures messages sent to employees, including message content, priority, creation timestamps, read and response status. It joins with 't_emp_equipment' to validate employee and warehouse association, and with 't_wh' to ensure messages are linked to active warehouses. This data supports monitoring communication efficiency, tracking required responses, and maintaining operational accountability."
+  },
+  "printer_summary": {
+    "table": "t_printer",
+    "columns": [
+      "wh_id",
+      "printer_id",
+      "printer_name",
+      "folder",
+      "name_file",
+      "type",
+      "separator",
+      "name_label",
+      "name_label_batch",
+      "pick_area",
+      "status",
+      "commander_printer_name",
+      "printer_type",
+      "network_name",
+      "label_report"
+    ],
+    "conditions": {
+      "JOIN": [
+        "t_kitting_station ON t_printer.printer_id = t_kitting_station.label_printer_id AND t_printer.wh_id = t_kitting_station.wh_id",
+        "t_labels_being_printed ON t_printer.printer_name = t_labels_being_printed.printer_name AND t_printer.wh_id = t_labels_being_printed.wh_id",
+        "t_manifest_station ON t_printer.printer_id IN (t_manifest_station.packing_label_printer_id, t_manifest_station.shipping_label_printer_id, t_manifest_station.invoice_printer_id, t_manifest_station.return_printer_id) AND t_printer.wh_id = t_manifest_station.wh_id",
+        "t_return_station ON t_printer.printer_id IN (t_return_station.item_label_printer_id, t_return_station.report_printer_id) AND t_printer.wh_id = t_return_station.wh_id"
+      ],
+      "WHERE": "t_printer.status = 'A' AND t_printer.wh_id IS NOT NULL"
+    },
+    "description": "Technical query for printer management in warehouse operations. The 't_printer' table stores details of printers including type, network location, label templates, and printer status. It joins with 't_kitting_station' for kit printing assignments, 't_labels_being_printed' for ongoing label jobs, 't_manifest_station' for packing and shipping label assignments, and 't_return_station' for returns-related printing. This data ensures traceability, proper printer usage, and supports efficient warehouse labeling and cartonization processes."
+  },
+  "whse_control_summary": {
+    "table": "t_whse_control",
+    "columns": [
+      "control_type",
+      "wh_id",
+      "description",
+      "control_value_text",
+      "control_value_num"
+    ],
+    "conditions": {
+      "JOIN": [],
+      "WHERE": "wh_id IS NOT NULL"
+    },
+    "description": "Technical query for warehouse control settings. The 't_whse_control' table stores configuration and control parameters for each warehouse, including numeric and text-based control values. It is used to manage warehouse-level operational rules, limits, and settings that govern workflows, inventory handling, and process validations."
+  },
+  "system_summary": {
+    "table": "t_system",
+    "columns": [
+      "system_id",
+      "system_name",
+      "go_live",
+      "address1",
+      "address2",
+      "address3",
+      "city",
+      "state",
+      "zip",
+      "country",
+      "phone",
+      "fax",
+      "email"
+    ],
+    "conditions": {
+      "JOIN": [],
+      "WHERE": "system_id IS NOT NULL"
+    },
+    "description": "Technical query for system master data. The 't_system' table stores information about each system instance including its identifier, name, go-live date, and contact information. This data is used to manage and reference systems within the WMS environment and support administrative, reporting, and communication workflows."
+  },
+  "label_summary": {
+    "table": "t_label",
+    "columns": [
+      "pick_id",
+      "label_id",
+      "label_status",
+      "batch_id",
+      "print_sequence"
+    ],
+    "conditions": {
+      "JOIN": [
+        "t_bulk_pick_summary ON t_label.pick_id = t_bulk_pick_summary.pick_id",
+        "t_flash_kit_unpick ON t_label.pick_id = t_flash_kit_unpick.pick_id",
+        "t_label_confirm ON t_label.label_id = t_label_confirm.label_id",
+        "t_order_uom ON t_label.pick_id = t_order_uom.pick_id",
+        "t_pick_detail ON t_label.pick_id = t_pick_detail.pick_id",
+        "t_pick_task_uom ON t_label.pick_id = t_pick_task_uom.pick_id",
+        "t_post_pick ON t_label.pick_id = t_post_pick.pick_id",
+        "t_short_pick_pkd ON t_label.pick_id = t_short_pick_pkd.pick_id"
+      ],
+      "WHERE": "t_label.label_status IN ('PRINTED', 'PENDING') AND t_label.pick_id IS NOT NULL"
+    },
+    "description": "Technical query for label tracking in warehouse operations. The 't_label' table captures information for each pick task label, including its unique ID, associated pick, batch, print sequence, and current status. It joins with related tables such as pick summaries, flash kit unpicks, pick confirmations, order UOM, pick details, and post picks to ensure end-to-end traceability of label creation, printing, and processing. This supports workflow validation, cartonization checks, and operational reporting in WMS."
+  },
+  "menu_summary": {
+    "table": "t_menu",
+    "columns": [
+      "menu_id",
+      "locale_id",
+      "area_id",
+      "menu_level",
+      "name",
+      "sequence",
+      "text",
+      "process"
+    ],
+    "conditions": {
+      "JOIN": [
+        "t_employee ON t_menu.menu_level = t_employee.menu_level AND t_menu.locale_id = t_employee.locale_id",
+        "t_locale ON t_menu.locale_id = t_locale.locale_id",
+        "t_lookup ON t_menu.locale_id = t_lookup.locale_id",
+        "t_menu_pick_method ON t_menu.menu_level = t_menu_pick_method.menu_level"
+      ],
+      "WHERE": "t_menu.menu_level IS NOT NULL AND t_locale.status = 'ACTIVE'"
+    },
+    "description": "Technical query for menu configuration in the WMS. The 't_menu' table stores the definitions of menus including menu ID, locale, area, level, name, sequence, display text, and associated process. It joins with 't_employee' to determine which users can access specific menu levels, with 't_locale' to filter active locales, with 't_lookup' for text descriptions, and with 't_menu_pick_method' for menu-specific pick method configurations. This supports dynamic menu rendering and user access control in warehouse applications."
+  },
+  "country_summary": {
+    "table": "t_country",
+    "columns": [
+      "country_id",
+      "country_name",
+      "country_abbr"
+    ],
+    "conditions": {
+      "JOIN": [],
+      "WHERE": "country_id IS NOT NULL"
+    },
+    "description": "Technical query for country information in the system. The 't_country' table stores the unique country ID, country name, and country abbreviation. This table is standalone and does not have common columns with other tables. It supports country reference, localization, and reporting in WMS and related applications."
+  },
+  "region_summary": {
+    "table": "t_region",
+    "columns": [
+      "region_id",
+      "region_name",
+      "country_id",
+      "region_abbr"
+    ],
+    "conditions": {
+      "JOIN": [],
+      "WHERE": "region_id IS NOT NULL AND country_id IS NOT NULL"
+    },
+    "description": "Technical query for region information in the system. The 't_region' table stores the unique region ID, region name, associated country ID, and region abbreviation. This table is standalone and does not have common columns with other tables. It supports regional reference, localization, and reporting in WMS and related applications."
+  },
+  "locale_date_format_summary": {
+    "table": "t_locale_date_format",
+    "columns": [
+      "locale_id",
+      "date_format"
+    ],
+    "conditions": {
+      "JOIN": [
+        "t_employee ON t_locale_date_format.locale_id = t_employee.locale_id",
+        "t_locale ON t_locale_date_format.locale_id = t_locale.locale_id",
+        "t_lookup ON t_locale_date_format.locale_id = t_lookup.locale_id",
+        "t_menu ON t_locale_date_format.locale_id = t_menu.locale_id"
+      ],
+      "WHERE": "t_locale_date_format.locale_id IS NOT NULL"
+    },
+    "description": "Technical query for locale-specific date formats in the WMS. The 't_locale_date_format' table stores the mapping of each locale to its corresponding date format. It joins with 't_employee' to apply locale-based settings for users, with 't_locale' to fetch locale information, with 't_lookup' for locale-specific text, and with 't_menu' to support menu localization. This is used for date display, reporting, and localization in warehouse applications."
+  },
+  "pick_area_summary": {
+    "table": "t_pick_area",
+    "columns": [
+      "pick_area",
+      "wh_id",
+      "target_pick_percent",
+      "work_type",
+      "description",
+      "container_class"
+    ],
+    "conditions": {
+      "JOIN": [
+        "t_employee ON t_pick_area.pick_area = t_employee.pick_area AND t_pick_area.wh_id = t_employee.wh_id",
+        "t_item_uom ON t_pick_area.wh_id = t_item_uom.wh_id",
+        "t_location ON t_pick_area.wh_id = t_location.wh_id AND t_pick_area.pick_area = t_location.pick_area",
+        "t_pick_detail ON t_pick_area.pick_area = t_pick_detail.pick_area AND t_pick_area.wh_id = t_pick_detail.wh_id",
+        "t_printer ON t_pick_area.pick_area = t_printer.pick_area AND t_pick_area.wh_id = t_printer.wh_id",
+        "t_slot_actual ON t_pick_area.pick_area = t_slot_actual.pick_area AND t_pick_area.wh_id = t_slot_actual.wh_id",
+        "t_slot_actual_hold ON t_pick_area.pick_area = t_slot_actual_hold.pick_area AND t_pick_area.wh_id = t_slot_actual_hold.wh_id",
+        "t_slot_available_locs ON t_pick_area.pick_area = t_slot_available_locs.pick_area AND t_pick_area.wh_id = t_slot_available_locs.wh_id",
+        "t_slot_recommendation ON t_pick_area.pick_area = t_slot_recommendation.pick_area AND t_pick_area.wh_id = t_slot_recommendation.wh_id",
+        "t_slot_user_analysis_params ON t_pick_area.pick_area = t_slot_user_analysis_params.pick_area AND t_pick_area.wh_id = t_slot_user_analysis_params.wh_id"
+      ],
+      "WHERE": "t_pick_area.pick_area IS NOT NULL AND t_pick_area.wh_id IS NOT NULL"
+    },
+    "description": "Technical query for warehouse pick area configuration. The 't_pick_area' table stores details such as pick area code, warehouse ID, target pick percentage, work type, description, and container class. It joins with 't_employee' to map employee assignment, 't_item_uom' for item unit-of-measure constraints, 't_location' for location mapping, 't_pick_detail' for pick transactions, 't_printer' for label printing configurations, and various slot and recommendation tables for slotting and labor analysis. This supports warehouse operations, picking efficiency, and resource planning."
+  },
+  "employee_prod_stds_summary": {
+    "table": "t_employee_prod_stds",
+    "columns": [
+      "employee_id",
+      "tran_type",
+      "fixed_std",
+      "dynamic_std",
+      "dynamic_std_date"
+    ],
+    "conditions": {
+      "JOIN": [
+        "t_emp_equipment ON t_employee_prod_stds.employee_id = t_emp_equipment.employee_id",
+        "t_exception_log ON t_employee_prod_stds.employee_id = t_exception_log.employee_id AND t_employee_prod_stds.tran_type = t_exception_log.tran_type",
+        "t_hu_detail ON t_employee_prod_stds.employee_id = t_hu_detail.employee_id",
+        "t_hu_detail_snapshot ON t_employee_prod_stds.employee_id = t_hu_detail_snapshot.employee_id",
+        "t_isn_asn_header ON t_employee_prod_stds.employee_id = t_isn_asn_header.employee_id",
+        "t_isn_asn_package_detail ON t_employee_prod_stds.employee_id = t_isn_asn_package_detail.hud_employee_id",
+        "t_kit_complete ON t_employee_prod_stds.employee_id = t_kit_complete.employee_id",
+        "t_kship_shipment ON t_employee_prod_stds.employee_id = t_kship_shipment.employee_id",
+        "t_mp_shipment ON t_employee_prod_stds.employee_id = t_mp_shipment.employee_id",
+        "t_return_receipt ON t_employee_prod_stds.employee_id = t_return_receipt.employee_id",
+        "t_tran_log ON t_employee_prod_stds.employee_id = t_tran_log.employee_id",
+        "t_tran_missing ON t_employee_prod_stds.employee_id = t_tran_missing.employee_id",
+        "t_unknown_receipt ON t_employee_prod_stds.employee_id = t_unknown_receipt.receipt_employee_id",
+        "t_wave_assignment ON t_employee_prod_stds.employee_id = t_wave_assignment.employee_id",
+        "t_wave_master_audit ON t_employee_prod_stds.employee_id = t_wave_master_audit.employee_id",
+        "t_wms_transaction_log ON t_employee_prod_stds.employee_id = t_wms_transaction_log.employee_id",
+        "t_work_q ON t_employee_prod_stds.employee_id = t_work_q.employee_id"
+      ],
+      "WHERE": "t_employee_prod_stds.employee_id IS NOT NULL"
+    },
+    "description": "The 't_employee_prod_stds' table stores productivity standards for employees, including fixed and dynamic standards, along with the date of the dynamic standard. It joins with tables such as 't_emp_equipment' for assigned equipment, 't_exception_log' for transaction exceptions, 't_hu_detail' and snapshots for handling unit details, 't_isn_asn_header' and package details for ASN processing, 't_kit_complete' for kit completion records, 't_kship_shipment' and 't_mp_shipment' for shipment activities, 't_return_receipt' and 't_unknown_receipt' for returns and unidentified receipts, 't_tran_log' and 't_wms_transaction_log' for transaction logs, 't_tran_missing' for missing transactions, 't_wave_assignment' and 't_wave_master_audit' for wave activities, and 't_work_q' for work queue assignments. This supports tracking, analyzing, and planning employee productivity in warehouse operations."
+  },
+  "uom_summary": {
+    "table": "t_uom",
+    "columns": [
+      "uom",
+      "max_quantity"
+    ],
+    "conditions": {
+      "JOIN": [
+        "t_fwd_pick ON t_uom.uom = t_fwd_pick.uom",
+        "t_hu_uom ON t_uom.uom = t_hu_uom.uom",
+        "t_isn_asn_detail ON t_uom.uom = t_isn_asn_detail.itu_uom",
+        "t_item_master ON t_uom.uom = t_item_master.uom",
+        "t_item_uom ON t_uom.uom = t_item_uom.uom",
+        "t_order_detail ON t_uom.uom = t_order_detail.order_uom",
+        "t_order_uom ON t_uom.uom = t_order_uom.uom",
+        "t_pick_detail ON t_uom.uom = t_pick_detail.uom",
+        "t_pick_task_uom ON t_uom.uom = t_pick_task_uom.uom",
+        "t_po_detail ON t_uom.uom = t_po_detail.order_uom",
+        "t_receipt ON t_uom.uom = t_receipt.receipt_uom",
+        "t_returns ON t_uom.uom = t_returns.return_uom",
+        "t_tran_log ON t_uom.uom = t_tran_log.uom"
+      ],
+      "WHERE": "t_uom.uom IS NOT NULL"
+    },
+    "description": "Technical query to map unit-of-measure (UOM) data across multiple warehouse tables. The 't_uom' table stores the UOM codes and their maximum quantities. It joins with transaction tables like 't_fwd_pick', 't_hu_uom', 't_isn_asn_detail', 't_order_detail', 't_receipt', and others to standardize UOMs across picking, receiving, orders, and inventory. This ensures consistent quantity calculations, reporting, and warehouse operations."
+  },
+  "kship_shipment_summary": {
+    "table": "t_kship_shipment",
+    "columns": [
+      "kship_shipment_number",
+      "wh_id",
+      "order_number",
+      "carrier_code",
+      "carrier_name",
+      "transport_mode",
+      "kship_freight_charge",
+      "kship_label_file",
+      "kship_tracking_number",
+      "employee_id",
+      "insert_date",
+      "insert_time"
+    ],
+    "conditions": {
+      "JOIN": [
+        "t_afa_load_detail ON t_kship_shipment.wh_id = t_afa_load_detail.wh_id AND t_kship_shipment.order_number = t_afa_load_detail.order_number",
+        "t_bom_master ON t_kship_shipment.wh_id = t_bom_master.wh_id",
+        "t_flash_kit_unpick ON t_kship_shipment.wh_id = t_flash_kit_unpick.wh_id AND t_kship_shipment.order_number = t_flash_kit_unpick.order_number",
+        "t_full_floor_denial ON t_kship_shipment.wh_id = t_full_floor_denial.wh_id AND t_kship_shipment.order_number = t_full_floor_denial.order_number",
+        "t_hu_master ON t_kship_shipment.wh_id = t_hu_master.wh_id AND t_kship_shipment.kship_shipment_number = t_hu_master.kship_shipment_number",
+        "t_invoice ON t_kship_shipment.wh_id = t_invoice.wh_id AND t_kship_shipment.order_number = t_invoice.order_number",
+        "t_mp_kship_shipment ON t_kship_shipment.kship_shipment_number = t_mp_kship_shipment.kship_shipment_number AND t_kship_shipment.wh_id = t_mp_kship_shipment.wh_id",
+        "t_order ON t_kship_shipment.wh_id = t_order.wh_id AND t_kship_shipment.order_number = t_order.order_number",
+        "t_order_detail ON t_kship_shipment.wh_id = t_order_detail.wh_id AND t_kship_shipment.order_number = t_order_detail.order_number",
+        "t_order_uom ON t_kship_shipment.wh_id = t_order_uom.wh_id AND t_kship_shipment.order_number = t_order_uom.order_number",
+        "t_pick_detail ON t_kship_shipment.wh_id = t_pick_detail.wh_id AND t_kship_shipment.order_number = t_pick_detail.order_number"
+      ],
+      "WHERE": "t_kship_shipment.kship_shipment_number IS NOT NULL"
+    },
+    "description": "Technical query for shipment information in the warehouse system. The 't_kship_shipment' table stores key details about shipments, including shipment number, warehouse ID, order number, carrier information, freight charges, label files, tracking numbers, employee ID, and timestamps. It joins with multiple related tables such as 't_afa_load_detail', 't_bom_master', 't_flash_kit_unpick', 't_hu_master', 't_invoice', 't_order', 't_order_detail', 't_order_uom', and 't_pick_detail' to provide comprehensive shipment, order, and picking details. This supports reporting, tracking, and operational processes in WMS."
+  },
+  "afo_wave_detail_summary": {
+    "table": "t_afo_wave_detail",
+    "columns": [
+      "wave_detail_id",
+      "wave_id",
+      "wh_id",
+      "order_number",
+      "load_seq"
+    ],
+    "conditions": {
+      "JOIN": [
+        "t_pick_detail ON t_afo_wave_detail.wave_id = t_pick_detail.wave_id AND t_afo_wave_detail.wh_id = t_pick_detail.wh_id AND t_afo_wave_detail.order_number = t_pick_detail.order_number",
+        "t_short_pick_pkd ON t_afo_wave_detail.wave_id = t_short_pick_pkd.wave_id AND t_afo_wave_detail.wh_id = t_short_pick_pkd.wh_id AND t_afo_wave_detail.order_number = t_short_pick_pkd.order_number",
+        "t_view_wave_order ON t_afo_wave_detail.wave_id = t_view_wave_order.wave_id AND t_afo_wave_detail.wh_id = t_view_wave_order.wh_id AND t_afo_wave_detail.order_number = t_view_wave_order.order_number"
+      ],
+      "WHERE": "t_afo_wave_detail.wave_id IS NOT NULL"
+    },
+    "description": "Technical query for wave details in the WMS. The 't_afo_wave_detail' table stores details of each order assigned to a wave, including wave ID, warehouse ID, order number, and load sequence. It joins with 't_pick_detail' and 't_short_pick_pkd' to fetch pick and short-pick information, and with 't_view_wave_order' for wave order selection data. This table supports wave management, pick planning, and reporting in warehouse operations."
+  },
+  "afo_wave_load_detail_summary": {
+    "table": "t_afo_wave_detail",
+    "columns": [
+      "load_detail_line_id",
+      "load_detail_id",
+      "item_number",
+      "wh_id",
+      "line_number",
+      "lot_number",
+      "planned_qty",
+      "freight_class_id",
+      "commodity_type_id"
+    ],
+    "conditions": {
+      "JOIN": [
+        "t_hu_detail ON t_afo_wave_detail.item_number = t_hu_detail.item_number AND t_afo_wave_detail.wh_id = t_hu_detail.wh_id AND t_afo_wave_detail.line_number = t_hu_detail.line_number AND t_afo_wave_detail.lot_number = t_hu_detail.lot_number",
+        "t_hu_uom ON t_afo_wave_detail.wh_id = t_hu_uom.wh_id AND t_afo_wave_detail.item_number = t_hu_uom.item_number AND t_afo_wave_detail.line_number = t_hu_uom.line_number AND t_afo_wave_detail.lot_number = t_hu_uom.lot_number",
+        "t_invoice_detail ON t_afo_wave_detail.item_number = t_invoice_detail.item_number AND t_afo_wave_detail.wh_id = t_invoice_detail.wh_id AND t_afo_wave_detail.line_number = t_invoice_detail.line_number",
+        "t_item_uom ON t_afo_wave_detail.item_number = t_item_uom.item_number AND t_afo_wave_detail.wh_id = t_item_uom.wh_id",
+        "t_order_detail ON t_afo_wave_detail.item_number = t_order_detail.item_number AND t_afo_wave_detail.wh_id = t_order_detail.wh_id AND t_afo_wave_detail.line_number = t_order_detail.line_number",
+        "t_pick_detail ON t_afo_wave_detail.item_number = t_pick_detail.item_number AND t_afo_wave_detail.wh_id = t_pick_detail.wh_id AND t_afo_wave_detail.line_number = t_pick_detail.line_number AND t_afo_wave_detail.lot_number = t_pick_detail.lot_number"
+      ],
+      "WHERE": "t_afo_wave_detail.load_detail_line_id IS NOT NULL"
+    },
+    "description": "Technical query for wave load details in the WMS. The 't_afo_wave_detail' table stores information about items assigned to a wave, including item number, warehouse, line number, lot number, planned quantity, freight class, and commodity type. It joins with 't_hu_detail' and 't_hu_uom' for handling HU details and quantities, 't_invoice_detail' for invoice linkage, 't_item_uom' for item unit-of-measure data, 't_order_detail' for order-level planning, and 't_pick_detail' for pick and load details. This table supports wave planning, load consolidation, and reporting in warehouse operations."
+  },
+  "wave_master_summary": {
+    "table": "t_wave_master",
+    "columns": [
+      "wave_id",
+      "status",
+      "sequence",
+      "wh_id",
+      "staging_location",
+      "door_location",
+      "earliest_ship_date",
+      "latest_ship_date",
+      "use_cartonization_engine_flag"
+    ],
+    "conditions": {
+      "JOIN": [
+        "t_afo_wave_detail ON t_wave_master.wave_id = t_afo_wave_detail.wave_id AND t_wave_master.wh_id = t_afo_wave_detail.wh_id",
+        "t_pick_detail ON t_wave_master.wave_id = t_pick_detail.wave_id AND t_wave_master.wh_id = t_pick_detail.wh_id",
+        "t_view_wave ON t_wave_master.wave_id = t_view_wave.wave_id AND t_wave_master.wh_id = t_view_wave.wh_id",
+        "t_view_wave_order ON t_wave_master.wave_id = t_view_wave_order.wave_id AND t_wave_master.wh_id = t_view_wave_order.wh_id",
+        "t_view_wave_order_line ON t_wave_master.wave_id = t_view_wave_order_line.wave_id AND t_wave_master.wh_id = t_view_wave_order_line.wh_id",
+        "t_wave_assignment ON t_wave_master.wave_id = t_wave_assignment.wave_id AND t_wave_master.wh_id = t_wave_assignment.wh_id",
+        "t_wave_master_audit ON t_wave_master.wave_id = t_wave_master_audit.wave_id AND t_wave_master.wh_id = t_wave_master_audit.wh_id"
+      ],
+      "WHERE": "t_wave_master.wave_id IS NOT NULL AND t_wave_master.wh_id IS NOT NULL"
+    },
+    "description": "Technical query for wave master information in the WMS. The 't_wave_master' table stores wave-level details including wave ID, status, sequence, warehouse, staging and door locations, ship dates, and cartonization settings. It links with 't_afo_wave_detail' for wave items, 't_pick_detail' for pick operations, various 't_view_wave*' tables for view-specific data, 't_wave_assignment' for employee wave assignments, and 't_wave_master_audit' for historical changes. This table supports wave management, planning, execution tracking, and reporting in warehouse operations."
+  },
+  "flash_kit_unpick_summary": {
+    "table": "t_flash_kit_unpick",
+    "columns": [
+      "pick_id",
+      "create_date",
+      "wh_id",
+      "order_number",
+      "line_number",
+      "item_number",
+      "order_quantity",
+      "planned_quantity",
+      "picked_quantity",
+      "hu_id",
+      "hud_quantity",
+      "unpick_quantity",
+      "location_id",
+      "container_id",
+      "user_id",
+      "tran_date",
+      "kit_status"
+    ],
+    "conditions": {
+      "JOIN": [
+        "t_container_optimize_block ON t_flash_kit_unpick.wh_id = t_container_optimize_block.wh_id AND t_flash_kit_unpick.pick_id = t_container_optimize_block.pick_id AND t_flash_kit_unpick.order_number = t_container_optimize_block.order_number AND t_flash_kit_unpick.item_number = t_container_optimize_block.item_number",
+        "t_label ON t_flash_kit_unpick.pick_id = t_label.pick_id",
+        "t_order_uom ON t_flash_kit_unpick.wh_id = t_order_uom.wh_id AND t_flash_kit_unpick.order_number = t_order_uom.order_number AND t_flash_kit_unpick.line_number = t_order_uom.line_number AND t_flash_kit_unpick.pick_id = t_order_uom.pick_id AND t_flash_kit_unpick.item_number = t_order_uom.item_number",
+        "t_pick_detail ON t_flash_kit_unpick.pick_id = t_pick_detail.pick_id AND t_flash_kit_unpick.order_number = t_pick_detail.order_number AND t_flash_kit_unpick.line_number = t_pick_detail.line_number AND t_flash_kit_unpick.item_number = t_pick_detail.item_number AND t_flash_kit_unpick.wh_id = t_pick_detail.wh_id",
+        "t_pick_task_uom ON t_flash_kit_unpick.wh_id = t_pick_task_uom.wh_id AND t_flash_kit_unpick.pick_id = t_pick_task_uom.pick_id AND t_flash_kit_unpick.line_number = t_pick_task_uom.line_number AND t_flash_kit_unpick.item_number = t_pick_task_uom.item_number",
+        "t_post_pick ON t_flash_kit_unpick.wh_id = t_post_pick.wh_id AND t_flash_kit_unpick.pick_id = t_post_pick.pick_id AND t_flash_kit_unpick.hu_id = t_post_pick.hu_id AND t_flash_kit_unpick.item_number = t_post_pick.item_number",
+        "t_short_pick_pkd ON t_flash_kit_unpick.pick_id = t_short_pick_pkd.pick_id AND t_flash_kit_unpick.order_number = t_short_pick_pkd.order_number AND t_flash_kit_unpick.line_number = t_short_pick_pkd.line_number AND t_flash_kit_unpick.item_number = t_short_pick_pkd.item_number AND t_flash_kit_unpick.wh_id = t_short_pick_pkd.wh_id"
+      ],
+      "WHERE": "t_flash_kit_unpick.pick_id IS NOT NULL AND t_flash_kit_unpick.wh_id IS NOT NULL AND t_flash_kit_unpick.order_number IS NOT NULL"
+    },
+    "description": "Technical query for flash kit unpick operations in the WMS. The 't_flash_kit_unpick' table tracks items that are part of kit unpick processes, including pick ID, warehouse, order and line details, item, quantities, HU details, location, container, user information, transaction date, and kit status. It is linked with container optimization, labels, order UOM, pick details, pick task UOMs, post-pick records, and short pick data. This table supports kit unpick tracking, reconciliation, and reporting in warehouse operations."
+  },
+  "customer_summary": {
+    "table": "t_customer",
+    "columns": [
+      "wh_id",
+      "customer_id",
+      "customer_name",
+      "customer_addr1",
+      "customer_addr2",
+      "customer_addr3",
+      "customer_city",
+      "customer_state",
+      "customer_zip",
+      "customer_country_code",
+      "customer_country_name",
+      "customer_phone",
+      "customer_email",
+      "customer_category",
+      "customer_priority",
+      "customer_ship_method",
+      "customer_route",
+      "customer_BOL",
+      "customer_frank_edward",
+      "consolidate",
+      "direct_ship"
+    ],
+    "conditions": {
+      "JOIN": [
+        "t_bom_master ON t_customer.wh_id = t_bom_master.wh_id AND t_customer.customer_id = t_bom_master.customer_id",
+        "t_cust_kship_location ON t_customer.wh_id = t_cust_kship_location.wh_id AND t_customer.customer_id = t_cust_kship_location.customer_id",
+        "t_customer_special_label ON t_customer.customer_id = t_customer_special_label.customer_id",
+        "t_manifest_customer ON t_customer.customer_id = t_manifest_customer.customer_id",
+        "t_order ON t_customer.wh_id = t_order.wh_id AND t_customer.customer_id = t_order.customer_id",
+        "t_storage_charges ON t_customer.customer_id = t_storage_charges.customer_id",
+        "t_unknown_receipt ON t_customer.customer_id = t_unknown_receipt.customer_id AND t_customer.wh_id = t_unknown_receipt.wh_id",
+        "t_vendor_compliance ON t_customer.customer_id = t_vendor_compliance.customer_id AND t_customer.wh_id = t_vendor_compliance.wh_id",
+        "t_ww_user_customer ON t_customer.customer_id = t_ww_user_customer.customer_id"
+      ],
+      "WHERE": "t_customer.customer_id IS NOT NULL AND t_customer.wh_id IS NOT NULL"
+    },
+    "description": "Technical query for customer information in the WMS system. The 't_customer' table stores customer details such as warehouse, ID, name, address, city, state, zip, country, phone, email, category, priority, shipping method, route, BOL, and flags for Frank Edward, consolidation, and direct shipment. This table is linked with BOM, customer shipping locations, special labels, manifests, orders, storage charges, unknown receipts, vendor compliance, and user-customer assignments. It supports customer reference, order processing, shipping, and reporting in warehouse operations."
+  },
+  "robot_job_q_summary": {
+    "table": "t_robot_job_q",
+    "columns": [
+      "unique_id",
+      "robot_job_id",
+      "robot_task_id",
+      "message_type",
+      "wh_id",
+      "work_q_id",
+      "order_number",
+      "status",
+      "dt_inserted",
+      "dt_processing_start",
+      "dt_processing_end",
+      "output_data",
+      "error_msg",
+      "robot",
+      "item_number",
+      "location_id",
+      "cart"
+    ],
+    "conditions": {
+      "JOIN": [],
+      "WHERE": "robot_job_id IS NOT NULL AND unique_id IS NOT NULL"
+    },
+    "description": "Technical query for robot job queue information in the WMS system. The 't_robot_job_q' table stores details of robot jobs including unique ID, job ID, task ID, message type, warehouse ID, work queue ID, order number, status, timestamps for insertion and processing, output data, error messages, robot identifier, item number, location, and cart. This table is standalone and does not share columns with other tables. It supports robot job tracking, processing, and error monitoring in warehouse automation workflows."
+  },
+  "manifest_station_summary": {
+    "table": "t_manifest_station",
+    "columns": [
+      "manifest_station_id",
+      "wh_id",
+      "packing_label_printer_id",
+      "shipping_label_printer_id",
+      "invoice_printer_id",
+      "return_printer_id"
+    ],
+    "conditions": {
+      "JOIN": [],
+      "WHERE": "manifest_station_id IS NOT NULL AND wh_id IS NOT NULL"
+    },
+    "description": "Technical query for manifest station information in the WMS system. The 't_manifest_station' table stores details of manifest stations including unique station ID, warehouse ID, and associated printer IDs for packing, shipping, invoicing, and returns. This table is standalone and does not share columns with other tables. It supports manifest station management, printer configuration, and labeling workflows within the warehouse."
+  },
+  "robot_log_summary": {
+    "table": "t_robot_log",
+    "columns": [
+      "unique_id",
+      "wh_id",
+      "robot",
+      "event_type",
+      "job_id",
+      "job_date",
+      "log_id",
+      "order_number",
+      "hu_id"
+    ],
+    "conditions": {
+      "JOIN": [
+        "t_afa_load_detail ON t_robot_log.wh_id = t_afa_load_detail.wh_id AND t_robot_log.order_number = t_afa_load_detail.order_number",
+        "t_flash_kit_unpick ON t_robot_log.wh_id = t_flash_kit_unpick.wh_id AND t_robot_log.order_number = t_flash_kit_unpick.order_number AND t_robot_log.hu_id = t_flash_kit_unpick.hu_id",
+        "t_full_floor_denial ON t_robot_log.wh_id = t_full_floor_denial.wh_id AND t_robot_log.order_number = t_full_floor_denial.order_number",
+        "t_invoice ON t_robot_log.wh_id = t_invoice.wh_id AND t_robot_log.order_number = t_invoice.order_number",
+        "t_order ON t_robot_log.wh_id = t_order.wh_id AND t_robot_log.order_number = t_order.order_number",
+        "t_order_detail ON t_robot_log.wh_id = t_order_detail.wh_id AND t_robot_log.order_number = t_order_detail.order_number",
+        "t_order_uom ON t_robot_log.wh_id = t_order_uom.wh_id AND t_robot_log.order_number = t_order_uom.order_number",
+        "t_pick_container ON t_robot_log.wh_id = t_pick_container.wh_id AND t_robot_log.order_number = t_pick_container.order_number",
+        "t_pick_detail ON t_robot_log.wh_id = t_pick_detail.wh_id AND t_robot_log.order_number = t_pick_detail.order_number",
+        "t_returns ON t_robot_log.wh_id = t_returns.wh_id AND t_robot_log.order_number = t_returns.order_number",
+        "t_robot_job_q ON t_robot_log.wh_id = t_robot_job_q.wh_id AND t_robot_log.order_number = t_robot_job_q.order_number AND t_robot_log.job_id = t_robot_job_q.robot_job_id",
+        "t_view_order ON t_robot_log.wh_id = t_view_order.wh_id AND t_robot_log.order_number = t_view_order.order_number"
+      ],
+      "WHERE": "t_robot_log.unique_id IS NOT NULL"
+    },
+    "description": "Technical query for robot log data in the WMS. The 't_robot_log' table stores details of robot activities including warehouse, robot ID, event type, job info, order numbers, and handling units. It joins with operational tables such as orders, pick details, returns, invoices, and robot job queues to enable detailed analysis of robot-driven workflows, order processing, and warehouse automation."
+  },
+  "invoice_summary": {
+    "table": "t_invoice",
+    "columns": [
+      "company",
+      "wh_id",
+      "invoice_number",
+      "mp_order_number",
+      "order_type",
+      "order_number",
+      "tran_date",
+      "tran_time",
+      "period",
+      "ar_tran_number",
+      "in_tran_number",
+      "customer_number",
+      "customer_reference_1",
+      "customer_reference_2",
+      "customer_reference_3",
+      "branch",
+      "total_number_lines",
+      "total_order_quantity",
+      "total_invoice_quantity",
+      "total_bo_quantity",
+      "box_total",
+      "weight_total",
+      "freight_total",
+      "discount_total",
+      "tax_total",
+      "other_charges_total",
+      "invoice_total",
+      "invoice_line_total",
+      "salesman_number",
+      "term_code",
+      "carrier",
+      "ship_method"
+    ],
+    "conditions": {
+      "JOIN": [
+        "t_invoice_detail ON t_invoice.company = t_invoice_detail.company AND t_invoice.wh_id = t_invoice_detail.wh_id AND t_invoice.invoice_number = t_invoice_detail.invoice_number",
+        "t_order ON t_invoice.order_number = t_order.order_number AND t_invoice.wh_id = t_order.wh_id",
+        "t_kship_shipment ON t_invoice.order_number = t_kship_shipment.order_number AND t_invoice.wh_id = t_kship_shipment.wh_id",
+        "t_mp_shipment ON t_invoice.order_number = t_mp_shipment.order_number AND t_invoice.wh_id = t_mp_shipment.wh_id"
+      ],
+      "WHERE": "t_invoice.invoice_number IS NOT NULL"
+    },
+    "description": "The 't_invoice' table stores invoice-level information including company, warehouse, invoice number, order details, transaction date/time, customer references, totals, freight, discount, tax, and shipping information. It joins with 't_invoice_detail' for line-level details, 't_order' for order information, and shipment tables 't_kship_shipment' and 't_mp_shipment' for shipping details. Used for billing, reporting, and financial reconciliation in WMS and accounting processes."
+  },
+  "full_floor_denial_summary": {
+    "table": "t_full_floor_denial",
+    "columns": [
+      "seq",
+      "order_number",
+      "wh_id",
+      "status",
+      "insert_date",
+      "insert_time"
+    ],
+    "conditions": {
+      "JOIN": [
+        "t_afa_load_detail ON t_full_floor_denial.order_number = t_afa_load_detail.order_number AND t_full_floor_denial.wh_id = t_afa_load_detail.wh_id",
+        "t_flash_kit_unpick ON t_full_floor_denial.order_number = t_flash_kit_unpick.order_number AND t_full_floor_denial.wh_id = t_flash_kit_unpick.wh_id",
+        "t_invoice ON t_full_floor_denial.order_number = t_invoice.order_number AND t_full_floor_denial.wh_id = t_invoice.wh_id",
+        "t_isn_order_ltl_pallets ON t_full_floor_denial.order_number = t_isn_order_ltl_pallets.order_number AND t_full_floor_denial.wh_id = t_isn_order_ltl_pallets.wh_id",
+        "t_isn_serial_number ON t_full_floor_denial.order_number = t_isn_serial_number.order_number AND t_full_floor_denial.wh_id = t_isn_serial_number.wh_id",
+        "t_isn_ship_load_int ON t_full_floor_denial.order_number = t_isn_ship_load_int.order_number AND t_full_floor_denial.wh_id = t_isn_ship_load_int.wh_id",
+        "t_order ON t_full_floor_denial.order_number = t_order.order_number AND t_full_floor_denial.wh_id = t_order.wh_id",
+        "t_pick_detail ON t_full_floor_denial.order_number = t_pick_detail.order_number AND t_full_floor_denial.wh_id = t_pick_detail.wh_id",
+        "t_returns ON t_full_floor_denial.order_number = t_returns.order_number AND t_full_floor_denial.wh_id = t_returns.wh_id",
+        "t_robot_job_q ON t_full_floor_denial.order_number = t_robot_job_q.order_number AND t_full_floor_denial.wh_id = t_robot_job_q.wh_id",
+        "t_robot_log ON t_full_floor_denial.order_number = t_robot_log.order_number AND t_full_floor_denial.wh_id = t_robot_log.wh_id",
+        "t_ship_load ON t_full_floor_denial.order_number = t_ship_load.order_number AND t_full_floor_denial.wh_id = t_ship_load.wh_id",
+        "t_shipment_track ON t_full_floor_denial.order_number = t_shipment_track.order_number",
+        "t_short_pick_pkd ON t_full_floor_denial.order_number = t_short_pick_pkd.order_number AND t_full_floor_denial.wh_id = t_short_pick_pkd.wh_id"
+      ],
+      "WHERE": "t_full_floor_denial.order_number IS NOT NULL AND t_full_floor_denial.wh_id IS NOT NULL"
+    },
+    "description": "Technical query for full floor denial events in the system. The 't_full_floor_denial' table stores information about orders that were denied due to full floor conditions in the warehouse, including the sequence number, order number, warehouse ID, status, and timestamps. It joins with multiple tables like 't_afa_load_detail', 't_flash_kit_unpick', 't_invoice', 't_order', and pick/return/robot/shipment tables to fetch detailed order, load, pick, and shipping information. This supports operational reporting, exception handling, and warehouse workflow analysis."
+  },
+  "invoice_detail_summary": {
+    "table": "t_invoice_detail",
+    "columns": [
+      "company",
+      "wh_id",
+      "invoice_number",
+      "line_number",
+      "item_number",
+      "quantity_ordered",
+      "quantity_invoiced",
+      "quantity_bo",
+      "price"
+    ],
+    "conditions": {
+      "JOIN": [
+        "t_invoice ON t_invoice_detail.company = t_invoice.company AND t_invoice_detail.wh_id = t_invoice.wh_id AND t_invoice_detail.invoice_number = t_invoice.invoice_number"
+      ],
+      "WHERE": "t_invoice_detail.invoice_number IS NOT NULL"
+    },
+    "description": "Technical query for invoice line details in the system. The 't_invoice_detail' table stores information about each line in an invoice, including company, warehouse ID, invoice number, line number, item number, ordered quantity, invoiced quantity, backorder quantity, and price. It joins with 't_invoice' to fetch overall invoice information such as customer, totals, and transaction data. This table is used for reporting, billing, and reconciliation in WMS and financial processes."
+  }
+}

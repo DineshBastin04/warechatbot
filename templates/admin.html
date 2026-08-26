@@ -1,0 +1,644 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Admin Dashboard - WAI</title>
+    <style>
+      @import url('https://fonts.googleapis.com/css2?family=Roboto:ital,wght@0,100..900;1,100..900&display=swap');
+      * {
+        margin: 0; padding: 0; box-sizing: border-box;
+        font-family: "Roboto", sans-serif;
+      }  
+      body {
+            margin: 0;
+            font-family: Arial, sans-serif;
+            background: #f5f7fa;
+            display: flex;
+            height: 100vh;
+        }
+        .sidebar {
+            width: 220px;
+            background: #cbcbcb33;
+            color: #000;
+            padding-top: 20px;
+            display: flex;
+            flex-direction: column;
+        }
+        .sidebar h2 {
+            text-align: center;
+            margin-bottom: 30px;
+        }
+        .sidebar button {
+            background: none;
+            border: 1px solid #7B83EB;
+            color: #7b83eb;
+            padding: 7px 15px;
+            text-align: left;
+            font-size: 14px;
+            cursor: pointer;
+            transition: background 0.3s;
+            margin: 15px;
+            border-radius: 5px;
+        }
+
+        .sidebar button:hover{
+          background: #7B83EB;
+          color: #fff;
+        }
+        .main {
+            flex: 1;
+            padding: 20px;
+            overflow-y: auto;
+          
+        }
+        .dasboard-title{
+          text-align: center;
+        }
+        .card {
+            background: #fff;
+            padding: 20px;
+            border-radius: 12px;
+            box-shadow: 0 4px 8px rgba(0,0,0,0.05);
+            width: 75%;
+            margin: 0px auto;
+        }
+        .card h3 {
+            margin-top: 0;
+        }
+        input, select {
+            width: 100%;
+            padding: 10px;
+            margin: 10px 0;
+            border-radius: 6px;
+            border: 1px solid #ccc;
+            box-sizing: border-box;
+        }
+
+        .btn {
+            background: none;
+            color: #7B83EB;
+            padding: 10px 15px;
+            border: 1px solid #7B83EB;
+            border-radius: 6px;
+            cursor: pointer;
+            margin-top: 15px;
+        }
+
+        .btn:hover, .refresh-btn:hover {
+          background: #7B83EB;
+          color: #fff;
+        }
+        .button-group {
+            margin: 10px 0;
+        }
+        .table-checkboxes {
+            max-height: 300px;
+            overflow-y: auto;
+            border: 1px solid #ccc;
+            border-radius: 6px;
+            padding: 10px;
+            margin: 10px 0;
+        }
+        .table-checkboxes label {
+            display: block;
+            padding: 5px 0;
+            font-size: 14px;
+        }
+        .table-checkboxes input[type="checkbox"] {
+            margin-right: 10px;
+        }
+        .sidebar .logo {
+            font-size: 34px;
+        }
+        #main-content h2 {
+            margin-bottom: 15px;
+        }
+        #emailBody{
+            width: 100%;
+            height: 80px;
+            margin: 15px 0px;
+            border-color: #cbcbcb;
+        }
+        #includeSent {
+            width: auto;
+            position: relative;
+            top: 2px;
+        }
+    </style>
+</head>
+<body>
+    <div class="sidebar">
+        <h2>∞ Tychons <span class="logo">wi</span></h2>
+        <button class="workspace-btn" onclick="window.location.href='/workspace'">Workspace</button>
+        <button class="user-btn" onclick="showUserManagement()">User Management</button>
+        <button onclick="showSOPTraining()">SOP Bot Training</button>
+        <button class="chatbot-btn" onclick="openSOPBot()">SOP Bot</button>
+        <button onclick="showFeedbackConfig()">Feedback Configuration</button>
+
+
+    </div>
+
+    <div class="main" id="main-content">
+      <div class="dasboard-title">
+        <h2>Welcome to Admin Dashboard</h2>
+        <p>Select an option from the sidebar.</p>
+    </div>
+    </div>
+    <link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/npm/toastify-js/src/toastify.min.css">
+    <script type="text/javascript" src="https://cdn.jsdelivr.net/npm/toastify-js"></script>
+
+    <script>
+        // List of all 57 tables
+        const tables = [
+            "t_container_class", "t_item_image", "short_location_id", "t_item_master", "t_employee",
+            "t_hu_master", "t_stored_item", "t_serial_number", "t_item_uom", "t_item_upc",
+            "t_work_q", "t_reason", "t_location", "t_whse", "t_fwd_pick",
+            "t_zone", "t_class", "t_pick_put_master", "t_po_master", "sysdiagrams",
+            "t_order", "t_pick_detail", "t_control", "t_cc_multiple_uom_qty", "t_transaction",
+            "t_tran_log", "t_zone_loca", "t_pick_put_rules", "t_po_comment", "t_po_detail",
+            "t_allocation", "t_allocation_q", "t_returns", "t_reusable", "t_class_loca",
+            "t_pick_put_detail", "t_pack", "t_po_detail_comment", "t_asn_master", "t_asn_detail",
+            "t_container", "t_order_comment", "t_order_detail", "t_order_detail_comment", "t_work_q_assignment",
+            "t_client", "t_tran_log_reason", "t_customer", "t_cc_ccc_adjustment", "t_rcpt_ship",
+            "t_shipment_track", "t_serial_number_scanned", "t_item_vendor", "t_receipt", "t_holds",
+            "t_pick_pass_sequence", "t_lookup"
+        ];
+
+      function showUserManagement() {
+          document.getElementById("main-content").innerHTML = `
+              <div class="card">
+                  <h3>Add User</h3>
+                  <form id="addUserForm">
+                      <label for="username">Username</label>
+                      <input type="text" id="username" placeholder="Enter username" required>
+                      
+                      <label for="password">Password</label>
+                      <input type="password" id="password" placeholder="Enter password" required>
+                      
+                      <label for="workspaceSelect">Assign Workspace</label>
+                      <select id="workspaceSelect"></select>
+                      
+                      <!--<label>Allowed Tables</label>
+                      <div class="table-checkboxes">
+                          ${tables.map(table => `
+                              <label>
+                                  <input type="checkbox" name="allowedTables" value="${table}">
+                                  ${table}
+                              </label>
+                          `).join("")}
+                      </div>
+                      <div class="button-group">
+                          <button type="button" class="btn" onclick="selectAllTables()">Select All Tables</button>
+                          <button type="button" class="btn" onclick="deselectAllTables()">Deselect All Tables</button>
+                      </div>-->
+                      
+                      <button type="submit" class="btn">Add User</button>
+                  </form>
+              </div>
+
+          <div class="card" style="margin-top:20px;">
+              <h3 style="display:flex; justify-content:space-between; align-items:center;">
+                  Existing Users
+                  <button class="refresh-btn" onclick="loadUsers()" style="background:none; color:#7B83EB; border:1px solid #7B83EB; padding:6px 12px; border-radius:4px; cursor:pointer;">
+                      Refresh
+                  </button>
+              </h3>
+              <div id="usersList">Loading...</div>
+          </div>
+          `;
+
+          document.getElementById("addUserForm").addEventListener("submit", saveUser);
+          
+          loadWorkspaces();
+          loadUsers();
+      }
+
+function loadUsers() {
+    fetch("/api/list_users")
+        .then(res => res.json())
+        .then(data => {
+            const container = document.getElementById("usersList");
+            const users = data.users || [];
+
+            if (users.length === 0) {
+                container.innerHTML = "<p>No users found.</p>";
+                return;
+            }
+
+            container.innerHTML = `
+                <table style="width:100%; border-collapse:collapse;">
+                    <thead>
+                        <tr style="background:#f0f0f0;">
+                            <th style="padding:8px; border:1px solid #ccc;">Username</th>
+                            <th style="padding:8px; border:1px solid #ccc;">Workspace</th>
+                            <th style="padding:8px; border:1px solid #ccc;">Action</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        ${users.map(user => {
+                            const isAdmin = user.username.toLowerCase().includes('admin');
+                            return `
+                                <tr>
+                                    <td style="padding:8px; border:1px solid #ccc;">${user.username || ""}</td>
+                                    <td style="padding:8px; border:1px solid #ccc;">${isAdmin ? "All" : (user.workspace || "")}</td>
+                                    <td style="padding:8px; border:1px solid #ccc;">
+                                        ${isAdmin ? "" : `<button class="btn" onclick="deleteUser('${user.id}')">Delete</button>`}
+                                    </td>
+                                </tr>
+                            `;
+                        }).join("")}
+                    </tbody>
+                </table>
+            `;
+        })
+        .catch(err => {
+            console.error("Error loading users:", err);
+            document.getElementById("usersList").innerHTML = "<p>Error loading users</p>";
+        });
+}
+
+
+function deleteUser(userId) {
+    if (!confirm("Are you sure you want to delete this user?")) return;
+
+    fetch(`/api/delete_user/${userId}`, { method: "DELETE" })
+        .then(res => res.json())
+        .then(data => {
+            if (data.error) {
+                Toastify({
+                    text: data.error,
+                    backgroundColor: "#f56565",
+                    gravity: "top",
+                    position: "center",
+                    duration: 2000
+                }).showToast();
+            } else {
+                Toastify({
+                    text: data.message || "User deleted successfully!",
+                    backgroundColor: "#48bb78",
+                    gravity: "top",
+                    position: "center",
+                    duration: 2000
+                }).showToast();
+                loadUsers();
+            }
+        })
+        .catch(err => {
+            console.error("Error deleting user:", err);
+            Toastify({
+                text: "Error deleting user. Please try again.",
+                backgroundColor: "#f56565",
+                gravity: "top",
+                position: "center",
+                duration: 2000
+            }).showToast();
+        });
+}
+
+
+
+
+        function selectAllTables() {
+            const checkboxes = document.querySelectorAll('input[name="allowedTables"]');
+            checkboxes.forEach(checkbox => checkbox.checked = true);
+        }
+
+        function deselectAllTables() {
+            const checkboxes = document.querySelectorAll('input[name="allowedTables"]');
+            checkboxes.forEach(checkbox => checkbox.checked = false);
+        }
+
+        function loadWorkspaces() {
+            // Placeholder: Replace with your actual API endpoint
+            fetch("/api/workspaces")
+                .then(response => response.json())
+                .then(data => {
+                    const select = document.getElementById("workspaceSelect");
+                    select.innerHTML = "";
+                    if (!data || data.length === 0) {
+                        select.innerHTML = "<option value=''>No workspaces found</option>";
+                    } else {
+                        data.forEach(ws => {
+                            const opt = document.createElement("option");
+                            opt.value = ws;
+                            opt.textContent = ws;
+                            select.appendChild(opt);
+                        });
+                    }
+                })
+                .catch(err => {
+                    console.error("Error loading workspaces:", err);
+                    document.getElementById("workspaceSelect").innerHTML = "<option value=''>Error loading workspaces</option>";
+                });
+        }
+
+    function saveUser(e) {
+        e.preventDefault();
+        const username = document.getElementById("username").value.trim();
+        const password = document.getElementById("password").value.trim();
+        const workspace = document.getElementById("workspaceSelect").value;
+        // const tables = Array.from(document.querySelectorAll('input[name="allowedTables"]:checked')).map(checkbox => checkbox.value);
+
+        // Validate that at least one table is selected
+        // if (tables.length === 0) {
+        //     Toastify({
+        //         text: "Please select at least one table.",
+        //         backgroundColor: "linear-gradient(to right, #ff5f6d, #ffc371)", // red
+        //         gravity: "top",
+        //         position: "right",
+        //         duration: 3000
+        //     }).showToast();
+        //     return;
+        // }
+
+        fetch("/api/add_user", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ username, password, workspace }) // , tables
+        })
+        .then(res => res.json())
+        .then(data => {
+            if (data.error) {
+                Toastify({
+                    text: data.error,
+                    backgroundColor: "#f56565", // red
+                    gravity: "top",
+                    position: "center",
+                    duration: 2000
+                }).showToast();
+            } else {
+                Toastify({
+                    text: data.message || "User added successfully!",
+                    backgroundColor: "#48bb78", // green
+                    gravity: "top",
+                   position: "center",
+                    duration: 2000
+                }).showToast();
+
+                // Reset the form
+                document.getElementById("addUserForm").reset();
+                deselectAllTables();
+            }
+        })
+        .catch(err => {
+            console.error("Error saving user:", err);
+            Toastify({
+                text: "Error adding user. Please try again.",
+                backgroundColor: "f56565", // red
+                gravity: "top",
+                position: "center",
+                duration: 2000
+            }).showToast();
+        });
+    }
+
+
+
+    function showFeedbackConfig() {
+        document.getElementById("main-content").innerHTML = `
+            <div class="card">
+                <h3>Feedback Email Configuration</h3>
+
+                <label>Email Provider</label>
+                <select id="emailProvider">
+                    <option value="gmail">Gmail</option>
+                    <option value="outlook">Outlook</option>
+                </select>
+
+                <label>Sender Email</label>
+                <input type="email" id="senderEmail">
+
+                <label>Sender App Password</label>
+                <input type="password" id="senderPassword">
+
+                <label>Number of Receivers</label>
+                <select id="receiverCount" onchange="renderReceivers()"></select>
+
+                <div id="receiversContainer"></div>
+
+                <label>CC (optional)</label>
+                <input type="text" id="ccEmails">
+
+                <label>Subject</label>
+                <input type="text" id="emailSubject">
+
+                <label>Email Body</label>
+                <textarea id="emailBody"></textarea>
+
+                <label>Email Interval (seconds)</label>
+                <input type="number" id="emailInterval" min="30">
+
+                <label style="display:flex;gap:10px">
+                    <input type="checkbox" id="includeSent">
+                    Include already emailed feedback
+                </label>
+
+                <button class="btn" onclick="saveFeedbackConfig()">Save Configuration</button>
+            </div>
+        `;
+
+        fetch("/api/get_feedback_config")
+            .then(res => res.json())
+            .then(cfg => {
+                document.getElementById("emailProvider").value = cfg.email_provider || "gmail";
+                senderEmail.value = cfg.sender_email || "";
+                senderPassword.value = cfg.sender_password || "";
+                ccEmails.value = cfg.cc || "";
+                emailSubject.value = cfg.subject || "";
+                emailBody.value = cfg.body || "";
+                includeSent.checked = cfg.include_sent || false;
+                emailInterval.value = cfg.email_interval || 120;
+
+                const receivers = (cfg.receivers || cfg.recipients || []).filter(Boolean);
+                receiverCount.innerHTML = "";
+                for (let i = 1; i <= 10; i++) {
+                    receiverCount.innerHTML += `<option value="${i}">${i}</option>`;
+                }
+
+                receiverCount.value = receivers.length || 1;
+                renderReceivers();
+
+                document.querySelectorAll(".receiverEmail").forEach((el, i) => {
+                    el.value = receivers[i] || "";
+                });
+            });
+    }
+
+
+    function renderReceivers() {
+        const count = document.getElementById("receiverCount").value;
+        const container = document.getElementById("receiversContainer");
+        container.innerHTML = "";
+        for (let i = 1; i <= count; i++) {
+            container.innerHTML += `
+                <input type="email" class="receiverEmail" placeholder="Receiver ${i} Email" required>
+            `;
+        }
+    }
+
+function saveFeedbackConfig() {
+  const receivers = Array.from(document.querySelectorAll(".receiverEmail"))
+    .map(i => i.value.trim())
+    .filter(Boolean);
+
+  const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+  if (!receivers.every(e => emailRegex.test(e))) {
+    alert("Invalid email format detected");
+    return;
+  }
+
+  fetch("/api/save_feedback_config", {
+        method: "POST",
+        headers: {"Content-Type":"application/json"},
+            body: JSON.stringify({
+            email_provider: document.getElementById("emailProvider").value,
+            sender_email: senderEmail.value,
+            sender_password: senderPassword.value,
+            recipients: Array.from(document.querySelectorAll(".receiverEmail")).map(i=>i.value),
+            cc: ccEmails.value,
+            subject: emailSubject.value,
+            body: emailBody.value,
+            include_sent: includeSent.checked,
+            email_interval: emailInterval.value
+        })
+    }).then(res=>res.json()).then(d=>{
+        alert(d.message || "Saved");
+    });
+}
+
+
+
+//sop bot training section 
+
+// SOP Bot Training Section
+    function showSOPTraining() {
+    document.getElementById("main-content").innerHTML = `
+        <div class="card">
+            <h3>Train SOP Bot</h3>
+
+            <input type="file" id="sopFile" accept=".csv" />
+            <button class="btn" onclick="uploadSOP()">Upload & Train</button>
+        </div>
+
+        <div class="card" style="margin-top:20px;">
+            <h3 style="display:flex; justify-content:space-between; align-items:center;">
+                Trained SOP Documents
+                <button class="refresh-btn btn" onclick="loadSOPs()">Refresh</button>
+            </h3>
+            <div id="sopList">Loading...</div>
+        </div>
+    `;
+
+    loadSOPs();
+}
+    function uploadSOP() {
+    const fileInput = document.getElementById("sopFile");
+    if (!fileInput.files.length) {
+        showToast("Please select a CSV file", true);
+        return;
+    }
+
+    const formData = new FormData();
+    formData.append("file", fileInput.files[0]);
+
+    fetch("/api/sop/upload", {
+        method: "POST",
+        body: formData
+    })
+    .then(res => res.json())
+    .then(data => {
+        if (data.error) {
+            showToast(data.error, true);
+        } else {
+            showToast("SOP trained successfully");
+            fileInput.value = "";
+            loadSOPs();
+        }
+    })
+    .catch(() => showToast("Upload failed", true));
+}
+
+    function loadSOPs() {
+    fetch("/api/sop/list")
+        .then(res => res.json())
+        .then(data => {
+            const container = document.getElementById("sopList");
+
+            if (!data.length) {
+                container.innerHTML = "<p>No SOPs trained yet.</p>";
+                return;
+            }
+
+            container.innerHTML = `
+                <table style="width:100%; border-collapse:collapse;">
+                <thead>
+                    <tr style="background:#f0f0f0;">
+                    <th style="padding:8px; border:1px solid #ccc;">Filename</th>
+                    <th style="padding:8px; border:1px solid #ccc;">Chunks</th>
+                    <th style="padding:8px; border:1px solid #ccc;">Uploaded By</th>
+                    <th style="padding:8px; border:1px solid #ccc;">Uploaded At</th>
+                    <th style="padding:8px; border:1px solid #ccc;">Action</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    ${data.map(sop => `
+                    <tr>
+                        <td style="padding:8px; border:1px solid #ccc;">${sop.filename}</td>
+                        <td style="padding:8px; border:1px solid #ccc;">${sop.chunks}</td>
+                        <td style="padding:8px; border:1px solid #ccc;">${sop.uploaded_by || "-"}</td>
+                        <td style="padding:8px; border:1px solid #ccc;">
+                        ${sop.uploaded_at ? new Date(sop.uploaded_at).toLocaleString() : "-"}
+                        </td>
+                        <td style="padding:8px; border:1px solid #ccc;">
+                        <button class="btn" onclick="deleteSOP('${sop.doc_id}')">Delete</button>
+                        </td>
+                    </tr>
+                    `).join("")}
+                </tbody>
+                </table>
+                `;
+        })
+        .catch(() => {
+            document.getElementById("sopList").innerHTML = "<p>Error loading SOPs</p>";
+        });
+}
+
+
+    function deleteSOP(docId) {
+    if (!confirm("Are you sure you want to delete this SOP?")) return;
+
+    fetch(`/api/sop/delete/${docId}`, {
+        method: "DELETE"
+    })
+    .then(res => res.json())
+    .then(data => {
+        if (data.error) {
+            showToast(data.error, true);
+        } else {
+            showToast("SOP deleted");
+            loadSOPs();
+        }
+    })
+    .catch(() => showToast("Delete failed", true));
+}
+
+function openSOPBot() {
+    window.location.href = "/sop-chat";
+}
+
+
+
+function showToast(message, isError = false) {
+    Toastify({
+        text: message,
+        backgroundColor: isError ? "#f56565" : "#48bb78",
+        gravity: "top",
+        position: "center",
+        duration: 2000
+    }).showToast();
+}
+
+
+    </script>
+</body>
+</html>

@@ -1,0 +1,30 @@
+<!-- templates/home.html -->
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Home - {{ title }}</title>
+    <style>
+        body { font-family: Arial, sans-serif; margin: 0; padding: 20px; }
+        .container { max-width: 800px; margin: auto; }
+        h1 { color: #333; }
+        .nav a { margin-right: 10px; color: #007BFF; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>{{ title }}</h1>
+        {% if logo %}
+            <img src="{{ logo }}" alt="Logo" style="max-width: 200px;">
+        {% endif %}
+        <h2>{{ subtitle }}</h2>
+        <div class="nav">
+            <a href="{{ url_for('chatbot') }}">Connect to Chatbot</a>
+            <a href="{{ url_for('logout') }}">Logout</a>
+        </div>
+        <p>Welcome, {{ user.username }}! Role: {{ user.role }} | Workspace: {{ user.workspace_id }}</p>
+        <p>Workspace Config: {{ workspace_config | tojson }}</p>
+    </div>
+</body>
+</html>

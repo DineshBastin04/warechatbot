@@ -1,0 +1,1651 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <title>Super Admin Dashboard - WI</title>
+    <meta charset="utf-8" />
+    <style>
+      @import url('https://fonts.googleapis.com/css2?family=Roboto:ital,wght@0,100..900;1,100..900&display=swap');
+      * { margin: 0; padding: 0; box-sizing: border-box; font-family: "Roboto", sans-serif; }  
+      body { margin: 0; font-family: Arial, sans-serif; background: #f5f7fa; display: flex; min-height: 100vh; }
+      .sidebar { width: 220px; background: #cbcbcb33; color: #000; padding-top: 20px; display: flex; flex-direction: column; }
+      .sidebar h2 { text-align: center; margin-bottom: 30px; }
+      .sidebar button { background: none; border: 1px solid #7B83EB; color: #7b83eb; padding: 7px 15px; text-align: left; font-size: 14px; cursor: pointer; transition: background 0.3s; margin: 15px; border-radius: 5px; }
+      .sidebar button:hover{ background: #7B83EB; color: #fff; }
+      .main { flex: 1; padding: 20px; overflow-y: auto; }
+      .dashboard-title{ text-align: center; }
+      /* Keep dashboard title visible at top and prevent it being pushed by prepends */
+      .dashboard-title {
+        position: sticky;
+        top: 0;
+        z-index: 40;              /* sits above inserted cards */
+        background: inherit;      /* adopt same background (you can use a color if needed) */
+        padding: 12px 0;          /* keeps visual spacing */
+      }
+
+      .card { background: #fff; padding: 20px; border-radius: 12px; box-shadow: 0 4px 8px rgba(0,0,0,0.05); max-width: 900px; margin: 0 auto; }
+      #tokenCard { margin-top: 16px; }
+      .card h3 { margin-top: 0; margin-bottom: 15px; }
+      input, select { width: 100%; padding: 10px; margin: 10px 0; border-radius: 6px; border: 1px solid #ccc; box-sizing: border-box; }
+      .btn { background: none; color: #7B83EB; padding: 10px 15px; border: 1px solid #7B83EB; border-radius: 6px; cursor: pointer; margin-right: 10px; }
+      .btn:hover, .refresh-btn:hover { background: #7B83EB; color: #fff; }
+      .tabs { display:flex; gap:8px; margin-bottom: 12px; }
+      .tab-btn { padding:8px 12px; border-radius:8px; border:1px solid #d1d5db; background:#fff; cursor:pointer; }
+      .tab-btn.active { background:#2b6cff; color:#fff; border-color:#2b6cff; }
+      .tab-panel { display:none; }
+      .tab-panel.active { display:block; }
+      .button-group { margin: 10px 0; }
+      .table-checkboxes { max-height: 300px; overflow-y: auto; border: 1px solid #ccc; border-radius: 6px; padding: 10px; margin: 10px 0; }
+      .table-checkboxes label { display: block; padding: 5px 0; font-size: 14px; }
+      .table-checkboxes input[type="checkbox"] { margin-right: 10px; }
+      .sidebar .logo { font-size: 34px; }
+      #main-content h2 { margin-bottom: 15px; }
+      .sidebar .signout-btn { margin-top: auto; }
+      .warehouse-logo{ width: 200px; display:block; margin: 0 auto 10px auto; }
+
+      /* small additions */
+      .controls { display:flex; gap:8px; align-items:center; }
+      .small { font-size: 13px; color:#6b7280; }
+      .result-box { margin-top: 12px; padding: 12px; border-radius: 8px; background:#f3f6ff; display:flex; justify-content:space-between; align-items:center; gap:12px; }
+      .result-left { display:flex; flex-direction:column; gap:6px; }
+      .result-right { display:flex; gap:8px; align-items:center; }
+
+      .card-row { display: flex; gap: 12px; align-items: center; }
+      .flex-1 { flex: 1; }
+      .sidebar-actions { width: 160px; display: flex; flex-direction: column; }
+      
+      /* preserve initial hidden states */
+      .result-box { display: none; }
+      .copy-btn { display: none; margin-top: 8px; }
+
+      .helper-margin-top-6 { margin-top: 6px; }
+      .btn-margin-top-8 { margin-top: 8px; }
+
+      /* small responsive */
+      @media (max-width:800px) {
+        .card-row { flex-direction: column; }
+        .sidebar { display:none; }
+        body { padding: 12px; }
+        .main { padding: 12px; }
+      }
+      /* User Management table & panel styles (standalone) */
+      #userManagementPanel { margin-top: 18px; padding: 18px; border-radius: 12px; background: #fff; box-shadow: 0 6px 18px rgba(20,20,50,0.06); }
+      #userManagementPanel h3 { margin: 0 0 8px 0; font-size: 1.15rem; color: #111827; }
+      #userManagementPanel .small { color: #6b7280; font-size: 13px; }
+      #userManagementPanel .btn { background: none; color: #3742fa; padding: 8px 12px; border: 1px solid rgba(55,66,250,0.15); border-radius: 8px; cursor: pointer; font-size: 13px; }
+      #userManagementPanel .btn:hover { background: rgba(55,66,250,0.06); }
+      #userManagementPanel > div[role="header"] { display:flex; justify-content:space-between; align-items:center; gap: 12px; }
+
+      #userManagementTableWrap { overflow-x:auto; margin-top: 12px; }
+      .user-management-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+      .user-management-table th, .user-management-table td { padding: 10px 12px; text-align: left; vertical-align: top; border-bottom: 1px solid #eef2f7; }
+      .user-management-table thead th { background: #fafbff; color: #111827; font-weight: 600; }
+      .user-management-table tbody tr:hover { background: #fbfbff; }
+
+      .user-management-table td > .muted { color: #6b7280; font-size: 12px; display:block; margin-top:4px; }
+
+      #userManagementDetails { margin-top: 14px; padding: 12px; border-radius: 8px; background: #f8fafc; display: none; border: 1px solid #eef2f7; }
+      #userManagementDetails strong { color: #111827; }
+      #userManagementDetails .detail-grid { display:grid; grid-template-columns: 160px 1fr; gap: 8px 14px; font-size: 13px; color: #111827; }
+
+      @media (max-width: 720px) {
+        .user-management-table th, .user-management-table td { padding: 8px 6px; font-size: 12px; }
+        #userManagementDetails .detail-grid { grid-template-columns: 120px 1fr; }
+      }
+
+      /* small utility */
+      .user-management-actions { display:flex; gap:8px; align-items:center; }
+      .user-management-actions .btn { padding:6px 10px; border-radius:6px; font-size: 13px; }
+
+      /* Toggle switch for user enable & disable*/
+      .switch {
+        position: relative;
+        display: inline-block;
+        width: 48px;
+        height: 28px;
+        vertical-align: middle;
+      }
+      .switch input { display: none; }
+      .switch .slider {
+        position: absolute;
+        cursor: pointer;
+        inset: 0;
+        background-color: #e6e7ee;
+        border-radius: 999px;
+        transition: background-color .18s ease;
+        box-shadow: inset 0 1px 2px rgba(0,0,0,0.03);
+      }
+      .switch .slider::after {
+        content: "";
+        position: absolute;
+        left: 4px;
+        top: 4px;
+        width: 20px;
+        height: 20px;
+        background: #fff;
+        border-radius: 50%;
+        transition: transform .18s ease;
+        box-shadow: 0 1px 3px rgba(16,24,40,0.12);
+      }
+      .switch input:checked + .slider { background-color: #34d399; } /* green when on */
+      .switch input:checked + .slider::after { transform: translateX(20px); }
+      .switch.small { width: 40px; height: 22px; }
+      .switch.small .slider::after { width: 16px; height: 16px; left: 3px; top: 3px; }
+
+      /* newer showUserManagement styles*/
+      /* Panel */
+      .um-panel {
+        background: #ffffff;
+        border: 1px solid #e6e6e6;
+        border-radius: 10px;
+        padding: 16px;
+        margin: 12px 0;
+        box-shadow: 0 2px 6px rgba(0,0,0,0.04);
+        font-family: system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial;
+      }
+
+      /* Header */
+      .um-header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 12px;
+        margin-bottom: 12px;
+      }
+      .um-header h2 {
+        margin: 0;
+        font-size: 18px;
+        font-weight: 600;
+        color: #111827;
+      }
+      .um-controls {
+        display: flex;
+        gap: 8px;
+        align-items: center;
+      }
+
+      /* Buttons */
+      .um-btn {
+        padding: 8px 12px;
+        border-radius: 8px;
+        border: 1px solid #d1d5db;
+        background: #f8fafc;
+        cursor: pointer;
+        font-weight: 600;
+        font-size: 14px;
+      }
+      .um-btn:disabled {
+        opacity: 0.6;
+        cursor: not-allowed;
+      }
+      .um-btn-primary {
+        background: linear-gradient(90deg, #4f46e5, #06b6d4);
+        color: white;
+        border: none;
+      }
+
+      /* List container */
+      .um-list-container {
+        margin-top: 8px;
+      }
+      .um-message {
+        min-height: 20px;
+        margin-bottom: 8px;
+        font-size: 13px;
+        color: #374151;
+      }
+      .um-message.error {
+        color: #b91c1c;
+      }
+
+      /* Table */
+      .um-table {
+        width: 100%;
+        border-collapse: collapse;
+        font-size: 14px;
+      }
+      .um-table thead th {
+        text-align: left;
+        padding: 10px 8px;
+        border-bottom: 1px solid #e6e6e6;
+        color: #374151;
+        font-weight: 600;
+      }
+      .um-table tbody td {
+        padding: 10px 8px;
+        border-bottom: 1px solid #f3f4f6;
+        vertical-align: middle;
+      }
+
+      /* Empty / Loading / Error */
+      .um-empty, .um-loading, .um-error {
+        padding: 16px;
+        color: #6b7280;
+        font-style: italic;
+      }
+
+      /* Toggle switch (custom) */
+      .um-switch {
+        position: relative;
+        display: inline-block;
+        width: 46px;
+        height: 26px;
+      }
+      .um-switch input {
+        opacity: 0;
+        width: 0;
+        height: 0;
+        position: absolute;
+      }
+      .um-slider {
+        position: absolute;
+        cursor: pointer;
+        inset: 0;
+        border-radius: 999px;
+        background: #e5e7eb;
+        transition: background 0.18s ease;
+        box-shadow: inset 0 0 0 1px rgba(0,0,0,0.02);
+      }
+      .um-slider::after {
+        content: "";
+        position: absolute;
+        width: 18px;
+        height: 18px;
+        left: 4px;
+        top: 4px;
+        border-radius: 50%;
+        background: #ffffff;
+        transition: transform 0.18s ease;
+        box-shadow: 0 1px 2px rgba(0,0,0,0.08);
+      }
+      .um-switch input:checked + .um-slider {
+        background: linear-gradient(90deg, #34d399, #10b981);
+      }
+      .um-switch input:checked + .um-slider::after {
+        transform: translateX(20px);
+      }
+
+      /* copy action */
+      .um-action-copy {
+        padding: 6px 8px;
+        border-radius: 6px;
+        border: 1px solid #e5e7eb;
+        background: #fff;
+        cursor: pointer;
+        font-size: 13px;
+      }
+
+      /* "Toggle COnfirmation css" Confirm modal overlay/dialog */
+      .um-confirm-overlay {
+        position: fixed;
+        inset: 0;
+        z-index: 9999;
+        background: rgba(10, 12, 20, 0.45);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        padding: 16px;
+      }
+      .um-confirm-dialog {
+        width: 420px;
+        max-width: calc(100% - 32px);
+        background: #fff;
+        border-radius: 12px;
+        box-shadow: 0 8px 32px rgba(2,6,23,0.28);
+        padding: 18px;
+        display: flex;
+        flex-direction: column;
+        gap: 12px;
+      }
+      .um-confirm-body { padding: 6px 2px; }
+      .um-confirm-message {
+        color: #0f172a;
+        font-size: 15px;
+        line-height: 1.4;
+        margin: 2px 0;
+      }
+      .um-confirm-actions {
+        display: flex;
+        gap: 8px;
+        justify-content: flex-end;
+        margin-top: 6px;
+      }
+      .um-confirm-btn {
+        padding: 8px 12px;
+        border-radius: 8px;
+        border: 1px solid #e6e8f0;
+        background: #f8fafc;
+        cursor: pointer;
+        font-weight: 600;
+      }
+      .um-confirm-confirm {
+        background: linear-gradient(90deg,#4f46e5,#06b6d4);
+        color: #fff;
+        border: none;
+      }
+      .um-confirm-cancel { background: #fff; color: #0f172a; }
+
+      /* small mobile tweak */
+      @media (max-width: 480px) {
+        .um-confirm-dialog { width: 92%; }
+      }
+
+      /* Add User card close button + slide-up animation */
+      .card.um-card {
+        position: relative; /* allow absolutely-positioned close button */
+        overflow: visible;
+        transition: transform 260ms ease, opacity 260ms ease, height 260ms ease, margin 260ms ease, padding 260ms ease;
+      }
+
+      /* Close button (icon) */
+      .um-close-btn {
+        position: absolute;
+        top: 10px;
+        right: 10px;
+        width: 34px;
+        height: 34px;
+        border-radius: 8px;
+        border: none;
+        background: #ef4444; /* red (danger) as requested */
+        color: #fff;
+        font-size: 18px;
+        line-height: 1;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        cursor: pointer;
+        box-shadow: 0 6px 14px rgba(239,68,68,0.14);
+        transition: transform 160ms ease, opacity 160ms ease, background 160ms ease;
+        z-index: 20;
+      }
+
+      /* hover feedback */
+      .um-close-btn:hover { transform: translateY(-2px); opacity: 0.95; }
+
+      /* Closer visual spacing: keep h3 readable with close button */
+      .card.um-card > h3 { padding-right: 46px; }
+
+      /* Slide-up closing animation class */
+      .um-closing {
+        transform: translateY(-10px);
+        opacity: 0;
+        height: 0 !important;
+        margin: 0 !important;
+        padding-top: 0 !important;
+        padding-bottom: 0 !important;
+        overflow: hidden !important;
+        pointer-events: none;
+      }
+
+    </style>
+</head>
+<body>
+    <div class="sidebar">
+        <img class="warehouse-logo" alt="wi Logo" src="http://tychons.com/wp-content/uploads/2025/09/warehouse_logo-2.png">
+        <button class="user-btn" onclick="showTokenConsumption()">Token Consumption</button>
+        <button class="user-btn" onclick="showUserManagement()">User Management</button>
+        <button class="signout-btn" onclick="window.location.href='/auth/logout'">Sign Out</button>
+    </div>
+
+    <div class="main" id="main-content">
+      <div class="dashboard-title">
+        <h2>Super Admin Dashboard</h2>
+        <p class="small">Open Tokens and choose an inner tab.</p>
+      </div>
+
+      <!-- tokenCard created by JS on demand -->
+    </div>
+
+    <link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/npm/toastify-js/src/toastify.min.css">
+    <script type="text/javascript" src="https://cdn.jsdelivr.net/npm/toastify-js"></script>
+
+    <script>
+      // flag to avoid repeated auto-loading of workspaces
+      window.__workspacesLoaded = window.__workspacesLoaded || false;
+
+      // We'll lazily initialize token-related element references after creating the token card.
+      let usersSelect, refreshUsersBtn, showUserTokenBtn, copyUsersBtn, resultAreaUsers, tokenCountUsers, fetchedAtUsers, selectedUserInfoUsers;
+      let workspaceSelectPrediction, refreshWorkspacePredictionBtn, showPredictionTokenBtn, copyPredictionBtn, resultAreaPrediction, tokenCountPrediction, fetchedAtPrediction, selectedWorkspaceInfoPrediction;
+      let workspaceSelectAnomaly, refreshWorkspaceAnomalyBtn, showAnomalyTokenBtn, copyAnomalyBtn, resultAreaAnomaly, tokenCountAnomaly, fetchedAtAnomaly, selectedWorkspaceInfoAnomaly;
+
+      // ---------- UI helpers for inner tabs ----------
+      function selectInnerTab(name) {
+            const panels = {
+              users: 'panel-users',
+              prediction: 'panel-pred',
+              anomaly: 'panel-anom',
+              billing: 'panel-bill'
+            };
+
+            const tabs = {
+              users: 'tab-users',
+              prediction: 'tab-pred',
+              anomaly: 'tab-anom',
+              billing: 'tab-bill'
+            };
+
+
+        Object.keys(panels).forEach(k => {
+          const panel = document.getElementById(panels[k]);
+          const tabBtn = document.getElementById(tabs[k]);
+          if (!panel || !tabBtn) return;
+          if (k === name) {
+            panel.classList.add('active');
+            tabBtn.classList.add('active');
+          } else {
+            panel.classList.remove('active');
+            tabBtn.classList.remove('active');
+          }
+        });
+
+        // If user opened prediction/anomaly tab, load workspaces once automatically
+        if ((name === 'prediction' || name === 'anomaly') && !window.__workspacesLoaded) {
+          const rPred = document.getElementById('refreshWorkspacePredictionBtn');
+          const rAnom = document.getElementById('refreshWorkspaceAnomalyBtn');
+          if (rPred) { rPred.disabled = true; rPred.textContent = 'Loading...'; }
+          if (rAnom) { rAnom.disabled = true; rAnom.textContent = 'Loading...'; }
+
+          loadWorkspaces()
+            .then(() => { window.__workspacesLoaded = true; })
+            .catch(() => { window.__workspacesLoaded = false; })
+            .finally(() => {
+              if (rPred) { rPred.disabled = false; rPred.textContent = 'Refresh workspaces'; }
+              if (rAnom) { rAnom.disabled = false; rAnom.textContent = 'Refresh workspaces'; }
+            });
+        }
+      }
+
+      // showTokenConsumption shows the tokenCard and opens the Users inner tab by default
+      function showTokenConsumption() {
+        const userPanel = document.getElementById('userManagementPanel');
+        if (userPanel) userPanel.style.display = 'none';
+
+        let tokenCard = document.getElementById('tokenCard');
+        if (!tokenCard) {
+          createTokenCard();
+          initTokenElementsAndBindings();
+          initBillingTab();   // ✅ CALL HERE
+          tokenCard = document.getElementById('tokenCard');
+        }
+        if (!tokenCard) return;
+        tokenCard.style.display = '';
+
+        selectInnerTab('users');
+
+        if (!window.__usersLoaded) {
+          loadUsers();
+          window.__usersLoaded = true;
+        }
+
+        tokenCard.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      }
+
+      // Creates the tokenCard DOM structure (keeps the exact structure/IDs used elsewhere)
+      function createTokenCard() {
+        const main = document.getElementById('main-content') || document.body;
+
+        const card = document.createElement('div');
+        card.className = 'card';
+        card.id = 'tokenCard';
+        card.style.display = 'none';
+        card.style.marginTop = '18px';
+
+        card.innerHTML = `
+          <div style="display:flex; justify-content:space-between; align-items:center;">
+            <h3>Token Consumption</h3>
+            <button class="btn" id="closeTokenCardBtn">Close</button>
+          </div>
+
+          <!-- inner tab bar -->
+          <div class="tabs" role="tablist" aria-label="Token tabs">
+            <button class="tab-btn" id="tab-users" onclick="selectInnerTab('users')" role="tab" aria-controls="panel-users">Users</button>
+            <button class="tab-btn" id="tab-pred" onclick="selectInnerTab('prediction')" role="tab" aria-controls="panel-pred">Predictions</button>
+            <button class="tab-btn" id="tab-anom" onclick="selectInnerTab('anomaly')" role="tab" aria-controls="panel-anom">Anomaly</button>
+            <button class="tab-btn" id="tab-bill" onclick="selectInnerTab('billing')">Billing</button>
+          </div>
+
+          <!-- Users panel -->
+          <div id="panel-users" class="tab-panel" role="tabpanel" aria-labelledby="tab-users">
+            <div class="card-row">
+              <div class="flex-1">
+                <select id="usersSelect"></select>
+                <div class="small helper-margin-top-6">Select a user (single selection). Use refresh to reload the list.</div>
+              </div>
+              <div class="sidebar-actions">
+                <button id="refreshUsersBtn" class="btn refresh-btn">Refresh users</button>
+                <button id="showUserTokenBtn" class="btn btn-margin-top-8">Show token</button>
+                <button id="copyUsersBtn" class="btn copy-btn">Copy</button>
+              </div>
+            </div>
+
+            <div id="resultAreaUsers" class="result-box">
+              <div class="result-left">
+                <div>
+                  <strong>Token usage:</strong>
+                  <span id="tokenCountUsers">0</span>
+                </div>
+                <div>
+                  <strong>Estimated cost:</strong>
+                  <span id="costUsdUsers">$0.000000</span>
+                </div>
+                <div id="fetchedAtUsers" class="small"></div>
+              </div>
+
+              <div class="result-right">
+                <div id="selectedUserInfoUsers" class="small"></div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Predictions panel -->
+          <div id="panel-pred" class="tab-panel" role="tabpanel" aria-labelledby="tab-pred">
+            <div class="card-row">
+              <div class="flex-1">
+                <select id="workspaceSelectPrediction"></select>
+                <div class="small helper-margin-top-6">Select a workspace (single selection). Use refresh to reload the list.</div>
+              </div>
+              <div class="sidebar-actions">
+                <button id="refreshWorkspacePredictionBtn" class="btn refresh-btn">Refresh workspaces</button>
+                <button id="showPredictionTokenBtn" class="btn btn-margin-top-8">Show token</button>
+                <button id="copyPredictionBtn" class="btn copy-btn">Copy</button>
+              </div>
+            </div>
+
+            <div id="resultAreaPrediction" class="result-box">
+              <div class="result-left">
+                <div><strong>Total tokens:</strong> <span id="tokenCountPrediction">0</span></div>
+                <div><strong>Input tokens:</strong> <span id="inputTokenPrediction">0</span></div>
+                <div><strong>Output tokens:</strong> <span id="outputTokenPrediction">0</span></div>
+                <div><strong>Cost (USD):</strong> <span id="costPrediction">$0.000000</span></div>
+                <div id="fetchedAtPrediction" class="small"></div>
+              </div>
+
+              <div class="result-right">
+                <div id="selectedWorkspaceInfoPrediction" class="small"></div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Anomaly panel -->
+          <div id="panel-anom" class="tab-panel" role="tabpanel" aria-labelledby="tab-anom">
+            <div class="card-row">
+              <div class="flex-1">
+                <select id="workspaceSelectAnomaly"></select>
+                <div class="small helper-margin-top-6">Select a workspace (single selection). Use refresh to reload the list.</div>
+              </div>
+              <div class="sidebar-actions">
+                <button id="refreshWorkspaceAnomalyBtn" class="btn refresh-btn">Refresh workspaces</button>
+                <button id="showAnomalyTokenBtn" class="btn btn-margin-top-8">Show token</button>
+                <button id="copyAnomalyBtn" class="btn copy-btn">Copy</button>
+              </div>
+            </div>
+
+            <div id="resultAreaAnomaly" class="result-box">
+              <div class="result-left">
+                <div><strong>Total tokens:</strong> <span id="tokenCountAnomaly">0</span></div>
+                <div><strong>Input tokens:</strong> <span id="inputTokenAnomaly">0</span></div>
+                <div><strong>Output tokens:</strong> <span id="outputTokenAnomaly">0</span></div>
+                <div><strong>Cost (USD):</strong> <span id="costAnomaly">$0.000000</span></div>
+                <div id="fetchedAtAnomaly" class="small"></div>
+              </div>
+
+              <div class="result-right">
+                <div id="selectedWorkspaceInfoAnomaly" class="small"></div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Billing panel -->
+          <div id="panel-bill" class="tab-panel" role="tabpanel">
+
+            <div class="card-row">
+              <div class="flex-1">
+                
+                <div class="card-row">
+                  <div class="flex-1">
+                    
+                    <div style="display:flex; gap:8px;">
+                      <div>
+                      <label class="small"><strong>Billing year</strong></label>
+                      <select id="billingYear"></select>
+                      </div>
+                      <div>
+                      <label for="billingMonth" class="small"><strong>Billing month</strong></label>
+                      <select id="billingMonth"></select>
+                      </div>
+                    </div>
+                    <div class="small helper-margin-top-6">
+                      Select year & month for consolidated billing
+                    </div>
+                  </div>
+                </div>
+
+              </div>
+
+              <div class="sidebar-actions">
+                <button class="btn" id="loadBillingBtn" disabled>
+                  Load billing
+                </button>
+                <button class="btn copy-btn" id="downloadBillingBtn" disabled>
+                  Download
+                </button>
+              </div>
+            </div>
+
+            <!-- Billing summary -->
+            <div id="billingSummary" class="result-box" style="display:none;">
+              <div class="result-left">
+                <div><strong>Total tokens:</strong> <span id="billTotalTokens">0</span></div>
+                <div><strong>Total cost (USD):</strong> <span id="billTotalCost">$0.000000</span></div>
+                <div class="small" id="billingFetchedAt"></div>
+              </div>
+            </div>
+
+          </div>
+
+
+        `;
+
+        // Insert the card just *after* the dashboard title so the title stays put
+        const dashboardTitleEl = main.querySelector('.dashboard-title');
+        if (dashboardTitleEl && dashboardTitleEl.parentNode === main) {
+          if (dashboardTitleEl.nextSibling) main.insertBefore(card, dashboardTitleEl.nextSibling);
+          else main.appendChild(card);
+        } else {
+          main.appendChild(card);
+        }
+      }
+
+
+      function initBillingTab() {
+        const yearSel = document.getElementById('billingYear');
+        const monthSel = document.getElementById('billingMonth');
+        const loadBtn = document.getElementById('loadBillingBtn');
+        const downloadBtn = document.getElementById('downloadBillingBtn');
+
+        const billTotalTokens = document.getElementById('billTotalTokens');
+        const billTotalCost = document.getElementById('billTotalCost');
+        const billingSummary = document.getElementById('billingSummary');
+        const billingFetchedAt = document.getElementById('billingFetchedAt');
+
+        const now = new Date();
+        const currentYear = now.getFullYear();
+
+        // years
+        for (let y = currentYear - 5; y <= currentYear + 1; y++) {
+          const opt = document.createElement('option');
+          opt.value = y;
+          opt.textContent = y;
+          if (y === currentYear) opt.selected = true;
+          yearSel.appendChild(opt);
+        }
+
+        // months
+        const months = ['01','02','03','04','05','06','07','08','09','10','11','12'];
+        months.forEach((m, i) => {
+          const opt = document.createElement('option');
+          opt.value = m;
+          opt.textContent = m;
+          if (i === now.getMonth()) opt.selected = true;
+          monthSel.appendChild(opt);
+        });
+
+        loadBtn.disabled = false;
+
+        loadBtn.onclick = async () => {
+          const month = `${yearSel.value}-${monthSel.value}`; // YYYY-MM
+
+          // 👇 reuse already-loaded Users dropdown
+          const usersSelect = document.getElementById('usersSelect');
+          const userId = usersSelect?.value || "";
+
+          // 👇 build URL conditionally
+          const url = userId
+            ? `/superadmin/billing_summary?month=${month}&user_id=${encodeURIComponent(userId)}`
+            : `/superadmin/billing_summary?month=${month}`;
+
+          try {
+            const resp = await fetch(url);
+            if (!resp.ok) throw new Error('Billing fetch failed');
+
+            const data = await resp.json();
+
+            let totalTokens = 0;
+            let totalCost = 0;
+
+            Object.values(data.workspaces || {}).forEach(w => {
+              totalTokens += w.total_tokens || 0;
+              totalCost   += w.total_cost || 0;
+            });
+
+            billTotalTokens.textContent = totalTokens.toLocaleString();
+            billTotalCost.textContent = `$${totalCost.toFixed(6)}`;
+            billingFetchedAt.textContent = `Fetched at ${new Date().toLocaleString()}`;
+
+            billingSummary.style.display = 'flex';
+            downloadBtn.disabled = false;
+
+            // cache for download
+            window.__billingCache = { month, totalTokens, totalCost };
+
+          } catch (err) {
+            console.error(err);
+            showToast('Failed to load billing');
+          }
+        };
+
+
+        downloadBtn.onclick = () => {
+          if (!window.__billingCache) return;
+
+          const { month, totalTokens, totalCost } = window.__billingCache;
+          const csv =
+      `Month,Total Tokens,Total Cost (USD)
+      ${month},${totalTokens},${totalCost.toFixed(6)}
+      `;
+
+          const blob = new Blob([csv], { type: 'text/csv' });
+          const url = URL.createObjectURL(blob);
+          const a = document.createElement('a');
+          a.href = url;
+          a.download = `billing_${month}.csv`;
+          a.click();
+          URL.revokeObjectURL(url);
+        };
+      }
+
+
+
+
+
+      // After tokenCard creation, wire up element refs and attach event listeners
+      function initTokenElementsAndBindings() {
+        // Users
+        usersSelect = document.getElementById('usersSelect');
+        refreshUsersBtn = document.getElementById('refreshUsersBtn');
+        showUserTokenBtn = document.getElementById('showUserTokenBtn');
+        copyUsersBtn = document.getElementById('copyUsersBtn');
+        resultAreaUsers = document.getElementById('resultAreaUsers');
+        tokenCountUsers = document.getElementById('tokenCountUsers');
+        fetchedAtUsers = document.getElementById('fetchedAtUsers');
+        selectedUserInfoUsers = document.getElementById('selectedUserInfoUsers');
+
+        // Prediction
+        workspaceSelectPrediction = document.getElementById('workspaceSelectPrediction');
+        refreshWorkspacePredictionBtn = document.getElementById('refreshWorkspacePredictionBtn');
+        showPredictionTokenBtn = document.getElementById('showPredictionTokenBtn');
+        copyPredictionBtn = document.getElementById('copyPredictionBtn');
+        resultAreaPrediction = document.getElementById('resultAreaPrediction');
+        tokenCountPrediction = document.getElementById('tokenCountPrediction');
+        fetchedAtPrediction = document.getElementById('fetchedAtPrediction');
+        selectedWorkspaceInfoPrediction = document.getElementById('selectedWorkspaceInfoPrediction');
+
+        // Anomaly
+        workspaceSelectAnomaly = document.getElementById('workspaceSelectAnomaly');
+        refreshWorkspaceAnomalyBtn = document.getElementById('refreshWorkspaceAnomalyBtn');
+        showAnomalyTokenBtn = document.getElementById('showAnomalyTokenBtn');
+        copyAnomalyBtn = document.getElementById('copyAnomalyBtn');
+        resultAreaAnomaly = document.getElementById('resultAreaAnomaly');
+        tokenCountAnomaly = document.getElementById('tokenCountAnomaly');
+        fetchedAtAnomaly = document.getElementById('fetchedAtAnomaly');
+        selectedWorkspaceInfoAnomaly = document.getElementById('selectedWorkspaceInfoAnomaly');
+        // Bindings (avoid duplicating listeners if called repeatedly)
+        if (refreshUsersBtn) {
+          refreshUsersBtn.removeEventListener('click', loadUsers);
+          refreshUsersBtn.addEventListener('click', loadUsers);
+        }
+        if (showUserTokenBtn) {
+          showUserTokenBtn.removeEventListener('click', showUserToken);
+          showUserTokenBtn.addEventListener('click', showUserToken);
+        }
+        if (copyUsersBtn) {
+          copyUsersBtn.removeEventListener('click', async () => {});
+          copyUsersBtn.addEventListener('click', async () => {
+            try { await navigator.clipboard.writeText(tokenCountUsers.textContent); showToast('Token count copied'); } catch(e) { showToast('Failed to copy'); }
+          });
+        }
+
+        // Prediction bindings
+        if (refreshWorkspacePredictionBtn) {
+          refreshWorkspacePredictionBtn.removeEventListener('click', loadWorkspaces);
+          refreshWorkspacePredictionBtn.addEventListener('click', loadWorkspaces);
+        }
+        if (showPredictionTokenBtn) {
+          showPredictionTokenBtn.removeEventListener('click', showPredictionToken);
+          showPredictionTokenBtn.addEventListener('click', showPredictionToken);
+        }
+        if (copyPredictionBtn) {
+          copyPredictionBtn.removeEventListener('click', async () => {});
+          copyPredictionBtn.addEventListener('click', async () => {
+            try { await navigator.clipboard.writeText(tokenCountPrediction.textContent); showToast('Token count copied'); } catch(e) { showToast('Failed to copy'); }
+          });
+        }
+
+        // Anomaly bindings
+        if (refreshWorkspaceAnomalyBtn) {
+          refreshWorkspaceAnomalyBtn.removeEventListener('click', loadWorkspaces);
+          refreshWorkspaceAnomalyBtn.addEventListener('click', loadWorkspaces);
+        }
+        if (showAnomalyTokenBtn) {
+          showAnomalyTokenBtn.removeEventListener('click', showAnomalyToken);
+          showAnomalyTokenBtn.addEventListener('click', showAnomalyToken);
+        }
+        if (copyAnomalyBtn) {
+          copyAnomalyBtn.removeEventListener('click', async () => {});
+          copyAnomalyBtn.addEventListener('click', async () => {
+            try { await navigator.clipboard.writeText(tokenCountAnomaly.textContent); showToast('Token count copied'); } catch(e) { showToast('Failed to copy'); }
+          });
+        }
+
+        // Close token card button
+        const closeBtn = document.getElementById('closeTokenCardBtn');
+        if (closeBtn) {
+          closeBtn.removeEventListener('click', () => {});
+          closeBtn.addEventListener('click', () => {
+            const tokenCard = document.getElementById('tokenCard');
+            if (tokenCard) tokenCard.style.display = 'none';
+          });
+        }
+      }
+
+      // Simple toast wrapper
+      function showToast(text, duration = 3000) {
+        Toastify({ text, duration, gravity: "top", position: "right", backgroundColor: "#333" }).showToast();
+      }
+
+      // ----------------------
+      // USERS: loadUsers / showUserToken (signature unchanged)
+      // ----------------------
+      async function loadUsers() {
+        if (refreshUsersBtn) { refreshUsersBtn.disabled = true; refreshUsersBtn.textContent = 'Loading...'; }
+        if (usersSelect) usersSelect.innerHTML = '';
+        if (resultAreaUsers) resultAreaUsers.style.display = 'none';
+        try {
+          const resp = await fetch('/api/list_users', { method: 'GET', headers: { 'Accept': 'application/json' }});
+          if (!resp.ok) {
+            let err = await resp.text();
+            throw new Error(`Server returned ${resp.status}: ${err}`);
+          }
+          const payload = await resp.json();
+          const users = Array.isArray(payload.users) ? payload.users : [];
+          if (users.length === 0) {
+            if (usersSelect) usersSelect.innerHTML = '<option disabled>No users found</option>';
+            showToast('No users found');
+            return;
+          }
+          users.forEach(u => {
+            const opt = document.createElement('option');
+            opt.value = u.id || '';
+            opt.textContent = (u.username ? u.username : '(no username)') + (u.id ? ` — ${u.id}` : '');
+            opt.title = `workspace: ${u.workspace || '—'}`;
+            usersSelect.appendChild(opt);
+          });
+          usersSelect.selectedIndex = 0;
+          showToast(`Loaded ${users.length} users`);
+        } catch (err) {
+          console.error('Error loading users', err);
+          showToast('Error loading users');
+          if (usersSelect) usersSelect.innerHTML = '<option disabled>Error loading users</option>';
+        } finally {
+          if (refreshUsersBtn) { refreshUsersBtn.disabled = false; refreshUsersBtn.textContent = 'Refresh users'; }
+        }
+      }
+
+
+
+    async function showUserToken() {
+      const selected = usersSelect ? usersSelect.options[usersSelect.selectedIndex] : null;
+      if (!selected || !selected.value) {
+        showToast('Please select a user first');
+        return;
+      }
+
+      const userId = selected.value;
+      showUserTokenBtn.disabled = true;
+      showUserTokenBtn.textContent = 'Loading...';
+      resultAreaUsers.style.display = 'none';
+
+      try {
+        const resp = await fetch(
+          `/superadmin/user_tokens?user_id=${encodeURIComponent(userId)}`
+        );
+        if (!resp.ok) throw new Error('API failed');
+
+        const data = await resp.json();
+
+        // tokens
+        tokenCountUsers.textContent =
+          Number(data.token_count || 0).toLocaleString();
+
+        // cost (USD)
+        const costSpan = document.getElementById('costUsdUsers');
+        if (costSpan) {
+          costSpan.textContent = `$${Number(data.cost_usd || 0).toFixed(6)}`;
+        }
+
+        fetchedAtUsers.textContent =
+          `Fetched at ${new Date().toLocaleString()}`;
+        selectedUserInfoUsers.textContent = selected.textContent;
+
+        resultAreaUsers.style.display = 'flex';
+        copyUsersBtn.style.display = 'inline-block';
+
+      } catch (err) {
+        console.error(err);
+        showToast('Error fetching token & cost');
+      } finally {
+        showUserTokenBtn.disabled = false;
+        showUserTokenBtn.textContent = 'Show token';
+      }
+    }
+
+    function downloadBillingCSV() {
+      if (!window.__billingCache) {
+        showToast('Load billing first');
+        return;
+      }
+
+      const { month, totalTokens, totalCost } = window.__billingCache;
+
+      const csv =
+    `Month,Total Tokens,Total Cost (USD)
+    ${month},${totalTokens},${totalCost.toFixed(6)}
+    `;
+
+      const blob = new Blob([csv], { type: 'text/csv' });
+      const url = URL.createObjectURL(blob);
+
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `billing_${month}.csv`;
+      a.click();
+
+      URL.revokeObjectURL(url);
+    }
+
+      // ----------------------
+      // WORKSPACES loader (used by prediction/anomaly and Add User form)
+      // ----------------------
+      // ----------------------
+      // WORKSPACES loader (used by prediction/anomaly and Add User form)
+      // ----------------------
+      async function loadWorkspaces() {
+        // show loading on both workspace refresh buttons if present
+        [document.getElementById('refreshWorkspacePredictionBtn'), document.getElementById('refreshWorkspaceAnomalyBtn')].forEach(btn => { if (btn) { btn.disabled = true; btn.textContent = 'Loading...'; } });
+
+        // clear selects that this function controls
+        [document.getElementById('workspaceSelectPrediction'), document.getElementById('workspaceSelectAnomaly'), document.getElementById('workspaceSelect')].forEach(s => { if (s) s.innerHTML = ''; });
+        [document.getElementById('resultAreaPrediction'), document.getElementById('resultAreaAnomaly')].forEach(r => { if (r) r.style.display = 'none'; });
+
+        try {
+          const resp = await fetch('/api/workspaces', { method: 'GET', headers: { 'Accept': 'application/json' }});
+          if (!resp.ok) {
+            const errTxt = await resp.text().catch(()=>null);
+            throw new Error(`Server returned ${resp.status}: ${errTxt || resp.statusText}`);
+          }
+
+          // expecting a JSON array of workspace names: ["ISN-TEST","Dummy1","Dummy2"]
+          const data = await resp.json();
+          const workspaces = Array.isArray(data) ? data : [];
+
+          if (!workspaces || workspaces.length === 0) {
+            [document.getElementById('workspaceSelectPrediction'), document.getElementById('workspaceSelectAnomaly'), document.getElementById('workspaceSelect')].forEach(s => { if (s) s.innerHTML = '<option disabled>No workspaces found</option>'; });
+            showToast('No workspaces found');
+            return;
+          }
+
+          // helper label (here the item is already a name string)
+          const getLabel = (w) => (w || '(no name)').toString();
+
+          // populate prediction select (if present)
+          const wsPred = document.getElementById('workspaceSelectPrediction');
+          if (wsPred) {
+            workspaces.forEach(w => {
+              const opt = document.createElement('option');
+              opt.value = w || '';
+              opt.textContent = getLabel(w) + (w ? ` — ${w}` : '');
+              opt.title = getLabel(w);
+              wsPred.appendChild(opt);
+            });
+            wsPred.selectedIndex = 0;
+          }
+
+          // populate anomaly select (if present)
+          const wsAnom = document.getElementById('workspaceSelectAnomaly');
+          if (wsAnom) {
+            workspaces.forEach(w => {
+              const opt = document.createElement('option');
+              opt.value = w || '';
+              opt.textContent = getLabel(w) + (w ? ` — ${w}` : '');
+              opt.title = getLabel(w);
+              wsAnom.appendChild(opt);
+            });
+            wsAnom.selectedIndex = 0;
+          }
+
+          // populate generic Add User select (if present)
+          const wsAdd = document.getElementById('workspaceSelect');
+          if (wsAdd) {
+            workspaces.forEach(w => {
+              const opt = document.createElement('option');
+              opt.value = w || '';
+              opt.textContent = getLabel(w) + (w ? ` — ${w}` : '');
+              opt.title = getLabel(w);
+              wsAdd.appendChild(opt);
+            });
+            wsAdd.selectedIndex = 0;
+          }
+
+          showToast(`Loaded ${workspaces.length} workspaces`);
+        } catch (err) {
+          console.error('Error loading workspaces', err);
+          showToast('Error loading workspaces');
+          [document.getElementById('workspaceSelectPrediction'), document.getElementById('workspaceSelectAnomaly'), document.getElementById('workspaceSelect')].forEach(s => { if (s) s.innerHTML = '<option disabled>Error loading workspaces</option>'; });
+        } finally {
+          [document.getElementById('refreshWorkspacePredictionBtn'), document.getElementById('refreshWorkspaceAnomalyBtn')].forEach(btn => { if (btn) { btn.disabled = false; btn.textContent = 'Refresh workspaces'; } });
+        }
+      }
+
+      
+
+      // ----------------------
+      // PREDICTION / ANOMALY show token functions (signatures kept)
+      // ----------------------
+      async function showPredictionToken() {
+        const selEl = document.getElementById('workspaceSelectPrediction');
+        const selected = selEl ? selEl.options[selEl.selectedIndex] : null;
+        if (!selected || !selected.value) {
+          showToast('Please select a workspace first');
+          return;
+        }
+
+        const workspaceId = selected.value;
+        const btn = document.getElementById('showPredictionTokenBtn');
+        if (btn) { btn.disabled = true; btn.textContent = 'Loading...'; }
+
+        const resultArea = document.getElementById('resultAreaPrediction');
+        if (resultArea) resultArea.style.display = 'none';
+
+        try {
+          const url = `/superadmin/prediction_token?workspace_id=${encodeURIComponent(workspaceId)}`;
+          const resp = await fetch(url, { method: 'GET', headers: { 'Accept': 'application/json' } });
+
+          if (!resp.ok) {
+            let errText = '';
+            try {
+              const j = await resp.json();
+              errText = j.error || JSON.stringify(j);
+            } catch (e) {
+              errText = await resp.text();
+            }
+            throw new Error(`Server returned ${resp.status}: ${errText}`);
+          }
+
+          const data = await resp.json();
+
+          // ---- NEW FIELDS ----
+          document.getElementById('tokenCountPrediction').textContent =
+            data.prediction_total_tokens || 0;
+
+          document.getElementById('inputTokenPrediction').textContent =
+            data.prediction_input_tokens || 0;
+
+          document.getElementById('outputTokenPrediction').textContent =
+            data.prediction_output_tokens || 0;
+
+          document.getElementById('costPrediction').textContent =
+            `$${Number(data.prediction_cost_usd || 0).toFixed(6)}`;
+
+          document.getElementById('fetchedAtPrediction').textContent =
+            `Fetched at ${new Date().toLocaleString()}`;
+
+          document.getElementById('selectedWorkspaceInfoPrediction').textContent =
+            selected.textContent;
+
+          if (resultArea) resultArea.style.display = 'flex';
+          const copyBtn = document.getElementById('copyPredictionBtn');
+          if (copyBtn) copyBtn.style.display = 'inline-block';
+
+        } catch (err) {
+          console.error('Error fetching prediction token count:', err);
+          showToast('Error fetching token details');
+        } finally {
+          if (btn) { btn.disabled = false; btn.textContent = 'Show token'; }
+        }
+      }
+
+
+      async function showAnomalyToken() {
+        const selEl = document.getElementById('workspaceSelectAnomaly');
+        const selected = selEl ? selEl.options[selEl.selectedIndex] : null;
+        if (!selected || !selected.value) {
+          showToast('Please select a workspace first');
+          return;
+        }
+
+        const workspaceId = selected.value;
+        const btn = document.getElementById('showAnomalyTokenBtn');
+        if (btn) { btn.disabled = true; btn.textContent = 'Loading...'; }
+
+        const resultArea = document.getElementById('resultAreaAnomaly');
+        if (resultArea) resultArea.style.display = 'none';
+
+        try {
+          const url = `/superadmin/anomaly_token?workspace_id=${encodeURIComponent(workspaceId)}`;
+          const resp = await fetch(url, { method: 'GET', headers: { 'Accept': 'application/json' } });
+
+          if (!resp.ok) {
+            let errText = '';
+            try {
+              const j = await resp.json();
+              errText = j.error || JSON.stringify(j);
+            } catch (e) {
+              errText = await resp.text();
+            }
+            throw new Error(`Server returned ${resp.status}: ${errText}`);
+          }
+
+          const data = await resp.json();
+
+          // ---- NEW FIELDS ----
+          document.getElementById('tokenCountAnomaly').textContent =
+            data.anomaly_total_tokens || 0;
+
+          document.getElementById('inputTokenAnomaly').textContent =
+            data.anomaly_input_tokens || 0;
+
+          document.getElementById('outputTokenAnomaly').textContent =
+            data.anomaly_output_tokens || 0;
+
+          document.getElementById('costAnomaly').textContent =
+            `$${Number(data.anomaly_cost_usd || 0).toFixed(6)}`;
+
+          document.getElementById('fetchedAtAnomaly').textContent =
+            `Fetched at ${new Date().toLocaleString()}`;
+
+          document.getElementById('selectedWorkspaceInfoAnomaly').textContent =
+            selected.textContent;
+
+          if (resultArea) resultArea.style.display = 'flex';
+          const copyBtn = document.getElementById('copyAnomalyBtn');
+          if (copyBtn) copyBtn.style.display = 'inline-block';
+
+        } catch (err) {
+          console.error('Error fetching anomaly token count:', err);
+          showToast('Error fetching token details');
+        } finally {
+          if (btn) { btn.disabled = false; btn.textContent = 'Show token'; }
+        }
+      }
+
+      // ----------------------
+      // User Management UI & helpers (clean & on-demand Add User form)
+      // ----------------------
+      async function showUserManagement() {
+        // hide any other panels
+        const tokenCard = document.getElementById('tokenCard');
+        if (tokenCard) tokenCard.style.display = 'none';
+
+        // If panel exists, reveal it and refresh
+        let panel = document.getElementById('userManagementPanel');
+        if (panel) {
+          panel.style.display = '';
+          panel.scrollIntoView({ behavior: 'smooth', block: 'start' });
+
+          const existingRefreshBtn = panel.querySelector('button[data-um-role="refresh"]');
+          if (existingRefreshBtn) existingRefreshBtn.disabled = false;
+
+          // Always re-fetch current list (but do NOT auto-insert the Add User form)
+          await refreshUserList(panel);
+          return;
+        }
+
+        // Create panel
+        const main = document.getElementById('main-content') || document.body;
+
+        panel = document.createElement('div');
+        panel.id = 'userManagementPanel';
+        panel.className = 'um-panel';
+        panel.innerHTML = ''; // start empty
+
+        // Header
+        const header = document.createElement('div');
+        header.className = 'um-header';
+        header.innerHTML = `
+          <h2>User Management</h2>
+          <div class="um-controls"></div>
+        `;
+        panel.appendChild(header);
+
+        const controls = header.querySelector('.um-controls');
+
+        // Refresh button
+        const refreshBtn = document.createElement('button');
+        refreshBtn.className = 'um-btn um-btn-refresh';
+        refreshBtn.type = 'button';
+        refreshBtn.setAttribute('data-um-role', 'refresh');
+        refreshBtn.textContent = 'Refresh';
+        refreshBtn.addEventListener('click', async () => {
+          refreshBtn.disabled = true;
+          refreshBtn.textContent = 'Loading...';
+          try { await refreshUserList(panel); } catch (err) { console.error('refreshUserList failed:', err); }
+          finally { refreshBtn.disabled = false; refreshBtn.textContent = 'Refresh'; }
+        });
+        controls.appendChild(refreshBtn);
+
+        // New User button (creates the Add User form on demand)
+        const createBtn = document.createElement('button');
+        createBtn.className = 'um-btn um-btn-primary';
+        createBtn.type = 'button';
+        createBtn.textContent = 'New User';
+        createBtn.addEventListener('click', () => {
+          // create the add-user form if not present
+          createAddUserForm(panel);
+        });
+        controls.appendChild(createBtn);
+
+        // Container for list + messages
+        const listContainer = document.createElement('div');
+        listContainer.className = 'um-list-container';
+        listContainer.innerHTML = `
+          <div class="um-message" data-um-role="message" aria-live="polite"></div>
+          <div class="um-list" data-um-role="list"></div>
+        `;
+        panel.appendChild(listContainer);
+
+        // Insert panel after dashboard title so title doesn't move
+        const dashboardTitleEl = main.querySelector('.dashboard-title');
+        if (dashboardTitleEl && dashboardTitleEl.parentNode === main) {
+          if (dashboardTitleEl.nextSibling) main.insertBefore(panel, dashboardTitleEl.nextSibling);
+          else main.appendChild(panel);
+        } else {
+          main.appendChild(panel);
+        }
+        panel.scrollIntoView({ behavior: 'smooth', block: 'start' });
+
+        // Initially load users (but DO NOT auto-create the add form)
+        try {
+          refreshBtn.disabled = true;
+          refreshBtn.textContent = 'Loading...';
+          await refreshUserList(panel);
+        } finally {
+          refreshBtn.disabled = false;
+          refreshBtn.textContent = 'Refresh';
+        }
+      }
+
+      // createAddUserForm(panelEl): inserts add-user form into given panel if not present.
+      function createAddUserForm(panelEl) {
+        if (!panelEl) panelEl = document.getElementById('userManagementPanel');
+        if (!panelEl) return;
+
+        // if form already exists just scroll to it
+        const existing = panelEl.querySelector('#addUserForm');
+        if (existing) { existing.scrollIntoView({ behavior: 'smooth', block: 'center' }); return; }
+
+        const addCard = document.createElement('div');
+        addCard.className = 'card um-card'; // add um-card for animation/positioning
+        addCard.innerHTML = `
+          <h3>Add User</h3>
+          <form id="addUserForm">
+              <label for="username">Username</label>
+              <input type="text" id="username" placeholder="Enter username" required>
+
+              <label for="password">Password</label>
+              <input type="password" id="password" placeholder="Enter password" required>
+
+              <label for="roleSelect">Role</label>
+              <select id="roleSelect" required>
+                <option value="" disabled selected>Select role</option>
+                <option value="user">User</option>
+                <option value="admin">Admin</option>
+                <option value="superadmin">Superadmin</option>
+              </select>
+
+              <label for="workspaceSelect">Assign Workspace</label>
+              <select id="workspaceSelect"></select>
+
+              <div style="display:flex; justify-content:flex-end; gap:8px; margin-top:8px;">
+                <button type="submit" class="btn">Add User</button>
+              </div>
+          </form>
+        `;
+
+        // Create and append close button (icon)
+        const closeBtn = document.createElement('button');
+        closeBtn.type = 'button';
+        closeBtn.className = 'um-close-btn';
+        closeBtn.setAttribute('aria-label', 'Close Add User');
+        closeBtn.innerHTML = '&times;'; // icon
+        addCard.appendChild(closeBtn);
+
+        const listContainer = panelEl.querySelector('.um-list-container') || panelEl.querySelector('[data-um-role="list"]');
+        if (listContainer) panelEl.insertBefore(addCard, listContainer);
+        else panelEl.appendChild(addCard);
+
+        const addForm = panelEl.querySelector('#addUserForm');
+        if (addForm) addForm.addEventListener('submit', saveUser);
+
+        // Populate the workspace select for this form
+        // loadWorkspaces() is shared and now populates #workspaceSelect as well
+        loadWorkspaces().catch(err => console.warn('loadWorkspaces failed while creating add form', err));
+
+        // scroll into view
+        addCard.scrollIntoView({ behavior: 'smooth', block: 'center' });
+
+        // Close logic with unsaved-change confirmation and slide-up animation
+        closeBtn.addEventListener('click', async () => {
+          try {
+            const form = panelEl.querySelector('#addUserForm');
+            let dirty = false;
+            if (form) {
+              // consider form "dirty" if any non-hidden input/select/textarea has a non-empty value
+              const elems = Array.from(form.querySelectorAll('input, textarea, select'));
+              dirty = elems.some(el => {
+                if (el.type === 'hidden') return false;
+                const v = (el.value || '').toString().trim();
+                // ignore default empty selects that might have a disabled placeholder with empty value
+                return v !== '';
+              });
+            }
+
+            if (dirty) {
+              const ok = await confirmAction('You have unsaved changes in the Add User form. Close anyway?', { confirmText: 'Close', cancelText: 'Cancel' });
+              if (!ok) return;
+            }
+
+            // animate slide-up then remove the card from DOM so New User can recreate it
+            addCard.classList.add('um-closing');
+            // ensure animation duration matches CSS (260ms)
+            setTimeout(() => {
+              // remove element from DOM cleanly
+              if (addCard && addCard.parentNode) addCard.parentNode.removeChild(addCard);
+            }, 280);
+
+          } catch (err) {
+            // fallback: hide immediately if something goes wrong
+            console.error('Error during close operation', err);
+            if (addCard && addCard.parentNode) addCard.parentNode.removeChild(addCard);
+          }
+        });
+      }
+
+
+      // Promise-based confirmation modal helper
+      function confirmAction(message, opts = {}) {
+        const confirmText = opts.confirmText || 'Yes';
+        const cancelText = opts.cancelText || 'Cancel';
+
+        return new Promise((resolve) => {
+          let existing = document.getElementById('um-confirm-modal');
+          if (existing) existing.remove();
+
+          const overlay = document.createElement('div');
+          overlay.id = 'um-confirm-modal';
+          overlay.className = 'um-confirm-overlay';
+          overlay.innerHTML = `
+            <div class="um-confirm-dialog" role="dialog" aria-modal="true" aria-labelledby="um-confirm-title">
+              <div class="um-confirm-body">
+                <p id="um-confirm-title" class="um-confirm-message"></p>
+              </div>
+              <div class="um-confirm-actions">
+                <button class="um-confirm-btn um-confirm-cancel">${cancelText}</button>
+                <button class="um-confirm-btn um-confirm-confirm">${confirmText}</button>
+              </div>
+            </div>
+          `;
+          document.body.appendChild(overlay);
+
+          const msgEl = overlay.querySelector('.um-confirm-message');
+          const btnCancel = overlay.querySelector('.um-confirm-cancel');
+          const btnConfirm = overlay.querySelector('.um-confirm-confirm');
+
+          msgEl.textContent = message;
+          btnCancel.focus();
+
+          const cleanup = (val) => {
+            overlay.remove();
+            resolve(val);
+          };
+
+          btnCancel.addEventListener('click', () => cleanup(false));
+          btnConfirm.addEventListener('click', () => cleanup(true));
+
+          const onKey = (e) => { if (e.key === 'Escape') cleanup(false); if (e.key === 'Enter') cleanup(true); };
+          const onClickOutside = (e) => { if (e.target === overlay) cleanup(false); };
+
+          document.addEventListener('keydown', onKey, { once: true });
+          overlay.addEventListener('click', onClickOutside, { once: true });
+        });
+      }
+
+      // refreshUserList(panelEl): fetches users and renders them.
+      async function refreshUserList(panelEl) {
+        if (!panelEl) throw new Error('panelEl is required');
+
+        const messageEl = panelEl.querySelector('[data-um-role="message"]');
+        const listEl = panelEl.querySelector('[data-um-role="list"]');
+        const panelRefreshBtn = panelEl.querySelector('button[data-um-role="refresh"]');
+
+        function showMessage(text, isError=false) {
+          if (!messageEl) return;
+          messageEl.textContent = text;
+          messageEl.className = 'um-message' + (isError ? ' error' : '');
+          clearTimeout(showMessage._t);
+          showMessage._t = setTimeout(() => {
+            if (messageEl) { messageEl.textContent = ''; messageEl.className = 'um-message'; }
+          }, 4000);
+        }
+
+        if (listEl) listEl.innerHTML = '<div class="um-loading">Loading users...</div>';
+        if (panelRefreshBtn) panelRefreshBtn.disabled = true;
+
+        try {
+          const resp = await fetch('/api/list_users', { method: 'GET', headers: { 'Accept': 'application/json' }});
+          if (!resp.ok) {
+            const text = await resp.text().catch(()=>null);
+            throw new Error(`Failed to fetch users: ${resp.status} ${resp.statusText} ${text||''}`);
+          }
+          const payload = await resp.json();
+          const users = Array.isArray(payload.users) ? payload.users : (payload || []);
+
+          if (!listEl) return;
+          listEl.innerHTML = '';
+
+          if (!users || users.length === 0) {
+            listEl.innerHTML = '<div class="um-empty">No users found.</div>';
+            return;
+          }
+
+          const table = document.createElement('table');
+          table.className = 'um-table';
+          table.innerHTML = `
+            <thead>
+              <tr>
+                <th>Username</th>
+                <th>Workspace</th>
+                <th>Access</th>
+                <th>Actions</th>
+              </tr>
+            </thead>
+          `;
+          const tbody = document.createElement('tbody');
+
+          users.forEach(u => {
+            const id = u.id || u.user_id || u._id || u.uid || '';
+            const username = u.username || u.name || '';
+            const workspace = u.workspace || '';
+            const workspace_valid = Boolean(u.workspace_valid);
+
+            const tr = document.createElement('tr');
+
+            const tdName = document.createElement('td');
+            tdName.textContent = username;
+            tr.appendChild(tdName);
+
+            const tdWs = document.createElement('td');
+            tdWs.textContent = workspace;
+            tr.appendChild(tdWs);
+
+            // Access toggle cell
+            const tdToggle = document.createElement('td');
+            const toggle = createToggleSwitch(id, workspace_valid);
+            const checkbox = toggle.querySelector('input[type="checkbox"]');
+
+            checkbox.addEventListener('change', async (evt) => {
+              const newVal = checkbox.checked;
+              const actionText = newVal ? 'enable' : 'disable';
+              const prettyUsername = username || id || 'this user';
+              const confirmMsg = `Are you sure you want to ${actionText} access for "${prettyUsername}"?`;
+              const ok = await confirmAction(confirmMsg, { confirmText: 'Yes', cancelText: 'No' });
+
+              if (!ok) {
+                checkbox.checked = !newVal;
+                showToast('Action cancelled');
+                return;
+              }
+
+              checkbox.disabled = true;
+              const panelBtn = panelEl.querySelector('button[data-um-role="refresh"]');
+              if (panelBtn) panelBtn.disabled = true;
+
+              try {
+                const updResp = await fetch('/superadmin/update_user_access', {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify({ user_id: id, workspace_valid: newVal })
+                });
+
+                if (!updResp.ok) {
+                  const bodyText = await updResp.text().catch(()=>null);
+                  throw new Error(`Server responded ${updResp.status}: ${bodyText || updResp.statusText}`);
+                }
+
+                const body = await updResp.json().catch(()=>({}));
+                showToast(body.message || 'Access updated');
+
+              } catch (err) {
+                console.error('Failed to update user access', err);
+                checkbox.checked = !newVal;
+                showToast('Failed to update access — changes reverted', true);
+              } finally {
+                checkbox.disabled = false;
+                const panelBtn2 = panelEl.querySelector('button[data-um-role="refresh"]');
+                if (panelBtn2) panelBtn2.disabled = false;
+              }
+            });
+
+            tdToggle.appendChild(toggle);
+            tr.appendChild(tdToggle);
+
+            const tdActions = document.createElement('td');
+            tdActions.innerHTML = `<button class="um-action-copy" title="Copy user id">Copy ID</button>`;
+            tdActions.querySelector('.um-action-copy').addEventListener('click', () => {
+              if (!id) return;
+              navigator.clipboard?.writeText(id).then(() => showToast('User id copied')).catch(()=>showToast('Copy failed', true));
+            });
+            tr.appendChild(tdActions);
+
+            tbody.appendChild(tr);
+          });
+
+          table.appendChild(tbody);
+          listEl.appendChild(table);
+
+        } catch (err) {
+          console.error(err);
+          if (listEl) listEl.innerHTML = '<div class="um-error">Failed to load users.</div>';
+          showToast('Failed to load users', true);
+          throw err;
+        } finally {
+          if (panelRefreshBtn) {
+            panelRefreshBtn.disabled = false;
+            panelRefreshBtn.textContent = panelRefreshBtn.getAttribute('data-um-label') || 'Refresh';
+          }
+        }
+      }
+
+      // Helper: returns DOM node for a stylized toggle switch for a given user id
+      function createToggleSwitch(userId, checked) {
+        const wrapper = document.createElement('label');
+        wrapper.className = 'um-switch';
+        wrapper.setAttribute('data-user-id', userId || '');
+
+        const input = document.createElement('input');
+        input.type = 'checkbox';
+        input.checked = Boolean(checked);
+        input.setAttribute('aria-checked', input.checked);
+        input.setAttribute('data-user-id', userId || '');
+
+        const span = document.createElement('span');
+        span.className = 'um-slider';
+
+        wrapper.appendChild(input);
+        wrapper.appendChild(span);
+        return wrapper;
+      }
+
+      // Keep existing DOMContentLoaded listener for potential initial behaviors (no structural assumptions)
+      document.addEventListener('DOMContentLoaded', () => {
+        // no-op
+      });
+
+      // ----------------------
+      // Add User form saveUser (signature unchanged)
+      // ----------------------
+      function saveUser(e) {
+          e.preventDefault();
+          const username = document.getElementById("username").value.trim();
+          const password = document.getElementById("password").value.trim();
+          const role = document.getElementById("roleSelect").value;
+          const workspace = document.getElementById("workspaceSelect").value;
+          // const tables = Array.from(document.querySelectorAll('input[name="allowedTables"]:checked')).map(checkbox => checkbox.value);
+
+          fetch("/api/add_user", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ username, password, role, workspace }) // , tables
+          })
+          .then(res => res.json())
+          .then(data => {
+              if (data.error) {
+                  Toastify({
+                      text: data.error,
+                      backgroundColor: "#f56565", // red
+                      gravity: "top",
+                      position: "center",
+                      duration: 2000
+                  }).showToast();
+              } else {
+                  Toastify({
+                      text: data.message || "User added successfully!",
+                      backgroundColor: "#48bb78", // green
+                      gravity: "top",
+                      position: "center",
+                      duration: 2000
+                  }).showToast();
+
+                  // Reset the form
+                  const form = document.getElementById("addUserForm");
+                  if (form) form.reset();
+                  try { if (typeof deselectAllTables === 'function') deselectAllTables(); } catch(e) {}
+                  try { if (typeof loadUsers === 'function') loadUsers(); } catch(e) {}
+                  try { if (typeof refreshUserList === 'function') {
+                      const panel = document.getElementById('userManagementPanel');
+                      if (panel) refreshUserList(panel);
+                  }} catch(e) {}
+              }
+          })
+          .catch(err => {
+              console.error("Error saving user:", err);
+              Toastify({
+                  text: "Error adding user. Please try again.",
+                  backgroundColor: "#f56565", // red
+                  gravity: "top",
+                  position: "center",
+                  duration: 2000
+              }).showToast();
+          });
+      }
+    </script>
+</body>
+</html>

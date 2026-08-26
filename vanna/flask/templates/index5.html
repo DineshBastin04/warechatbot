@@ -1,0 +1,1187 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Styled Sidebar</title>
+    <script src="https://kit.fontawesome.com/a076d05399.js" crossorigin="anonymous"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.2/js/all.min.js"></script>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            margin: 0;
+            display: flex;
+            background: #f8f9fc;
+        }
+
+        .sidebar {
+            width: 260px;
+            background: #f1f3f8;
+            height: 100vh;
+            padding: 20px;
+            box-shadow: 2px 0 5px rgba(0, 0, 0, 0.1);
+            display: flex;
+            flex-direction: column;
+            position: relative;
+            top: 56px;
+            left: 18px;
+            border-radius: 20px;
+            border: 1px solid #cbcbcb;
+        }
+                .menu {
+            list-style: none;
+            padding: 0;
+        }
+
+
+        .menu-item {
+            padding: 10px;
+            cursor: pointer;
+            border-radius: 5px;
+            color: #333;
+            font-size: 14px;
+            transition: background 0.3s;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .menu-item:hover, .active {
+            background: #e0e4ed;
+        }
+
+        .submenu {
+            list-style: none;
+            padding-left: 20px;
+            display: none;
+        }
+
+        .submenu li {
+            padding: 8px 0;
+            font-size: 14px;
+            cursor: pointer;
+            color: #555;
+        }
+
+        .submenu li:hover {
+            color: #000;
+        }
+
+        .sql-model {
+            display: none;
+            margin: 50px;
+            padding: 20px;
+            background: #f1f3f8;
+            border-radius: 10px;
+            box-shadow: 0 2px 5px rgba(0, 0, 0, 0.1);
+            /* width: 400px; */ 
+            width: 100%;
+            border: 1px solid #cbcbcb;
+            
+        }
+
+        .sql-connection {
+            background: #2196F3;
+            padding: 7px 15px;
+            border: 0;
+            color: #fff;
+            border-radius: 5px;
+            cursor: pointer;
+        }
+
+        .sql-connection:hover {
+            background: #1e88e5;
+        }
+
+        /* Modal Styles */
+        .modal {
+        display: none;
+        position: fixed;
+        top: 50%;
+        left: 50%;
+        transform: translate(-50%, -50%);
+        background: white;
+        padding: 20px;
+        box-shadow: 0 5px 15px rgba(0, 0, 0, 0.3);
+        z-index: 1000;
+        width: 40%;
+        height: auto;
+        border-radius: 10px;
+        
+    }
+
+        .modal-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            border-bottom: 1px solid #ccc;
+            padding-bottom: 10px;
+            margin-bottom: 10px;
+        }
+
+        .modal-header h3 {
+            margin: 0;
+        }
+
+
+        .modal-header .close {
+            cursor: pointer;
+            font-size: 20px;
+        }
+
+        .modal select {
+            width: 100%;
+            padding: 8px;
+            margin-bottom: 10px;
+            border: 1px solid #ccc;
+            border-radius: 5px;
+        }
+
+        .modal input {
+            width: 97%;
+            padding: 8px;
+            margin-bottom: 14px;
+            border: 1px solid #ccc;
+            border-radius: 5px;
+            background: #f5f5f5;
+            margin-top: 7px;
+        }
+
+        .modal .action-buttons {
+            display: flex;
+            gap: 10px;
+        }
+
+        .modal button {
+            padding: 8px 12px;
+            border: none;
+            border-radius: 5px;
+            cursor: pointer;
+        }
+
+        .popup-btn {
+            display: flex;
+            justify-content: space-between;
+        }
+
+        .popup-btn button {
+            padding: 8px 12px;
+            border: none;
+            border-radius: 5px;
+            cursor: pointer;
+            width: 48%;
+        }
+
+        .test {
+            background: #4CAF50;
+            color: white;
+        }
+
+        .save {
+            background: #2196F3;
+            color: white;
+        }
+
+        .overlay {
+            display: none;
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgb(0 0 0 / 74%);
+            z-index: 999;
+        }
+
+            /* Styled List for Saved LLMs */
+        #savedLlmList {
+            list-style: none;
+            padding: 0;
+            margin-top: 15px;
+            background: #fff;
+            border-radius: 8px;
+            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+            overflow: hidden;
+        }
+
+        #savedLlmList svg {
+            padding-right: 15px;
+        }
+
+        #savedLlmList li {
+            padding: 12px 15px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            border-bottom: 1px solid #ddd;
+            transition: background 0.3s ease;
+        }
+
+        #savedLlmList li:last-child {
+            border-bottom: none;
+        }
+
+        #savedLlmList li:hover {
+            background: #f0f4ff;
+        }
+
+        .llm-item {
+            font-size: 16px;
+            font-weight: 500;
+            color: #333;
+            display: flex;
+            align-items: center;
+        }
+
+        .llm-icon {
+            margin-right: 10px;
+            color: #007bff;
+            font-size: 18px;
+        }
+
+        .llm-actions {
+            display: flex;
+            gap: 10px;
+        }
+
+
+        .saved-connections {
+            margin-top: 35px;
+        }
+
+        .saved-connections li {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 10px;
+            background: white;
+            border-radius: 5px;
+            margin-bottom: 10px;
+            box-shadow: 0 2px 5px rgba(0, 0, 0, 0.1);
+        }
+
+        .saved-connections li button {
+            background: #ff4d4d;
+            color: white;
+            border: none;
+            border-radius: 50%;
+            width: 24px;
+            height: 24px;
+            cursor: pointer;
+        }
+
+        .saved-connections li button:hover {
+            background: #ff1a1a;
+        }
+
+
+        .selected {
+            background: #d1e7dd !important;  /* Light green background */
+            border: 2px solid #198754;  /* Darker green border */
+            }
+
+        .db-title p {
+            font-size: 14px;
+            font-weight: 400;
+            color: #999;
+        }
+
+
+        .popup-btn, .popup-input {
+            text-align: center;
+            background: #fff;
+            padding: 10px;
+            border-radius: 5px;
+            text-align: start;
+        }
+/*         
+        .select-btn{
+            width: 100px !important;
+            border-radius: 5px !important;
+            background-color: #04AA6D !important;
+        } */
+
+        .logo {
+            position: absolute;
+            top: 10px;
+            left: 8%;
+            z-index: 999;
+            font-size: 25px;
+            font-weight: 600;
+        }
+
+
+        .divider {
+            border-bottom: 2px solid #ccc;
+            margin: 20px 0;
+            
+
+        }
+
+        .footer {
+            text-align: center;
+            color: gray;
+            font-size: 12px;
+        }
+
+        .menu li{
+            margin-bottom: 10px;
+        }
+
+        .edit-btn, .delete-btn {
+            background: none;
+            border: none;
+            cursor: pointer;
+            font-size: 16px;
+        }
+    
+        .edit-btn {
+            color: #28a745;
+        }
+
+        .save-edit-btn{
+            background: #28a745;
+            color: #fff;
+        }
+    
+        .delete-btn {
+            color: #dc3545;
+        }
+
+        .close-edit-btn {
+            background: #dc3545;
+            color: #fff;
+        }
+    
+        .edit-btn:hover {
+            color: #1e7e34;
+        }
+
+        .save-edit-btn:hover {
+            background: #1e7e34;
+        }
+    
+        .delete-btn:hover {
+            color: #a71d2a;
+        }
+
+        .close-edit-btn:hover {
+            background: #a71d2a;
+        }
+
+
+    </style>
+</head>
+<body>
+    <div class="logo">∞ WAI</div>
+    <!-- Sidebar -->
+    <div class="sidebar">
+       
+        <ul class="menu">
+            <li class="menu-item" onclick="toggleMenu('aiProviders')">
+                <span>🖧 AI Providers</span> <i class="fas fa-chevron-right"></i>
+            </li>
+            <ul class="submenu" id="aiProviders">
+                <li onclick="showLLMConfig()">LLM Models</li>
+            </ul>
+
+            <li class="menu-item" onclick="toggleMenu('admin')">
+                <span>📊 Database Configuration</span> <i class="fas fa-chevron-down"></i>
+            </li>
+            <ul class="submenu" id="admin">
+                <li onclick="showSqlAgent()">MsSQL Configuration</li>
+            </ul>
+
+            <li class="menu-item" onclick="toggleMenu('tools')">
+                <span> 📝Training Module</span> <i class="fas fa-chevron-down"></i>
+            </li>
+            <ul class="submenu" id="trainingModule">
+                <li>Training Data</li>
+            </ul>
+                
+        </ul>
+        <div class="divider"></div>
+
+        <div class="footer">
+            <p>Contact Support</p>
+            <p>Privacy & Data</p>
+        </div>
+    </div>
+
+
+
+    <div class="sql-model" id="llmConfigContent" style="display: none;">
+        <h3>LLM Configurations</h3>
+        <button class="sql-connection" id="newLlmConfigBtn" onclick="openLLMModal()">+New LLM Configuration</button>
+        <label for="selectLlm">Select an LLM:</label>
+        <select id="selectLlm"></select>
+
+        <!-- Connect Vanna Button (Initially Hidden) -->
+        <button id="connectVannaBtn" style="display: none;" onclick="connectVanna()">Connect Vanna</button>
+        <ul id="savedLlmList"></ul>
+        <div class="overlay" id="editOverlay"></div>
+    <div class="modal" id="editModal">
+        <div class="modal-header">
+            <h3>Edit LLM Configuration</h3>
+            <span onclick="closeEditModal()" style="cursor:pointer;">X</span>
+        </div>
+        <input type="hidden" id="edit_id">
+        <label>Model Type:</label>
+        <input type="text" id="edit_model_type">
+        <label>Model Name:</label>
+        <input type="text" id="edit_model_name">
+        <div id="baseUrlDiv">
+            <label>Base URL:</label>
+            <input type="text" id="edit_base_url">
+        </div>
+        
+        <div id="apiKeyDiv">
+            <label>API Key:</label>
+            <input type="password" id="edit_api_key">
+        </div>
+
+        <div class="modal-buttons">
+            <button class="save-edit-btn" onclick="saveEditedLLM()">Save</button>
+            <button class="close-edit-btn" onclick="closeEditModal()">Cancel</button>
+        </div>
+    </div>
+    </div>
+
+
+    <div class="overlay" id="llmOverlay" onclick="closeLLMModal()"></div>
+    <div class="modal" id="llmModal">
+        <div class="modal-header">
+            <h3>LLM Configuration</h3>
+            <span class="close" onclick="closeLLMModal()">X</span>
+        </div>
+
+        <div>
+            <!-- Model Type Selection -->
+            <label for="model_type">Select Model Type:</label>
+            <select id="model_type" onchange="toggleModelSelection()">
+                <option value="">--Select--</option>
+                <option value="ollama">Ollama Models</option>
+                <option value="openai">OpenAI Models</option>
+            </select>
+        </div>
+
+        <div id="ollamaBaseUrlDiv" style="display: none;">
+            <label for="ollama_base_url">Enter the Ollama Base URL:</label>
+            <input type="text" id="ollama_base_url" placeholder="http://127.0.0.1:11434/">
+        </div>
+
+        <!-- Ollama Models -->
+        <div id="ollamaModelsDiv" style="display: none;">
+            <label for="ollama_model">Select Ollama Model:</label>
+            <select id="ollama_model">
+                <!-- Dynamically loaded Ollama models -->
+            </select>
+        </div>
+
+        
+
+        <!-- OpenAI Models -->
+        <div id="openaiModelsDiv" style="display: none;">
+            <label for="openai_model">Select OpenAI Model:</label>
+            <select id="openai_model" onchange="toggleApiKeyField()">
+                <option value="gpt-3.5-turbo">GPT-3.5 Turbo</option>
+                <option value="gpt-4">GPT-4</option>
+            </select>
+        </div>
+
+        <!-- API Key Field for OpenAI -->
+        <div id="apiKeyField" style="display: none;">
+            <label for="api_key">API Key:</label>
+            <input type="password" id="api_key" placeholder="Enter API key">
+        </div>
+
+        <div class="action-buttons">
+            <button class="test-btn" onclick="testLLMConnection()">Test Connection</button>
+            <button class="save-btn" onclick="saveLLMConfig()">Save Configuration</button>
+            <p id="test-result"></p>
+        </div>
+
+    </div>
+
+
+
+
+
+
+
+
+
+
+
+
+
+    <!-- SQL Agent Section -->
+    <div class="sql-model" id="sqlAgentSection">
+        <div class="sql-title">
+            <h2>SQL AGENT</h2>
+        </div>
+        <button class="sql-connection" onclick="openModal()">+ New SQL Connection</button>
+        <ul class="saved-connections" id="savedConnections"></ul>
+    </div>
+
+    <!-- Popup Modal -->
+    <div class="overlay" id="overlay" onclick="closeModal()"></div>
+    <div class="modal" id="sqlModal">
+        <div class="modal-header">
+            <h3>New MSSQL Configuration</h3>
+            <span class="close" onclick="closeModal()">×</span>
+        </div>
+        <div class="db-title">
+            <p>Add the connection information for your database below and it will be available for future SQL agent calls.</p>
+        </div>
+       <div class="popup-input">
+
+            <label for="serverName">Server Name:</label><br>
+            <input type="text" id="serverName" placeholder="Server Name">
+            <label for="port">Port:</label><br>
+            <input type="text" id="port" placeholder="port">
+            <label for="databaseName">Database Name:</label><br>
+            <input type="text" id="databaseName" placeholder="Database Name">
+            <label for="username">Username:</label><br>
+            <input type="text" id="username" placeholder="Username">
+            <label for="password">Password:</label><br>
+            <input type="password" id="password" placeholder="Password">
+       </div>
+       <div class="popup-btn">  
+            <button class="test" onclick="testConnection()">Test Connection</button>
+            <button class="save" onclick="saveConnection()">Save Connection</button>
+       </div>
+    </div>
+
+    <!-- JavaScript -->
+    <script>
+
+
+       
+
+
+
+        function fetchSavedLLMs() {
+            fetch('/get-saved-llms')
+                .then(response => response.json())
+                .then(data => {
+                    const llmList = document.getElementById("savedLlmList");
+                    const llmSelect = document.getElementById("selectLlm");
+                    const connectVannaBtn = document.getElementById("connectVannaBtn");
+        
+                    llmList.innerHTML = "";
+                    llmSelect.innerHTML = `<option value="">--Select an LLM--</option>`;
+        
+                    if (!data.length) {
+                        llmList.innerHTML = "<li>No saved LLMs found.</li>";
+                        connectVannaBtn.style.display = "none"; // Hide button if no LLMs exist
+                        return;
+                    }
+        
+                    // Populate the dropdown and list
+                    data.forEach(llm => {
+                        // Add to dropdown
+                        let option = document.createElement("option");
+                        option.value = llm.model_name;
+                        option.textContent = `${llm.model_name} - ${llm.model_type}`;
+                        llmSelect.appendChild(option);
+        
+                        // Add to list
+                        let listItem = document.createElement("li");
+                        listItem.innerHTML = `
+                            <span class="llm-item">
+                                <i class="fas fa-robot"></i> ${llm.model_name} - ${llm.model_type}
+                            </span>
+                            <span>
+                                <button class="edit-btn" onclick="editLLM('${llm.id}', '${llm.model_type}', '${llm.model_name}', '${llm.base_url}', '${llm.api_key}')">
+                                    <i class="fas fa-edit"></i>
+                                </button>
+                                <button class="delete-btn" onclick="deleteLLM('${llm.id}')">
+                                    <i class="fas fa-trash"></i>
+                                </button>
+                            </span>
+                        `;
+                        llmList.appendChild(listItem);
+                    });
+        
+                    // Show "Connect Vanna" button if LLMs exist
+                    connectVannaBtn.style.display = "inline-block";
+                })
+                .catch(error => {
+                    console.error("Error fetching saved LLMs:", error);
+                    alert("⚠️ Failed to load LLMs. Check your backend.");
+                });
+        }
+        
+        // Function to send the selected LLM model to the backend for Vanna connection
+        function connectVanna() {
+            const selectedModel = document.getElementById("selectLlm").value;
+            if (!selectedModel) {
+                alert("⚠️ Please select an LLM before connecting.");
+                return;
+            }
+        
+            fetch('/connect-vanna', {
+                method: 'POST',
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ model_name: selectedModel })
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.success) {
+                    alert(`✅ Vanna connected with model: ${selectedModel}`);
+                } else {
+                    alert(`❌ Failed to connect Vanna: ${data.error}`);
+                }
+            })
+            .catch(error => {
+                console.error("Error connecting Vanna:", error);
+                alert("⚠️ Connection error. Check backend logs.");
+            });
+            window.location.href = `/home?model=${selectedModel}`;
+        }
+        
+        document.addEventListener("DOMContentLoaded", function() {
+            fetchSavedLLMs(); // Fetch LLMs when page loads
+        });
+
+
+
+
+
+
+
+
+        function selectModel() {
+            const selectedModel = document.getElementById("selectLlm").value;
+        
+            fetch("/api/v0/set_model", {
+                method: "POST",
+                headers: {
+                    "Content-Type": "application/json",
+                },
+                body: JSON.stringify({ model: selectedModel }),
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.type === "success") {
+                    alert(`Model set to: ${data.model}`);
+                } else {
+                    alert(`Error: ${data.error}`);
+                }
+            })
+            .catch(error => console.error("Error setting model:", error));
+        }
+        
+
+
+
+        
+
+
+
+
+
+        
+
+        
+        
+
+
+
+
+        function editLLM(id, modelType, modelName, baseUrl, apiKey) {
+            document.getElementById("edit_id").value = id;
+            document.getElementById("edit_model_type").value = modelType;
+            document.getElementById("edit_model_name").value = modelName;
+            document.getElementById("edit_base_url").value = baseUrl;
+            document.getElementById("edit_api_key").value = apiKey;
+        
+            // Get the parent divs of Base URL and API Key
+            const baseUrlDiv = document.getElementById("edit_base_url").parentElement;
+            const apiKeyDiv = document.getElementById("edit_api_key").parentElement;
+        
+            // Normalize modelType to lowercase for comparison
+            const modelTypeLower = modelType.toLowerCase();
+        
+            // Logic to show/hide fields based on model type
+            if (modelTypeLower.includes("llama")) {
+                apiKeyDiv.style.display = "none";  // Hide API Key for Llama models
+                baseUrlDiv.style.display = "block"; // Show Base URL
+            } else if (modelTypeLower.includes("openai")) {
+                apiKeyDiv.style.display = "block";  // Show API Key
+                baseUrlDiv.style.display = "none";  // Hide Base URL for OpenAI
+            } else {
+                // Default behavior (for unknown model types)
+                apiKeyDiv.style.display = "block";
+                baseUrlDiv.style.display = "block";
+            }
+        
+            // Show modal and overlay
+            document.getElementById("editModal").style.display = "block";
+            document.getElementById("editOverlay").style.display = "block";
+        }
+        
+        
+    
+        function deleteLLM(id) {
+            if (confirm("Are you sure?")) {
+                fetch(`/delete-llm/${id}`, { method: "DELETE" })
+                    .then(response => response.json())
+                    .then(data => {
+                        alert(data.message);
+                        fetchSavedLLMs();
+                    })
+                    .catch(error => console.error("Error deleting LLM:", error));
+            }
+        }
+
+
+        function showLLMConfig() {
+            document.getElementById("llmConfigContent").style.display = "block";
+        }
+
+        function hideLLMConfig() {
+            document.getElementById("llmConfigContent").style.display = "none";
+        }
+
+
+        function openLLMModal() {
+            document.getElementById('llmModal').style.display = 'block';
+            document.getElementById('llmOverlay').style.display = 'block';
+        }
+
+        function closeEditModal() {
+            document.getElementById("editModal").style.display = "none";
+            document.getElementById("editOverlay").style.display = "none";
+        }
+
+        function saveEditedLLM() {
+            const id = document.getElementById("edit_id").value;
+            const updatedData = {
+                model_type: document.getElementById("edit_model_type").value,
+                model_name: document.getElementById("edit_model_name").value,
+                base_url: document.getElementById("edit_base_url").value,
+                api_key: document.getElementById("edit_api_key").value
+            };
+
+            fetch(`/update-llm/${id}`, {
+                method: "PUT",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify(updatedData)
+            }).then(response => response.json())
+              .then(data => {
+                  alert(data.message);
+                  closeEditModal();
+                  fetchSavedLLMs();
+              }).catch(error => console.error("Error updating LLM:", error));
+        }
+
+        function closeLLMModal() {
+            document.getElementById('llmModal').style.display = 'none';
+            document.getElementById('llmOverlay').style.display = 'none';
+        }
+
+
+        function toggleModelSelection() {
+            var modelType = document.getElementById("model_type").value;
+            var ollamaDiv = document.getElementById("ollamaModelsDiv");
+            document.getElementById("ollamaBaseUrlDiv").style.display = modelType === "ollama" ? "block" : "none";
+            var openaiDiv = document.getElementById("openaiModelsDiv");
+            var apiKeyField = document.getElementById("apiKeyField");
+
+            ollamaDiv.style.display = "none";
+            openaiDiv.style.display = "none";
+            apiKeyField.style.display = "none";
+
+            if (modelType === "ollama") {
+                ollamaDiv.style.display = "block";
+                loadOllamaModels(); // Fetch models dynamically
+            } else if (modelType === "openai") {
+                openaiDiv.style.display = "block";
+                apiKeyField.style.display = "block";
+            }
+        }
+
+        function toggleApiKeyField() {
+            var openaiModel = document.getElementById("openai_model").value;
+            var apiKeyField = document.getElementById("apiKeyField");
+
+            if (openaiModel === "gpt-3.5-turbo" || openaiModel === "gpt-4") {
+                apiKeyField.style.display = "block";
+            } else {
+                apiKeyField.style.display = "block";
+            }
+        }
+
+        function loadOllamaModels() {
+            fetch("/get-ollama-models")
+                .then(response => {
+                    if (!response.ok) {
+                        throw new Error(`HTTP error! Status: ${response.status}`);
+                    }
+                    return response.json();
+                })
+                .then(data => {
+                    console.log("Received data:", data); // Debugging
+                    var models = data.models; // Extract models array
+        
+                    var ollamaDropdown = document.getElementById("ollama_model");
+                    ollamaDropdown.innerHTML = ""; // Clear previous options
+        
+                    if (!Array.isArray(models) || models.length === 0) {
+                        var noOption = document.createElement("option");
+                        noOption.textContent = "No models found";
+                        ollamaDropdown.appendChild(noOption);
+                        console.warn("No models found in API response.");
+                        return;
+                    }
+        
+                    models.forEach(function(model) {
+                        var option = document.createElement("option");
+                        option.value = model;
+                        option.textContent = model;
+                        ollamaDropdown.appendChild(option);
+                    });
+        
+                    console.log("Models successfully loaded into dropdown!");
+                })
+                .catch(error => console.error("Error fetching Ollama models:", error));
+        }
+        
+
+        function testLLMConnection() {
+            let modelType = document.getElementById("model_type").value;
+            let resultField = document.getElementById("test-result");
+            resultField.innerText = "Testing connection...";
+            resultField.style.color = "blue";
+        
+            if (modelType === "ollama") {
+                testOllamaConnection();
+            } else if (modelType === "openai") {
+                testOpenAIConnection();
+            } else {
+                resultField.innerText = "Please select a model type.";
+                resultField.style.color = "red";
+            }
+        }
+
+
+        // 🟢 Ollama Connection Test
+        function testOllamaConnection() {
+            let url = document.getElementById("ollama_base_url").value;
+            let resultField = document.getElementById("test-result");
+            let urlPattern = /^http:\/\/[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}:11434\/?$/;
+
+            if (!urlPattern.test(url)) {
+                resultField.innerText = "Invalid URL format. Please enter a correct URL.";
+                resultField.style.color = "red";
+                return;
+            }
+
+            fetch(url, { method: "GET" })
+                .then(response => {
+                    if (response.ok) {
+                        resultField.innerText = "✅ Ollama server is running!";
+                        resultField.style.color = "green";
+                    } else {
+                        resultField.innerText = "❌ Server not reachable. Check the URL.";
+                        resultField.style.color = "red";
+                    }
+                })
+                .catch(error => {
+                    resultField.innerText = "❌ Error connecting to server. Ensure it's running.";
+                    resultField.style.color = "red";
+                });
+        }
+
+
+
+        // 🟢 OpenAI API Key Validation
+function testOpenAIConnection() {
+    let apiKey = document.getElementById("api_key").value;
+    let resultField = document.getElementById("test-result");
+
+    if (!apiKey) {
+        resultField.innerText = "API key is required.";
+        resultField.style.color = "red";
+        return;
+    }
+
+    fetch("/validate-openai-api", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ api_key: apiKey })
+    })
+    .then(response => response.json())
+    .then(data => {
+        if (data.success) {
+            resultField.innerText = "✅ API key is valid!";
+            resultField.style.color = "green";
+        } else {
+            resultField.innerText = "❌ Invalid API key. Please check your key.";
+            resultField.style.color = "red";
+        }
+    })
+    .catch(error => {
+        resultField.innerText = "❌ Error validating API key.";
+        resultField.style.color = "red";
+    });
+}
+
+
+
+
+        function saveLLMConfig() {
+            const modelType = document.getElementById('model_type').value;
+            if (!modelType) {
+                alert("Please select a Model Type before saving.");
+                return; // Stop execution if no model type is selected
+            }
+        
+            const ollamaBaseUrl = document.getElementById('ollama_base_url').value;
+            const ollamaModel = document.getElementById('ollama_model').value;
+            const openaiModel = document.getElementById('openai_model').value;
+            const apiKey = document.getElementById('api_key').value;
+        
+            fetch('/save-llm-config', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({
+                    modelType,  // Ensure this value is always included
+                    ollamaBaseUrl,
+                    ollamaModel,
+                    openaiModel,
+                    apiKey
+                }),
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.message) {
+                    alert(data.message);
+                    closeLLMModal();
+                } else {
+                    console.error("Server Error:", data.error);
+                    logErrorToBackend(data.error);
+                    alert("Failed to save LLM configuration. Check logs for details.");
+                }
+            })
+            .catch(error => {
+                console.error("Fetch Error:", error);
+                logErrorToBackend(error.toString());
+                alert("An error occurred while saving the LLM configuration.");
+            });
+        }
+        
+        function logErrorToBackend(errorMessage) {
+            fetch('/log_error', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({ error: errorMessage }),
+            }).catch(error => console.error("Failed to log error to backend:", error));
+        }
+
+
+        function editConfig(id, modelName, apiKey) {
+            document.getElementById("config_id").value = id;
+            document.getElementById("model_name").value = modelName;
+            
+            if (apiKey) {
+                document.getElementById("api_key").value = apiKey;
+                document.getElementById("apiKeyField").style.display = "block";
+            } else {
+                document.getElementById("api_key").value = "";
+                document.getElementById("apiKeyField").style.display = "none";
+            }
+            
+            toggleApiKey();
+        }
+
+
+
+
+
+
+
+
+
+
+
+        function toggleMenu(menuId) {
+            let menu = document.getElementById(menuId);
+            document.querySelectorAll('.submenu').forEach(sub => sub.style.display = "none");
+            menu.style.display = menu.style.display === "block" ? "none" : "block";
+
+            document.querySelectorAll('.menu-item').forEach(item => item.classList.remove('active'));
+            event.currentTarget.classList.add('active');
+
+            if (menuId !== "admin") {
+                hideSqlAgent();
+            }
+            if (menuId !== "aiProviders") {
+                hideLLMConfig();
+            }
+        }
+
+        function showSqlAgent() {
+            document.getElementById('sqlAgentSection').style.display = 'block';
+            fetchSavedConnections();
+        }
+
+        function hideSqlAgent() {
+            document.getElementById('sqlAgentSection').style.display = 'none';
+        }
+
+        function openModal() {
+            document.getElementById('sqlModal').style.display = 'block';
+            document.getElementById('overlay').style.display = 'block';
+        }
+
+        function closeModal() {
+            document.getElementById('sqlModal').style.display = 'none';
+            document.getElementById('overlay').style.display = 'none';
+        }
+
+        function testConnection() {
+            const serverName = document.getElementById('serverName').value;
+            const port = document.getElementById('port').value;  // Capture port
+            const databaseName = document.getElementById('databaseName').value;
+            const username = document.getElementById('username').value;
+            const password = document.getElementById('password').value;
+
+            fetch('/test_connection', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({
+                    serverName,
+                    port,  // Send port in request
+                    databaseName,
+                    username,
+                    password
+                }),
+            })
+            .then(response => response.json())
+            .then(data => {
+                alert(data.message || data.error);
+            })
+            .catch(error => {
+                alert("An error occurred while testing the connection.");
+                console.error(error);
+            });
+        }
+
+        function saveConnection() {
+            const serverName = document.getElementById('serverName').value;
+            const port = document.getElementById('port').value;  // Capture port
+            const databaseName = document.getElementById('databaseName').value;
+            const username = document.getElementById('username').value;
+            const password = document.getElementById('password').value;
+
+            fetch('/save_connection', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({
+                    serverName,
+                    port,  // Send port in request
+                    databaseName,
+                    username,
+                    password
+                }),
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.message) {
+                    alert(data.message);
+                    closeModal();
+                    fetchSavedConnections();
+                } else {
+                    alert(data.error);
+                }
+            })
+            .catch(error => {
+                alert("An error occurred while saving the connection.");
+                console.error(error);
+            });
+        }
+
+
+        // new
+        function fetchSavedConnections() {
+            fetch('/get_connections')
+                .then(response => response.json())
+                .then(data => {
+                    const savedConnections = document.getElementById('savedConnections');
+                    savedConnections.innerHTML = '';
+
+                    data.forEach(conn => {
+                        if (!conn.conn_id) {
+                            console.error("Missing conn_id for:", conn);
+                            return; // Skip if conn_id is missing
+                        }
+
+                        const isSelected = conn.select === "yes" ? "selected" : "";
+
+                        const li = document.createElement('li');
+                        li.className = isSelected;  // Apply CSS class if selected
+                        li.innerHTML = `
+                            <span>${conn.serverName}:${conn.port} - ${conn.databaseName}</span>
+                            <button class="delete-btn" onclick="deleteConnection('${conn.conn_id}')">x</button>
+                        `;
+                        savedConnections.appendChild(li);
+                    });
+                })
+                .catch(error => console.error('Error fetching connections:', error));
+        }
+
+
+
+
+        function deleteConnection(connId) {
+            fetch(`/delete_connection`, {
+                method: 'DELETE',
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify({ conn_id: connId })  // Send as JSON
+            })
+            .then(response => response.json())
+            .then(data => {
+                alert(data.message);
+                fetchSavedConnections(); // Refresh the list after deletion
+            })
+            .catch(error => console.error('Error deleting connection:', error));
+        }
+
+        // Fetch saved connections on page load
+        fetchSavedConnections();
+
+
+        // // new
+        // function selectConnection(connId) {
+        //     fetch('/select_connection', {
+        //         method: 'POST',
+        //         headers: {
+        //             'Content-Type': 'application/json'
+        //         },
+        //         body: JSON.stringify({ conn_id: connId })  // Send selected ID
+        //     })
+        //     .then(response => response.json())
+        //     .then(data => {
+        //         alert(data.message);
+        //         fetchSavedConnections(); // Refresh list to reflect selection change
+        //     })
+        //     .catch(error => console.error('Error selecting connection:', error));
+        // }
+
+
+    </script>
+</body>
+</html>

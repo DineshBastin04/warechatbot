@@ -1,0 +1,5630 @@
+{
+
+  "order": {
+    "terms": [
+      "order",
+      "sales order",
+      "customer order",
+      "SO",
+      "outbound order",
+      "order header",
+      "main order",
+      "created order",
+      "new order",
+      "order entry",
+      "order record",
+      "order details"
+    ],
+    "description": "Represents a single outbound customer order captured in WMS, containing all customer, billing, shipping, carrier, delivery and freight information."
+  },
+
+  "order_creation": {
+    "terms": [
+      "order created",
+      "orders created today",
+      "orders raised today",
+      "how many orders created",
+      "new orders",
+      "order generation",
+      "order entry",
+      "order placed",
+      "created SO",
+      "created customer order"
+    ],
+    "description": "Refers to orders that were created/entered in the system, based on order_date."
+  },
+
+  "order_number": {
+    "terms": [
+      "order number",
+      "SO number",
+      "sales order number",
+      "customer order number",
+      "reference number",
+      "order id shown to customer"
+    ],
+    "description": "Unique external order identifier used to reference the customer order."
+  },
+
+  "order_id": {
+    "terms": [
+      "order id",
+      "system order id",
+      "internal order key",
+      "order primary key"
+    ],
+    "description": "Internal system-generated unique primary key for each order."
+  },
+
+  "warehouse": {
+    "terms": [
+      "warehouse",
+      "warehouse id",
+      "wh_id",
+      "facility",
+      "site"
+    ],
+    "description": "Identifies the warehouse/facility where the order is being processed."
+  },
+
+  "customer": {
+    "terms": [
+      "customer",
+      "customer details",
+      "customer name",
+      "customer information",
+      "client info",
+      "customer account"
+    ],
+    "description": "Customer placing the order, including name, PO, phone, fax, email."
+  },
+
+  "customer_po": {
+    "terms": [
+      "customer PO",
+      "cust_po_number",
+      "PO number",
+      "purchase order number"
+    ],
+    "description": "Customer-provided PO number linked to the order."
+  },
+
+  "billing_address": {
+    "terms": [
+      "bill to",
+      "billing address",
+      "billing information",
+      "invoice address",
+      "bill to code",
+      "bill to customer"
+    ],
+    "description": "Billing party details including address, city, state, postal code, and phone."
+  },
+
+  "shipping_address": {
+    "terms": [
+      "ship to",
+      "shipping address",
+      "delivery address",
+      "ship to code",
+      "ship to customer",
+      "ship to location"
+    ],
+    "description": "Recipient's address where the order will be shipped."
+  },
+
+  "delivery_address": {
+    "terms": [
+      "delivery address",
+      "final delivery location",
+      "drop off location",
+      "delivery details"
+    ],
+    "description": "Final delivery location details for shipment completion."
+  },
+
+  "status": {
+    "terms": [
+      "order status",
+      "SO status",
+      "shipment status",
+      "current status",
+      "processing status"
+    ],
+    "description": "Represents the current state of the order (e.g., created, picked, shipped)."
+  },
+
+  "picking": {
+    "terms": [
+      "picking",
+      "order picked",
+      "date picked",
+      "pick complete",
+      "picked orders",
+      "orders ready for shipping"
+    ],
+    "description": "Represents the picking activity completion for the order."
+  },
+
+  "shipping": {
+    "terms": [
+      "shipping",
+      "shipped",
+      "order shipped",
+      "dispatch",
+      "dispatched",
+      "sent out",
+      "shipped out",
+      "shipment done",
+      "carrier pickup done",
+      "actual ship date",
+      "shipment date",
+      "shipping complete"
+    ],
+    "description": "Refers to the shipment of the order using a designated carrier based on actual_ship_date."
+  },
+
+  "delivery": {
+    "terms": [
+      "delivery",
+      "delivered",
+      "actual delivery date",
+      "earliest delivery date",
+      "latest delivery date",
+      "when delivered",
+      "delivery completion",
+      "delivery confirmation"
+    ],
+    "description": "Indicates final delivery of the order to ship-to/delivery address."
+  },
+
+  "carrier": {
+    "terms": [
+      "carrier",
+      "shipping carrier",
+      "transport provider",
+      "courier",
+      "carrier code",
+      "SCAC",
+      "carrier scac code"
+    ],
+    "description": "Represents the logistics provider used to ship the order."
+  },
+
+  "freight": {
+    "terms": [
+      "freight",
+      "freight cost",
+      "shipping cost",
+      "transportation cost",
+      "freight terms",
+      "prepaid",
+      "COD"
+    ],
+    "description": "Includes freight terms and total shipping/transportation cost."
+  },
+
+  "rush_priority": {
+    "terms": [
+      "rush order",
+      "priority order",
+      "urgent order",
+      "high priority",
+      "expedited order"
+    ],
+    "description": "Represents urgency level of the order."
+  },
+
+  "dates": {
+    "terms": [
+      "order dates",
+      "ship dates",
+      "delivery dates",
+      "arrival date",
+      "promised date",
+      "expected date",
+      "order timeline"
+    ],
+    "description": "All date-related fields including order, arrival, pick, ship, and delivery dates."
+  },
+
+  "hazmat": {
+    "terms": [
+      "hazardous material",
+      "hazmat",
+      "haz flag",
+      "dangerous goods",
+      "hazardous shipment"
+    ],
+    "description": "Indicates whether the order contains hazardous material."
+  },
+
+  "weight_volume": {
+    "terms": [
+      "weight",
+      "order weight",
+      "cubic volume",
+      "order volume",
+      "shipment weight",
+      "shipment volume"
+    ],
+    "description": "Total weight and volume of the order used for shipping."
+  },
+
+  "backorder": {
+    "terms": [
+      "backorder",
+      "back ordered",
+      "items on backorder",
+      "BO",
+      "backordered order"
+    ],
+    "description": "Identifies whether the order is in a backordered state."
+  },
+
+  "cod": {
+    "terms": [
+      "COD",
+      "cash on delivery",
+      "cod amount",
+      "cod charge"
+    ],
+    "description": "Represents any COD amount applicable to the order."
+  },
+
+  "rma": {
+    "terms": [
+      "RMA",
+      "return material authorization",
+      "return order",
+      "rma number",
+      "return processing"
+    ],
+    "description": "Return authorization number associated with the order."
+  },
+
+  "load_information": {
+    "terms": [
+      "load id",
+      "load sequence",
+      "load details",
+      "bol",
+      "bill of lading",
+      "pro number",
+      "master BOL"
+    ],
+    "description": "Load-level shipping details including BOL, PRO number, and load sequence."
+  },
+  
+  "order_detail": {
+    "terms": [
+      "order detail",
+      "order line",
+      "line item",
+      "item line",
+      "SO line",
+      "order item details",
+      "detail record",
+      "order detail record",
+      "line level information"
+    ],
+    "description": "Represents each individual item on an outbound order, including item number, quantities, shipped qty, backorder qty, weights, and line-level identifiers."
+  },
+
+  "order_line_number": {
+    "terms": [
+      "line number",
+      "line no",
+      "SO line number",
+      "order line number",
+      "line sequence",
+      "item line sequence"
+    ],
+    "description": "Indicates the sequence of the item inside the order."
+  },
+
+  "item_number": {
+    "terms": [
+      "item number",
+      "sku",
+      "product code",
+      "item code",
+      "material number",
+      "part number",
+      "catalog number"
+    ],
+    "description": "Unique identifier of the ordered item."
+  },
+
+  "item_description": {
+    "terms": [
+      "item description",
+      "product description",
+      "material description",
+      "sku description"
+    ],
+    "description": "Description of the ordered item."
+  },
+
+  "qty": {
+    "terms": [
+      "quantity",
+      "order quantity",
+      "qty ordered",
+      "ordered qty",
+      "line qty"
+    ],
+    "description": "Total quantity requested for this item on the order."
+  },
+
+  "qty_shipped": {
+    "terms": [
+      "shipped quantity",
+      "qty shipped",
+      "quantity shipped",
+      "dispatched qty",
+      "fulfilled qty",
+      "sent qty",
+      "picked and shipped qty"
+    ],
+    "description": "Quantity of the item that has been shipped."
+  },
+
+  "backorder_quantity": {
+    "terms": [
+      "backorder qty",
+      "bo qty",
+      "qty backordered",
+      "remaining qty",
+      "unavailable qty"
+    ],
+    "description": "Quantity of the item that could not be fulfilled and remains as backorder."
+  },
+
+  "item_weight": {
+    "terms": [
+      "item weight",
+      "weight per unit",
+      "unit weight",
+      "product weight"
+    ],
+    "description": "Weight of a single unit of the item."
+  },
+
+  "extended_weight": {
+    "terms": [
+      "extended weight",
+      "total weight",
+      "line weight",
+      "order line total weight"
+    ],
+    "description": "Total weight for all units of this line item."
+  },
+
+  "unit_volume": {
+    "terms": [
+      "unit volume",
+      "item volume",
+      "product volume"
+    ],
+    "description": "Volume of a single unit of the item."
+  },
+
+  "extended_volume": {
+    "terms": [
+      "extended volume",
+      "total volume",
+      "line volume"
+    ],
+    "description": "Total cubic volume for the line item."
+  },
+
+  "unit of measure": {
+    "terms": [
+      "UOM",
+      "unit of measure",
+      "order uom",
+      "measurement unit"
+    ],
+    "description": "Unit of measure used for ordering the item."
+  },
+
+  "lot_number": {
+    "terms": [
+      "lot number",
+      "batch number",
+      "lot",
+      "manufacturing lot"
+    ],
+    "description": "Lot or batch identifier if the item is lot-controlled."
+  },
+
+  "cust_part": {
+    "terms": [
+      "customer part",
+      "customer part number",
+      "cust part",
+      "client part number"
+    ],
+    "description": "Customer-specific item identifier."
+  },
+
+  "line_type": {
+    "terms": [
+      "line type",
+      "detail type",
+      "order detail type",
+      "type of line"
+    ],
+    "description": "Classification of the line item (normal, special, kit, etc.)."
+  },
+
+  "haz_material": {
+    "terms": [
+      "hazmat",
+      "haz material",
+      "hazardous material",
+      "dangerous goods flag"
+    ],
+    "description": "Indicates whether the line item is hazardous."
+  },
+
+  "stacking_sequence": {
+    "terms": [
+      "stacking sequence",
+      "stack sequence",
+      "stacking order"
+    ],
+    "description": "Sequence used for stacking items during packing/palletizing."
+  },
+
+  "afo_plan_qty": {
+    "terms": [
+      "planned qty",
+      "allocated qty",
+      "plan quantity",
+      "afo planned qty"
+    ],
+    "description": "Planned quantity for allocation or fulfillment."
+  },
+
+  "tran_plan_qty": {
+    "terms": [
+      "transaction planned qty",
+      "plan qty for transaction",
+      "planned picking qty"
+    ],
+    "description": "Planned transaction quantity for picking or allocation."
+  },
+
+  "picking_flow1": {
+    "terms": [
+      "picking flow",
+      "pick flow",
+      "picking process flow",
+      "pick path"
+    ],
+    "description": "Flow or path used for picking the line item."
+  },
+
+  "host_wave_id": {
+    "terms": [
+      "wave id",
+      "host wave id",
+      "wave number",
+      "wave reference"
+    ],
+    "description": "Identifies the wave batch that the line belongs to."
+  },
+
+  "b_o_l_details": {
+    "terms": [
+      "BOL details",
+      "bill of lading lines",
+      "BOL class",
+      "BOL line1",
+      "BOL line2",
+      "BOL line3",
+      "BOL code",
+      "bill of lading info"
+    ],
+    "description": "Bill of Lading related details for the item line."
+  },
+
+  "date_expected": {
+    "terms": [
+      "expected date",
+      "expected delivery date",
+      "due date",
+      "planned fulfillment date"
+    ],
+    "description": "Expected date for this item line to be fulfilled or shipped."
+  },
+
+  "item_master_id": {
+    "terms": [
+      "item master id",
+      "product master id",
+      "inventory master id"
+    ],
+    "description": "Reference to item in master data."
+  },
+
+  "order_number1": {
+    "terms": [
+      "order number",
+      "SO number",
+      "customer order number",
+      "line order reference"
+    ],
+    "description": "Order number to which this line belongs."
+  },
+
+  "order_id1": {
+    "terms": [
+      "order id",
+      "header id",
+      "parent order id",
+      "order header reference"
+    ],
+    "description": "Foreign key linking the line item to t_order."
+  },
+  
+  "pick_detail": {
+    "terms": [
+      "pick detail",
+      "picking detail",
+      "line pick record",
+      "task detail",
+      "pick transaction",
+      "pick entry"
+    ],
+    "description": "Stores each picking transaction and status for an item during outbound processing."
+  },
+
+  "order_number2": {
+    "terms": [
+      "order number",
+      "SO number",
+      "sales order",
+      "customer order",
+      "which order",
+      "pick order reference"
+    ],
+    "description": "Order for which the picking task is created."
+  },
+
+  "line_number": {
+    "terms": [
+      "line number",
+      "order line",
+      "SO line",
+      "item line number"
+    ],
+    "description": "Line number within the order."
+  },
+
+  "item_number1": {
+    "terms": [
+      "item number",
+      "sku",
+      "product code",
+      "material",
+      "item",
+      "part number"
+    ],
+    "description": "Item being picked from the warehouse."
+  },
+
+  "lot_number1": {
+    "terms": [
+      "lot number",
+      "batch number",
+      "lot",
+      "manufacturing lot"
+    ],
+    "description": "Lot or batch ID if item is lot-controlled."
+  },
+
+  "serial_number": {
+    "terms": [
+      "serial number",
+      "serial",
+      "SN",
+      "unique serial"
+    ],
+    "description": "Serial number for serialized products."
+  },
+
+  "pick_id": {
+    "terms": [
+      "pick id",
+      "task id",
+      "picking id",
+      "pick transaction id"
+    ],
+    "description": "Unique identifier for each pick task."
+  },
+
+  "pick_location": {
+    "terms": [
+      "pick location",
+      "from location",
+      "bin",
+      "slot",
+      "picking bin",
+      "where to pick from",
+      "source location"
+    ],
+    "description": "Location from which the item is picked."
+  },
+
+  "staging_location": {
+    "terms": [
+      "staging location",
+      "stage area",
+      "where staged",
+      "drop zone",
+      "staging bin"
+    ],
+    "description": "Location where picked items are moved before loading."
+  },
+
+  "zone": {
+    "terms": [
+      "zone",
+      "picking zone",
+      "warehouse zone",
+      "work zone"
+    ],
+    "description": "Zone to which the pick location belongs."
+  },
+
+  "pick_area": {
+    "terms": [
+      "pick area",
+      "picking area",
+      "area",
+      "zone area"
+    ],
+    "description": "Area grouping related picking locations."
+  },
+
+  "planned_quantity": {
+    "terms": [
+      "planned qty",
+      "expected qty",
+      "qty to pick",
+      "allocated qty"
+    ],
+    "description": "Quantity planned to be picked."
+  },
+
+  "picked_quantity": {
+    "terms": [
+      "picked qty",
+      "qty picked",
+      "actual picked quantity",
+      "what worker picked"
+    ],
+    "description": "Quantity actually picked by the operator."
+  },
+
+  "staged_quantity": {
+    "terms": [
+      "staged qty",
+      "qty staged",
+      "moved to staging",
+      "staging quantity"
+    ],
+    "description": "Quantity moved to staging area."
+  },
+
+  "loaded_quantity": {
+    "terms": [
+      "loaded qty",
+      "qty loaded",
+      "loading quantity",
+      "shipped loading qty"
+    ],
+    "description": "Quantity loaded onto the truck or container."
+  },
+
+  "unplanned_quantity": {
+    "terms": [
+      "unplanned qty",
+      "extra quantity",
+      "unexpected qty",
+      "over pick qty"
+    ],
+    "description": "Quantity picked without a planned allocation."
+  },
+
+  "Status": {
+    "terms": [
+      "status",
+      "picking status",
+      "task status",
+      "picking stage",
+      "state",
+      "where is pick",
+      "current status",
+      "is it picked",
+      "is it staged",
+      "is it loaded",
+      "PICKED",
+      "STAGED",
+      "LOADED",
+      "RELEASED",
+      "ASSIGNED",
+      "NOT STARTED",
+      "IN PROGRESS"
+    ],
+    "description": "Current picking progress stage (picked, staged, loaded, etc.)."
+  },
+
+  "type": {
+    "terms": [
+      "type",
+      "pick type",
+      "task type",
+      "RP",
+      "regular pick",
+      "replenishment pick"
+    ],
+    "description": "Type of picking operation executed."
+  },
+
+  "uom": {
+    "terms": [
+      "UOM",
+      "unit of measure",
+      "measurement unit"
+    ],
+    "description": "Unit of measure for the item being picked."
+  },
+
+  "work_q_id": {
+    "terms": [
+      "work queue id",
+      "work id",
+      "task link id",
+      "work_q"
+    ],
+    "description": "Reference to work queue entry that generated the pick."
+  },
+
+  "work_type": {
+    "terms": [
+      "work type",
+      "task type",
+      "operation type"
+    ],
+    "description": "Type of warehouse work the pick belongs to."
+  },
+
+  "picking_flow": {
+    "terms": [
+      "picking flow",
+      "pick flow",
+      "picking method",
+      "path followed",
+      "picking strategy"
+    ],
+    "description": "Picking strategy or flow used."
+  },
+
+  "wave_id": {
+    "terms": [
+      "wave id",
+      "wave number",
+      "batch id",
+      "picking wave"
+    ],
+    "description": "Wave to which the pick belongs."
+  },
+
+  "load_id": {
+    "terms": [
+      "load id",
+      "loading id",
+      "truck load number",
+      "shipment load"
+    ],
+    "description": "Load/shipment number for loaded picks."
+  },
+
+  "load_sequence": {
+    "terms": [
+      "load sequence",
+      "loading order",
+      "truck loading sequence"
+    ],
+    "description": "Sequence in which items were loaded."
+  },
+
+  "stop_id": {
+    "terms": [
+      "stop id",
+      "delivery stop id",
+      "route stop",
+      "stop number"
+    ],
+    "description": "Delivery stop linked to the load."
+  },
+
+  "container_id": {
+    "terms": [
+      "container id",
+      "container number",
+      "package id",
+      "carton id",
+      "pallet id"
+    ],
+    "description": "Container or carton used during picking/loading."
+  },
+
+  "user_assigned": {
+    "terms": [
+      "user assigned",
+      "assigned to",
+      "picker name",
+      "who picked",
+      "operator"
+    ],
+    "description": "Warehouse operator assigned to pick the item."
+  },
+
+  "bulk_pick_flag": {
+    "terms": [
+      "bulk pick flag",
+      "bulk",
+      "is bulk pick",
+      "bulk picking"
+    ],
+    "description": "Indicates bulk picking operations."
+  },
+
+  "pick_category": {
+    "terms": [
+      "pick category",
+      "category",
+      "picking category",
+      "task category"
+    ],
+    "description": "Category classification for pick tasks."
+  },
+
+  "wh_id": {
+    "terms": [
+      "warehouse id",
+      "wh id",
+      "warehouse",
+      "site",
+      "facility"
+    ],
+    "description": "Warehouse where the pick transaction occurred."
+  },
+
+  "cartonization_batch_id": {
+    "terms": [
+      "cartonization batch id",
+      "carton batch",
+      "carton grouping id"
+    ],
+    "description": "Batch used for cartonization/packing."
+  },
+
+  "common_warehouse_phrases": {
+    "terms": [
+      "show pick status",
+      "how many picked",
+      "is order picked",
+      "is it staged",
+      "is it loaded",
+      "show picking progress",
+      "where is my item",
+      "which bin to pick from",
+      "show wave picks",
+      "pending picks",
+      "what is loaded",
+      "what was staged",
+      "pick not done",
+      "picking delayed",
+      "completed picks",
+      "open picks",
+      "show picks for order",
+      "show load details"
+    ],
+    "description": "Operational phrases warehouse users commonly ask for pick-related queries."
+  },
+
+  "item_identification": {
+    "terms": [
+      "item_number",
+      "item",
+      "sku",
+      "part_number",
+      "material",
+      "material_number",
+      "product_code",
+      "code",
+      "lot_number",
+      "lot",
+      "batch",
+      "batch_number",
+      "serial_number",
+      "serial",
+      "sn",
+      "tag_number"
+    ],
+    "description": "Main product identifier warehouse users search by every day"
+  },
+  "quantity_on_hand": {
+    "terms": [
+      "actual_qty",
+      "qty",
+      "quantity",
+      "on_hand",
+      "onhand",
+      "stock_qty",
+      "physical_qty",
+      "how_many",
+      "how_much",
+      "total_qty"
+    ],
+    "description": "Total physical quantity currently in the bin/location"
+  },
+  "available_quantity": {
+    "terms": [
+      "available_qty",
+      "available",
+      "free_stock",
+      "free_qty",
+      "pickable_qty",
+      "can_pick",
+      "can_i_pick",
+      "good_to_go",
+      "ready_to_pick"
+    ],
+    "description": "Quantity workers are actually allowed to pick right now"
+  },
+  "unavailable_blocked_qty": {
+    "terms": [
+      "unavailable_qty",
+      "blocked",
+      "hold_qty",
+      "damaged_qty",
+      "quarantined",
+      "on_hold",
+      "not_available",
+      "bad_stock",
+      "no_good"
+    ],
+    "description": "Quantity that exists but cannot be picked (damage, QC hold, etc.)"
+  },
+  "stock_status": {
+    "terms": [
+      "status",
+      "stock_status",
+      "A",
+      "U",
+      "active",
+      "available",
+      "good",
+      "unavailable",
+      "blocked",
+      "on_hold",
+      "bad"
+    ],
+    "description": "Quick yes/no flag: A = good to pick, U = do not touch"
+  },
+  "warehouse stock": {
+    "terms": [
+      "wh_id",
+      "warehouse",
+      "wh",
+      "site",
+      "depot",
+      "facility"
+    ],
+    "description": "Which warehouse/site the stock is in"
+  },
+  "location_bin": {
+    "terms": [
+      "location_id",
+      "location",
+      "loc",
+      "bin",
+      "slot",
+      "where_is_it",
+      "where_is",
+      "aisle",
+      "bay",
+      "level"
+    ],
+    "description": "Exact bin or slot where the item is physically stored"
+  },
+  "forward_pick_pickface": {
+    "terms": [
+      "FRPICKUP",
+      "pickup",
+      "forward_pick",
+      "pick_face",
+      "primary_pick",
+      "fast_pick",
+      "pick_slot"
+    ],
+    "description": "Fast-moving pick slots right at the front for quick picking"
+  },
+  "reserve_bulk_storage": {
+    "terms": [
+      "reserve",
+      "bulk",
+      "overstock",
+      "back_stock",
+      "storage_location",
+      "pallet_location"
+    ],
+    "description": "Deep storage / bulk area where pallets are kept"
+  },
+  "putaway_location": {
+    "terms": [
+      "put_away_location",
+      "putaway",
+      "suggested_location",
+      "put_to",
+      "move_to"
+    ],
+    "description": "Where receiving team should put newly arrived stock"
+  },
+  "fifo_receipt_date": {
+    "terms": [
+      "fifo_date",
+      "fifo",
+      "receipt_date",
+      "received_date",
+      "arrival_date",
+      "oldest_date",
+      "in_date"
+    ],
+    "description": "Date item came in – used to pick oldest stock first"
+  },
+  "expiration_date": {
+    "terms": [
+      "expiration_date",
+      "expiry",
+      "exp_date",
+      "expires_on",
+      "best_before",
+      "use_by",
+      "shelf_life",
+      "1900-01-01",
+      "no_expiry",
+      "never_expires"
+    ],
+    "description": "When the product expires – 1900-01-01 means no expiry"
+  },
+  "reserved_stock": {
+    "terms": [
+      "reserved_for",
+      "reserved",
+      "allocated",
+      "locked",
+      "booked",
+      "held_for",
+      "for_order",
+      "already_picked"
+    ],
+    "description": "Stock already promised to an order – cannot be picked for anything else"
+  },
+  "owner_customer": {
+    "terms": [
+      "owner_id",
+      "owner",
+      "customer",
+      "customer_owned",
+      "whose_stock",
+      "belongs_to",
+      "consignment",
+      "co"
+    ],
+    "description": "Who actually owns the stock (important in 3PL warehouses)"
+  },
+  "item_type_handling": {
+    "terms": [
+      "type",
+      "item_type",
+      "51556",
+      "STORAGE",
+      "hazmat",
+      "hazardous",
+      "refrigerated",
+      "cold_chain",
+      "frozen",
+      "special_handling"
+    ],
+    "description": "Special handling rules (dangerous goods, fridge, freezer, etc.)"
+  },
+  "quality_inspection": {
+    "terms": [
+      "inspection_code",
+      "qc",
+      "quality_check",
+      "inspected",
+      "passed",
+      "failed",
+      "rejected",
+      "pending_qc",
+      "quality_hold"
+    ],
+    "description": "Result of quality inspection – often why stock is blocked"
+  },
+  "negative_stock": {
+    "terms": [
+      "negative_qty",
+      "negative_stock",
+      "minus",
+      "overpicked",
+      "over_issued",
+      "short",
+      "backorder"
+    ],
+    "description": "System shows negative when more was picked than physically existed"
+  },
+  "common_warehouse_questions": {
+    "terms": [
+      "check_stock",
+      "stock_check",
+      "how_much",
+      "where_is_item",
+      "find_item",
+      "locate",
+      "oldest_lot",
+      "nearest_expiry",
+      "can_i_pick",
+      "why_blocked",
+      "who_owns",
+      "replenish",
+      "putaway_location",
+      "show_me",
+      "is_it_good"
+    ],
+    "description": "Exact everyday phrases warehouse workers will ask the chatbot"
+  },
+  "pallet_id": {
+    "terms": [
+      "hu_id",
+      "hu",
+      "pallet",
+      "pallet_id",
+      "pallet_number",
+      "lpn",
+      "license_plate",
+      "tag",
+      "pallet_tag",
+      "sscc",
+      "what_pallet",
+      "which_pallet"
+    ],
+    "description": "Unique identifier of a handling unit (pallet, carton, tote, etc.)"
+  },
+  "pallet_type": {
+    "terms": [
+      "type",
+      "container_type",
+      "pallet",
+      "carton",
+      "master",
+      "box",
+      "tote",
+      "inner",
+      "IV",
+      "SO",
+      "PALLET",
+      "MASTER",
+      "IN"
+    ],
+    "description": "Physical container type of the handling unit"
+  },
+  "pallet_label_barcode": {
+    "terms": [
+      "control_number",
+      "label",
+      "barcode",
+      "pallet_barcode",
+      "sticker",
+      "051625.1",
+      "scan_this"
+    ],
+    "description": "Printed or scannable number on the handling unit label"
+  },
+  "where_is_pallet": {
+    "terms": [
+      "location_id",
+      "location",
+      "loc",
+      "bin",
+      "where_is",
+      "where_pallet",
+      "pallet_in",
+      "9H08A02",
+      "CUT1",
+      "SHOPHOSE",
+      "BCKWALL5",
+      "floor"
+    ],
+    "description": "Current physical storage location of the handling unit"
+  },
+  "pallet_status": {
+    "terms": [
+      "status",
+      "A",
+      "U",
+      "good",
+      "bad",
+      "available",
+      "blocked",
+      "can_pick",
+      "cannot_pick",
+      "empty"
+    ],
+    "description": "Handling unit status: A = Available for picking, U = Unavailable / Blocked"
+  },
+  "pallet_date": {
+    "terms": [
+      "fifo_date",
+      "pallet_date",
+      "when_received",
+      "when_built",
+      "oldest_pallet"
+    ],
+    "description": "Receipt or creation date of the handling unit used for FIFO logic"
+  },
+  "zone_department": {
+    "terms": [
+      "zone",
+      "area",
+      "HOSE",
+      "CV3",
+      "RETAIL",
+      "RET1",
+      "hose_area",
+      "retail_zone"
+    ],
+    "description": "Designated zone or department within the warehouse"
+  },
+  "reserved_locked": {
+    "terms": [
+      "reserved_for",
+      "reserved",
+      "locked",
+      "booked",
+      "already_taken",
+      "for_order",
+      "picked_for"
+    ],
+    "description": "Indicates the handling unit is reserved or allocated to a specific order"
+  },
+  "parent_pallet": {
+    "terms": [
+      "parent_hu_id",
+      "parent",
+      "on_which_pallet",
+      "loaded_on",
+      "master_pallet"
+    ],
+    "description": "Parent handling unit (e.g., pallet) that contains this child unit"
+  },
+  "truck_load": {
+    "terms": [
+      "load_id",
+      "load",
+      "truck",
+      "which_truck",
+      "load_number",
+      "wave"
+    ],
+    "description": "Outbound load or truck to which the handling unit is assigned"
+  },
+  "loading_position": {
+    "terms": [
+      "load_position",
+      "load_seq",
+      "position",
+      "stop_id",
+      "sequence",
+      "back_of_truck",
+      "front_of_truck"
+    ],
+    "description": "Loading sequence or position of the handling unit on the trailer"
+  },
+  "hazardous materials": {
+    "terms": [
+      "haz_material",
+      "hazmat",
+      "hazardous",
+      "dangerous",
+      "dg",
+      "chem"
+    ],
+    "description": "Flag indicating the handling unit contains hazardous materials"
+  },
+  "special_areas": {
+    "terms": [
+      "CUT1",
+      "SHOPHOSE",
+      "BCKWALL5",
+      "RETAIL",
+      "RET1",
+      "cutting",
+      "shop_floor",
+      "back_wall",
+      "staging",
+      "dock"
+    ],
+    "description": "Non-standard functional locations outside regular bin storage"
+  },
+  "daily_pallet_questions": {
+    "terms": [
+      "where_is_pallet",
+      "find_pallet",
+      "pallet_location",
+      "show_pallet",
+      "what_on_pallet",
+      "whats_inside",
+      "can_i_pick_pallet",
+      "is_pallet_good",
+      "which_truck",
+      "when_did_pallet_come",
+      "who_took_pallet",
+      "move_pallet",
+      "break_pallet",
+      "rebuild_pallet"
+    ],
+    "description": "Common natural-language queries warehouse users ask about handling units"
+  },
+  "pallet_contents": {
+    "terms": [
+      "whats_on_pallet",
+      "what_is_in_pallet",
+      "pallet_contents",
+      "show_pallet",
+      "list_pallet",
+      "pallet_breakdown",
+      "items_on_pallet",
+      "what_does_pallet_have",
+      "check_pallet",
+      "inside_this_pallet"
+    ],
+    "description": "Common requests to see everything stored on a specific pallet or carton"
+  },
+  "pallet_or_carton_id": {
+    "terms": [
+      "pallet",
+      "pallet_number",
+      "lpn",
+      "license_plate",
+      "tag",
+      "pallet_tag",
+      "carton",
+      "box",
+      "tote",
+      "99908",
+      "Y0137",
+      "B0003"
+    ],
+    "description": "Identifier workers scan or type to look up a pallet or carton"
+  },
+  "item_sku_on_pallet": {
+    "terms": [
+      "item",
+      "sku",
+      "part",
+      "material",
+      "product",
+      "what_item",
+      "which_part",
+      "PE225-16",
+      "DLM1-2208K",
+      "R2AT-12"
+    ],
+    "description": "Product code or SKU stored on the pallet"
+  },
+  "how_much_on_this_pallet": {
+    "terms": [
+      "how_many",
+      "how_much",
+      "quantity",
+      "qty",
+      "pieces",
+      "on_this_pallet",
+      "in_this_pallet",
+      "pallet_qty",
+      "how_many_here"
+    ],
+    "description": "Actual physical quantity of the item currently on this pallet"
+  },
+  "available_to_pick_from_pallet": {
+    "terms": [
+      "can_pick",
+      "good_to_pick",
+      "available",
+      "pickable",
+      "ready",
+      "can_i_take",
+      "free_to_pick"
+    ],
+    "description": "Whether the line on the pallet is allowed to be picked (A = yes)"
+  },
+  "pallet_location": {
+    "terms": [
+      "where_is_pallet",
+      "pallet_location",
+      "where_is_it",
+      "bin",
+      "loc",
+      "floor_spot"
+    ],
+    "description": "Current physical location of the entire pallet"
+  },
+  "oldest_date_on_pallet": {
+    "terms": [
+      "oldest",
+      "fifo",
+      "when_received cosm",
+      "receipt_date",
+      "pallet_age",
+      "1900_date",
+      "no_date"
+    ],
+    "description": "Receipt or manufacture date used to pick oldest stock first"
+  },
+  "expiry_on_pallet": {
+    "terms": [
+      "expires",
+      "expiry",
+      "best_before",
+      "use_by",
+      "expiration",
+      "shelf_life",
+      "no_expiry"
+    ],
+    "description": "Expiration date of the item on this pallet"
+  },
+  "lot_batch_on_pallet": {
+    "terms": [
+      "lot",
+      "batch",
+      "lot_number",
+      "batch_number",
+      "which_lot",
+      "what_batch"
+    ],
+    "description": "Lot or batch identifier for the items on this pallet"
+  },
+  "serial_numbers_on_pallet": {
+    "terms": [
+      "serial",
+      "sn",
+      "serials",
+      "serial_numbers",
+      "tracked_serials"
+    ],
+    "description": "List of serial numbers for serialized items on this pallet"
+  },
+  "customer_owner_of_pallet": {
+    "terms": [
+      "customer",
+      "owner",
+      "whose_stock",
+      "belongs_to",
+      "customer_owned",
+      "consignment"
+    ],
+    "description": "Customer or entity that owns the inventory on this pallet"
+  },
+  "special_storage_on_pallet": {
+    "terms": [
+      "special_storage",
+      "storage_type",
+      "bulk",
+      "hazardous_area",
+      "cold_storage",
+      "51863"
+    ],
+    "description": "Special storage requirements or zone for this pallet"
+  },
+  "who_built_packed_pallet": {
+    "terms": [
+      "who_packed",
+      "who_built",
+      "picker",
+      "employee",
+      "user",
+      "packed_by"
+    ],
+    "description": "Employee who created or last worked on this pallet"
+  },
+  "pallet_picking_method": {
+    "terms": [
+      "picking_method",
+      "flow",
+      "pick_flow",
+      "how_to_pick",
+      "picking_strategy"
+    ],
+    "description": "Defined picking flow or method for items on this pallet"
+  },
+
+  "transaction": {
+    "terms": [
+      "transaction",
+      "warehouse transaction",
+      "activity log",
+      "tran record",
+      "WMS transaction"
+    ],
+    "description": "Represents a single warehouse transaction such as picking, putaway, transfer, cycle count, return, or adjustment."
+  },
+ 
+  "transaction_type": {
+    "terms": [
+      "transaction type",
+      "tran_type",
+      "activity type"
+    ],
+    "description": "Indicates the type of warehouse activity performed (e.g., pick, putaway, move, adjustment)."
+  },
+ 
+  "transaction_description": {
+    "terms": [
+      "description",
+      "transaction description",
+      "activity description"
+    ],
+    "description": "Textual description of the transaction performed."
+  },
+ 
+  "start_time": {
+    "terms": [
+      "start time",
+      "start_tran_date",
+      "start_tran_time",
+      "when transaction started"
+    ],
+    "description": "Date and time when the warehouse activity started."
+  },
+ 
+  "end_time": {
+    "terms": [
+      "end time",
+      "end_tran_date",
+      "end_tran_time",
+      "transaction completion time"
+    ],
+    "description": "Date and time when the warehouse activity finished."
+  },
+ 
+  "employee": {
+    "terms": [
+      "employee",
+      "operator",
+      "user who performed activity",
+      "employee_id",
+      "performed by"
+    ],
+    "description": "Primary warehouse operator who executed the transaction."
+  },
+ 
+  "employee_secondary": {
+    "terms": [
+      "employee 2",
+      "secondary operator",
+      "employee_id_2"
+    ],
+    "description": "Secondary warehouse operator associated with the activity (if any)."
+  },
+ 
+  "order_reference": {
+    "terms": [
+      "control number",
+      "order reference",
+      "order number",
+      "control_number",
+      "control_number_2"
+    ],
+    "description": "Order reference number or internal control number linked to the activity."
+  },
+ 
+  "line_reference": {
+    "terms": [
+      "line number",
+      "order line",
+      "line_number"
+    ],
+    "description": "Line-level detail associated with the order reference."
+  },
+ 
+  "external_reference": {
+    "terms": [
+      "outside id",
+      "external reference"
+    ],
+    "description": "External identifier associated with the transaction (if any)."
+  },
+ 
+  "whse": {
+    "terms": [
+      "wh_id",
+      "warehouse",
+      "facility"
+    ],
+    "description": "Warehouse where the transaction occurred."
+  },
+ 
+  "location": {
+    "terms": [
+      "location_id",
+      "location",
+      "source location",
+      "from location"
+    ],
+    "description": "Primary location involved in the transaction."
+  },
+ 
+  "location_secondary": {
+    "terms": [
+      "location_id_2",
+      "destination location",
+      "to location",
+      "secondary location"
+    ],
+    "description": "Secondary location used in move/transfer-type activities."
+  },
+ 
+  "handling_unit": {
+    "terms": [
+      "hu_id",
+      "handling unit",
+      "source HU"
+    ],
+    "description": "Source handling unit involved in the transaction."
+  },
+ 
+  "handling_unit_secondary": {
+    "terms": [
+      "hu_id_2",
+      "destination HU",
+      "secondary HU"
+    ],
+    "description": "Target handling unit used for transfers or consolidation."
+  },
+ 
+  "item": {
+    "terms": [
+      "item",
+      "item_number",
+      "sku"
+    ],
+    "description": "Item number associated with the transaction."
+  },
+ 
+  "lot": {
+    "terms": [
+      "lot_number",
+      "lot",
+      "batch"
+    ],
+    "description": "Lot number for the item involved in the activity."
+  },
+ 
+  "quantity": {
+    "terms": [
+      "quantity",
+      "tran_qty",
+      "transaction quantity"
+    ],
+    "description": "Number of units moved, picked, counted, or adjusted."
+  },
+ 
+  "unit_of_measure": {
+    "terms": [
+      "UOM",
+      "unit of measure"
+    ],
+    "description": "Unit of measure used for the transaction quantity."
+  },
+ 
+  "verify_status": {
+    "terms": [
+      "verify status",
+      "verification flag"
+    ],
+    "description": "Indicates whether the activity was verified or audited."
+  },
+ 
+  "routing": {
+    "terms": [
+      "routing code",
+      "routing",
+      "process flow code"
+    ],
+    "description": "Workflow routing code used to classify the warehouse activity."
+  },
+ 
+  "return_disposition": {
+    "terms": [
+      "return disposition",
+      "return code",
+      "RMA disposition"
+    ],
+    "description": "Return or exception disposition associated with the transaction."
+  },
+ 
+  "elapsed_time": {
+    "terms": [
+      "elapsed time",
+      "processing time"
+    ],
+    "description": "Total duration of the transaction."
+  },
+ 
+  "audit_fields": {
+    "terms": [
+      "DATE_TIME_H",
+      "ID_H",
+      "history audit fields"
+    ],
+    "description": "Audit metadata used for historical tracking and archiving."
+  },
+  
+
+  "order_identification": {
+    "terms": [
+      "order_detail_id",
+      "order_id",
+      "order_number",
+      "line_number",
+      "unique_link",
+      "ID_H"
+    ],
+    "description": "Terms related to unique identification of orders and order lines, linking line-level data to main orders. Important for tracking archived transactions in historical tables."
+  },
+  "item_and_inventory_details": {
+    "terms": [
+      "item_master_id",
+      "item_number",
+      "item_description",
+      "cust_part",
+      "lot_number",
+      "unit_pack",
+      "unit_weight",
+      "unit_volume",
+      "item_weight",
+      "item_tare_weight"
+    ],
+    "description": "Item-level details including SKU, description, customer parts, lot numbers, packaging, and weights/volumes. Critical for historical inventory tracking and reporting."
+  },
+  "quantities_and_allocations": {
+    "terms": [
+      "qty",
+      "bo_qty",
+      "bo_weight",
+      "afo_plan_qty",
+      "tran_plan_qty",
+      "qty_shipped",
+      "over_alloc_qty",
+      "extended_weight",
+      "extended_volume"
+    ],
+    "description": "Terms related to ordered quantities, backorders, allocations, shipped quantities, and over-allocated items. Used to track historical fulfillment and shipment metrics."
+  },
+  "shipping_and_logistics": {
+    "terms": [
+      "b_o_l_class",
+      "b_o_l_line1",
+      "b_o_l_line2",
+      "b_o_l_line3",
+      "b_o_l_plac_code",
+      "b_o_l_plac_desc",
+      "b_o_l_code",
+      "picking_flow",
+      "host_wave_id",
+      "line_type",
+      "stacking_seq",
+      "date_expected",
+      "order_uom"
+    ],
+    "description": "Shipping and logistic details including Bill of Lading info, picking flows, waves, line types, stacking sequences, and expected shipment dates. Important for historical shipment and compliance reporting."
+  },
+  "hazard_and_compliance": {
+    "terms": [
+      "haz_material"
+    ],
+    "description": "Hazardous material flags to ensure compliance and proper handling of archived items."
+  },
+  "system_and_tracking": {
+    "terms": [
+      "DATE_TIME_H"
+    ],
+    "description": "Terms used for system tracking and historical auditing. Reflects when the archived order line was created or last modified."
+  },
+  "historical_usage": {
+    "terms": [
+      "t_aht_order_detail",
+      "archived order lines",
+      "older transactions",
+      "historical orders",
+      "2022 data",
+      "2023 data",
+      "2024 data"
+    ],
+    "description": "Terms emphasizing that this table stores historical or older order line transactions. Users querying past orders should use this table rather than live WMS tables."
+  },
+  
+  "Order Basics": {
+    "terms": [
+      "Order ID",
+      "Order Number",
+      "Order Type",
+      "Order Status"
+    ],
+    "description": "General info that identifies an order and shows what stage it's in."
+  },
+
+  "Customer Info": {
+    "terms": [
+      "Customer Name",
+      "Customer Contact",
+      "Customer PO Number"
+    ],
+    "description": "Simple customer details used to identify who the order belongs to."
+  },
+
+  "Shipping Details": {
+    "terms": [
+      "Carrier Info",
+      "Tracking Numbers",
+      "Bill of Lading",
+      "Shipping Dates",
+      "Delivery Dates"
+    ],
+    "description": "Everything related to how the order moves through the shipping process."
+  },
+
+  "Address Info": {
+    "terms": [
+      "Ship-To Address",
+      "Delivery Address",
+      "Return-To Address",
+      "Billing Address"
+    ],
+    "description": "Locations where the order goes, is billed to, or gets returned."
+  },
+
+  "Order Metrics": {
+    "terms": [
+      "Order Weight",
+      "Volume",
+      "Container Count",
+      "Pallet Count"
+    ],
+    "description": "Physical stats about what is being shipped."
+  },
+
+  "Archive & History": {
+    "terms": [
+      "Archived Order",
+      "Old Order",
+      "Past Order",
+      "Historical Order",
+      "Legacy Order",
+      "Aged Order",
+      "Closed-Out Order",
+      "Time-Capsule Record",
+      "Order Snapshot",
+      "Frozen Snapshot",
+      "Archive Timestamp",
+      "Long-Term Storage",
+      "Cold Storage",
+      "History Bucket",
+      "Order Backup",
+      "Audit Copy",
+      "Audit Trail",
+      "Old Shipment Info",
+      "Data Snapshot",
+      "Non-Editable Record",
+      "Read-Only Record"
+    ],
+    "description": "Terms used for older orders stored long-term for history, lookups, and audits."
+  },
+
+  "Live vs Archived Orders": {
+    "terms": [
+      "Live Order",
+      "Active Order",
+      "Fresh Data",
+      "Hot Data",
+      "Current Cycle Order",
+      "Recent Orders",
+      "Monthly Cutoff",
+      "Auto-Archived Order",
+      "Out-of-Cycle Order",
+      "Historical Data",
+      "Cold Data",
+      "Archive Table",
+      "Live Table"
+    ],
+    "description": "Casual ways to talk about the difference between fresh orders and older archived ones."
+  },
+  
+  "Pick Basics": {
+    "terms": [
+      "Pick Task",
+      "Pick Reference",
+      "Order Line Pick",
+      "Pick Instruction"
+    ],
+    "description": "Core info that explains what picking action was performed and which order line it belongs to."
+  },
+  "Product & Tracking Info": {
+    "terms": [
+      "Item Code",
+      "Product Identifier",
+      "Traceability Tags",
+      "Lot Details",
+      "Serial Details"
+    ],
+    "description": "Details that identify the product and any lot or serial tracking tied to quality, compliance, or audits."
+  },
+  "Quantity Details": {
+    "terms": [
+      "Requested Quantity",
+      "Planned Quantity",
+      "Picked Quantity",
+      "Staged Quantity",
+      "Loaded Quantity"
+    ],
+    "description": "Simple quantity checkpoints that show what was expected versus what actually moved through each picking stage."
+  },
+  "Location & Flow": {
+    "terms": [
+      "Pick Slot",
+      "Storage Location",
+      "Pick Zone",
+      "Staging Area",
+      "Pick Flow",
+      "Warehouse Area"
+    ],
+    "description": "Where the product was picked from, where it moved next, and the warehouse pathways involved."
+  },
+  "Work Assignment": {
+    "terms": [
+      "Assigned Picker",
+      "Work Queue",
+      "Work Batch",
+      "Task Type",
+      "Bulk Pick Indicator",
+      "Stacking Rules"
+    ],
+    "description": "Who performed the work and what kind of task group or method was used to carry out the pick."
+  },
+  "Load & Outbound": {
+    "terms": [
+      "Load Reference",
+      "Load Sequence",
+      "Route Stop",
+      "Container ID",
+      "Shipment Group",
+      "Outbound Wave"
+    ],
+    "description": "All the outbound details tying the picked items to a load, route, container, or wave."
+  },
+  "Warehouse Context": {
+    "terms": [
+      "Warehouse Code",
+      "Operational Zone",
+      "Cartonization Batch",
+      "Pick Area",
+      "Site Reference"
+    ],
+    "description": "General warehouse-level identifiers showing where the work happened and how it was grouped."
+  },
+  
+  "Live vs Archived Picks": {
+    "terms": [
+      "Live Pick",
+      "Active Pick Task",
+      "Fresh Pick Data",
+      "Operational Pick",
+      "Current Cycle Pick",
+      "Recent Picks",
+      "Auto-Archived Pick",
+      "Cold Data",
+      "Historical Data",
+      "Archive Table",
+      "Live Table"
+    ],
+    "description": "Easy ways to describe the difference between real-time pick activity and archived historical records."
+  },
+  "Inventory Identification": {
+    "terms": [
+      "item number",
+      "SKU",
+      "product code",
+      "warehouse ID",
+      "location ID",
+      "storage type",
+      "serial number",
+      "lot number",
+      "out of stock",
+      "stock out"
+    ],
+    "description": "Defines the identity and physical context of the inventory item, including what the item is, where it is stored, and how it is classified (lot or serial-controlled, transaction type, etc.)."
+  },
+  "Stock Quantities & Status": {
+    "terms": [
+      "available quantity",
+      "actual quantity",
+      "unavailable quantity",
+      "blocked stock",
+      "damaged stock",
+      "inventory status"
+    ],
+    "description": "Represents the current inventory levels at a location, distinguishing between usable and unusable stock based on condition or system restrictions."
+  },
+  "Ownership & Control": {
+    "terms": [
+      "stock owner",
+      "consignee",
+      "reserved stock",
+      "reserved for order",
+      "ownership tracking"
+    ],
+    "description": "Captures ownership and reservation attributes used in 3PL, customer-specific stock management, or order reservation processes."
+  },
+  "Lifecycle & Rotation Management": {
+    "terms": [
+      "FIFO date",
+      "stock rotation date",
+      "expiration date",
+      "perishable tracking",
+      "shelf life control"
+    ],
+    "description": "Manages stock aging and rotation using FIFO and expiration tracking for items requiring time-sensitive handling, like perishables or regulated goods."
+  },
+  "Quality & Compliance": {
+    "terms": [
+      "inspection code",
+      "quality status",
+      "inspection hold",
+      "QC compliance"
+    ],
+    "description": "Supports quality control processes by marking stock under inspection or quality check holds, impacting usability for operations."
+  },
+  "Operational Planning": {
+    "terms": [
+      "putaway location",
+      "planned storage bin",
+      "task-prepared location",
+      "system-directed putaway"
+    ],
+    "description": "Includes data used by the system for task planning, especially where items are scheduled to be placed during putaway or relocation."
+  },
+  "System Control & Technical Fields": {
+    "terms": [
+      "record sequence",
+      "line sequence number",
+      "inventory record order"
+    ],
+    "description": "Internal system fields used for technical ordering and processing of inventory records, without direct business operation implications."
+  },
+  "Order Identification & Structure": {
+    "terms": [
+      "order ID",
+      "order number",
+      "line number",
+      "line type",
+      "warehouse ID",
+      "order detail ID",
+      "host wave ID",
+      "unique reference link"
+    ],
+    "description": "Defines the identity and structure of each order line within a warehouse order. Ensures linkage to the overall order header, warehouse location, and external systems via wave planning or integration references."
+  },
+  "Item & SKU Details": {
+    "terms": [
+      "item number",
+      "item master ID",
+      "item description",
+      "customer part number",
+      "SKU code",
+      "stacking sequence",
+      "lot number"
+    ],
+    "description": "Captures detailed SKU-level information including system item references, customer-specific part numbers, stacking logic, and lot control for regulated or traceable items."
+  },
+  "Quantity Tracking & Fulfillment Status": {
+    "terms": [
+      "ordered quantity",
+      "shipped quantity",
+      "backorder quantity",
+      "planned quantity",
+      "transaction planned quantity",
+      "over-allocated quantity"
+    ],
+    "description": "Manages the fulfillment lifecycle of each order line by tracking how much was ordered, allocated, backordered, shipped, or over-committed, supporting real-time visibility and SLA adherence."
+  },
+  "Weights, Volumes & Packaging": {
+    "terms": [
+      "unit weight",
+      "unit volume",
+      "extended weight",
+      "extended volume",
+      "item weight",
+      "tare weight",
+      "unit pack configuration"
+    ],
+    "description": "Supports load planning, freight calculation, and compliance documentation by storing detailed dimensional data and packaging attributes at the unit and line level."
+  },
+  "Hazardous Materials & BOL Compliance": {
+    "terms": [
+      "hazardous material indicator",
+      "bill of lading class",
+      "BOL description lines",
+      "BOL placard code",
+      "BOL placard description",
+      "BOL code"
+    ],
+    "description": "Enables safety and regulatory compliance by flagging hazardous materials and storing all required Bill of Lading (BOL) data for shipping documentation and placarding."
+  },
+  "Execution Planning & Picking Flow": {
+    "terms": [
+      "picking flow",
+      "wave planning reference",
+      "expected delivery date",
+      "Shipped"
+    ],
+    "description": "Supports warehouse execution by defining when and how an order line should be picked, packed, and delivered. Ties into wave planning and fulfillment strategies like FIFO, zone picking, or customer-specific flows."
+  },
+  "Location Identification & Structure": {
+    "terms": [
+      "location ID",
+      "warehouse ID",
+      "location description",
+      "short location code",
+      "zone",
+      "pick area",
+      "replenishment location",
+      "location coordinates"
+    ],
+    "description": "Defines the physical and logical identity of each storage location within a warehouse. Includes unique identifiers, zoning/grouping, replenishment relationships, and coordinate mapping for warehouse navigation."
+  },
+  "Capacity & Utilization": {
+    "terms": [
+      "capacity unit of measure",
+      "maximum capacity quantity",
+      "current stored quantity",
+      "capacity volume",
+      "slot rank",
+      "slot status"
+    ],
+    "description": "Tracks the physical storage limits and current utilization of each location. Supports space optimization and location selection logic for picking, putaway, and replenishment."
+  },
+  "Operational Status & Rules": {
+    "terms": [
+      "location status",
+      "location type",
+      "cycle count class",
+      "picking flow",
+      "allow bulk pick",
+      "item handling unit indicator",
+      "random cycle count parameter"
+    ],
+    "description": "Defines the operational readiness and business rules governing the use of the location. Includes status flags, cycle counting parameters, and picking strategy indicators."
+  },
+  "Maintenance & Audit Tracking": {
+    "terms": [
+      "FIFO control date",
+      "last cycle count date",
+      "last physical count date",
+      "last maintenance date",
+      "time between maintenance",
+      "user-defined count"
+    ],
+    "description": "Captures operational history and maintenance records for each location. Ensures auditability, physical accuracy, and scheduling of cycle counting and inspections."
+  },
+  "Physical Attributes & Dimensions": {
+    "terms": [
+      "location length",
+      "location width",
+      "location height",
+      "X coordinate",
+      "Y coordinate",
+      "Z coordinate"
+    ],
+    "description": "Represents the physical dimensions and placement of the location within the warehouse layout. These attributes are critical for warehouse mapping and automation systems."
+  },
+  "Custom & Configurable Fields": {
+    "terms": [
+      "custom attribute 1",
+      "custom attribute 2",
+      "custom attribute 3"
+    ],
+    "description": "User-defined fields to support business-specific extensions such as classification tags, business units, or custom logic not covered by standard attributes."
+  },
+  
+  "Archival & Backup Configuration": {
+    "terms": [
+      "archival/backup rule ID",
+      "backup control group/version",
+      "source table name",
+      "archival/backup method",
+      "data selection criteria",
+      "archival/backup frequency",
+      "execution procedure"
+    ],
+    "description": "Defines the core parameters that specify which source table data is archived or backed up, the method used, selection conditions, how often the process runs, and the procedure executing the process."
+  },
+  "Execution Tracking & Monitoring": {
+    "terms": [
+      "last execution timestamp",
+      "execution status",
+      "last execution duration",
+      "last execution message or log"
+    ],
+    "description": "Tracks the progress and outcome of archival and backup operations to ensure successful execution, troubleshooting, and auditability."
+  },
+  "Historical Data Management": {
+    "terms": [
+      "historical table name prefix",
+      "historical table name suffix",
+      "historical database name",
+      "table schema"
+    ],
+    "description": "Manages naming conventions and storage location for archived or backed-up data, enabling consistent and traceable history table management."
+  },
+  "Control Type Definition": {
+    "terms": [
+      "archival/backup control type code",
+      "control type description"
+    ],
+    "description": "Defines each archival or backup operation type, providing a unique code and a detailed explanation of its purpose and behavior."
+  },
+  "Execution Procedure Mapping": {
+    "terms": [
+      "associated stored procedure"
+    ],
+    "description": "Links each control type to the specific stored procedure responsible for carrying out the archival or backup action."
+  },
+  "Metadata & Audit": {
+    "terms": [
+      "record creation or modification timestamp"
+    ],
+    "description": "Tracks when the control type record was created or last updated to ensure current and accurate definitions."
+  },
+  "Mapping Definition": {
+    "terms": [
+      "live operational table name",
+      "archive/historical table name",
+      "table schema",
+      "archive table prefix",
+      "archive table suffix",
+      "archive database name"
+    ],
+    "description": "Defines the relationship between a live operational table and its corresponding archive or historical table, including naming conventions and storage location."
+  },
+  "Metadata & Auditing": {
+    "terms": [
+      "mapping creation or update timestamp"
+    ],
+    "description": "Records the date and time when the mapping configuration was created or last modified, ensuring traceability and version control."
+  },
+  "Classification Management": {
+    "terms": [
+      "warehouse identifier",
+      "class identifier",
+      "class description",
+      "overflow class",
+      "target putaway percentage"
+    ],
+    "description": "Defines item storage classes within a warehouse, including classification ID and description, plus overflow handling and putaway allocation rules."
+  },
+  "Overflow Handling": {
+    "terms": [
+      "alternate overflow class"
+    ],
+    "description": "Specifies the fallback class to store items when the primary class reaches capacity."
+  },
+  "Putaway Allocation": {
+    "terms": [
+      "target putaway percentage"
+    ],
+    "description": "Controls the proportion of incoming items directed to this class to optimize warehouse space utilization."
+  },
+  "Class-to-Location Mapping": {
+    "terms": [
+      "warehouse identifier",
+      "class identifier",
+      "location identifier",
+      "fill sequence"
+    ],
+    "description": "Defines the mapping between storage classes and physical warehouse locations, specifying where items of each class can be stored."
+  },
+  "Putaway Priority": {
+    "terms": [
+      "fill sequence",
+      "putaway priority"
+    ],
+    "description": "Determines the priority or sequence in which locations should be filled for a given class to optimize space utilization."
+  },
+  "Container Classification": {
+    "terms": [
+      "warehouse identifier",
+      "container class code",
+      "container class description"
+    ],
+    "description": "Defines standardized classes of containers such as 'Box', 'Carton', or 'Pallet' used across warehouse operations."
+  },
+  "Warehouse Operations": {
+    "terms": [
+      "container handling",
+      "receiving",
+      "putaway",
+      "retrieval"
+    ],
+    "description": "Supports identification and management of container types during key warehouse activities to ensure optimized storage and movement."
+  },
+  "Reporting and Compliance": {
+    "terms": [
+      "container type visibility",
+      "container classification reporting"
+    ],
+    "description": "Provides transparency into the types of containers used across the warehouse for operational and compliance purposes."
+  },
+  "Integration": {
+    "terms": [
+      "container class master data",
+      "warehouse execution systems",
+      "planning and handling systems"
+    ],
+    "description": "Supplies container class definitions to various warehouse systems for consistent categorization and process management."
+  },
+  "Container Classification Mapping": {
+    "terms": [
+      "warehouse identifier",
+      "container class",
+      "container type"
+    ],
+    "description": "Defines which specific container types are allowed under each container class within a warehouse to standardize packaging and handling."
+  },
+  "Operational Consistency": {
+    "terms": [
+      "inbound validation",
+      "storage validation",
+      "outbound validation",
+      "packaging rules"
+    ],
+    "description": "Ensures only approved container type-class combinations are used during receiving, storage, and shipment to prevent errors and maintain process consistency."
+  },
+  "Validation & Compliance": {
+    "terms": [
+      "container class/type validation",
+      "process compliance",
+      "packaging validation"
+    ],
+    "description": "Used by operational systems to validate container usage against warehouse-defined standards for quality control and compliance."
+  },
+  "Reporting & Integration": {
+    "terms": [
+      "container packaging reports",
+      "warehouse operations data",
+      "WMS integration",
+      "ERP and transport systems"
+    ],
+    "description": "Supports reporting and integration with warehouse management and enterprise systems by providing standardized container-class-type mappings."
+  },
+  "Label Print Tracking for Unknown POs": {
+    "terms": [
+      "purchase order identifier",
+      "label quantity",
+      "print timestamp"
+    ],
+    "description": "Records label printing events for purchase orders that are not yet registered or recognized in the warehouse system, ensuring label activity is tracked even before PO data is fully available."
+  },
+  "Operational Visibility": {
+    "terms": [
+      "pre-receipt labeling",
+      "temporary PO tracking",
+      "label reconciliation",
+      "audit trail"
+    ],
+    "description": "Provides visibility into label usage for POs pending validation or creation, supporting operational teams in tracking, troubleshooting, and reconciling label counts with eventual PO data."
+  },
+  "Bridging Physical and System Processes": {
+    "terms": [
+      "early labeling",
+      "data reconciliation",
+      "label event logging",
+      "warehouse operations"
+    ],
+    "description": "Acts as a bridge between physical label printing activities and formal PO processing, enabling smooth transition and reconciliation once PO master data becomes available."
+  },
+  
+  "Tote Master Record": {
+    "terms": [
+      "warehouse identifier",
+      "queue identifier",
+      "tote identifier",
+      "order number",
+      "outbound routing zone",
+      "tote status",
+      "status update timestamp"
+    ],
+    "description": "Maintains the master or header record for totes used in routing, dispatching, and sorting operations within the warehouse, uniquely identified by warehouse, queue, and tote IDs."
+  },
+  "Routing and Dispatch Control": {
+    "terms": [
+      "routing zone",
+      "dispatch queue",
+      "status tracking",
+      "order linkage",
+      "operational control"
+    ],
+    "description": "Supports warehouse operations by controlling tote routing through zones, associating totes with processing queues and optionally customer orders, and tracking tote status and progression."
+  },
+  "Operational Visibility and Auditing": {
+    "terms": [
+      "status date",
+      "audit trail",
+      "performance monitoring",
+      "tote lifecycle"
+    ],
+    "description": "Enables auditability and performance tracking of totes through timestamps of status changes, facilitating management and analysis of tote movements and processing stages."
+  },
+  "Tote Movement Tracking": {
+    "terms": [
+      "warehouse identifier",
+      "queue identifier",
+      "tote identifier",
+      "sorting zone",
+      "order line number",
+      "tote status",
+      "status timestamp"
+    ],
+    "description": "Tracks the real-time movement and status of totes within specific sorting and routing zones in the warehouse, uniquely identified by warehouse, queue, tote, and zone."
+  },
+  "Operational Control": {
+    "terms": [
+      "routing decision support",
+      "sortation process monitoring",
+      "exception handling",
+      "SLA compliance"
+    ],
+    "description": "Enables operational workflows such as routing decisions, exception management, and SLA monitoring by providing timely tote status updates across zones."
+  },
+  "Real-Time Visibility": {
+    "terms": [
+      "status updates",
+      "tote lifecycle visibility",
+      "operational dashboards"
+    ],
+    "description": "Supports live tracking and visibility of tote status to warehouse staff and automated systems for efficient sorting and dispatch."
+  },
+  "Identification and Reference": {
+    "terms": [
+      "pick_id",
+      "order_number",
+      "line_number",
+      "item_number",
+      "lot_number",
+      "serial_number"
+    ],
+    "description": "Unique identifiers and references for each pick task, including the pick record ID, outbound order details, item specifics, and lot/serial tracking."
+  },
+  "Quantity Metrics": {
+    "terms": [
+      "planned_quantity",
+      "picked_quantity",
+      "staged_quantity",
+      "loaded_quantity",
+      "unplanned_quantity"
+    ],
+    "description": "Tracks the quantities of items planned, actually picked, staged for loading, loaded onto shipments, and any unplanned picks to ensure accuracy and auditing."
+  },
+  "Location and Zone": {
+    "terms": [
+      "pick_location",
+      "staging_location",
+      "zone",
+      "pick_area"
+    ],
+    "description": "Physical warehouse locations related to picking and staging as well as the operational zones and designated pick areas within the warehouse."
+  },
+  "Workflow and Processing": {
+    "terms": [
+      "type",
+      "uom",
+      "work_q_id",
+      "work_type",
+      "status",
+      "picking_flow",
+      "bulk_pick_flag",
+      "stacking_sequence",
+      "picking",
+      "Hose picking",
+      "Coveyor picking"
+    ],
+    "description": "Information related to the picking process type, units of measure, work queue and type, current status, picking workflow details, bulk picking indicators, and stacking order."
+  },
+  "Wave and Load Planning": {
+    "terms": [
+      "wave_id",
+      "load_id",
+      "load_sequence",
+      "stop_id"
+    ],
+    "description": "Grouping and sequencing details that associate picks with waves (batches), loading units, load sequence for shipment, and stops in delivery routing."
+  },
+  "Container and Packaging": {
+    "terms": [
+      "container_id",
+      "cartonization_batch_id",
+      "pick_category"
+    ],
+    "description": "Information on containers used for the pick, cartonization batch identifiers for packing optimization, and pick category classification."
+  },
+  "User and Warehouse Context": {
+    "terms": [
+      "user_assigned",
+      "wh_id"
+    ],
+    "description": "Details linking the pick to the assigned user (picker/operator) and the warehouse identifier to maintain location context."
+  },
+  "Item Reference": {
+    "terms": [
+      "item number",
+      "airbag item",
+      "product code",
+      "item identifier"
+    ],
+    "description": "Identifies the airbag-specific product for which the predefined pricing is set. Used to link with item master and order lines for price application."
+  },
+  "Pricing Information": {
+    "terms": [
+      "airbag price",
+      "unit price",
+      "item cost",
+      "fixed price"
+    ],
+    "description": "Stores the predefined price value used for airbag item calculations during order entry, quoting, billing, and audit."
+  },
+  "Business Usage": {
+    "terms": [
+      "airbag pricing logic",
+      "order pricing",
+      "quote pricing",
+      "billing calculation",
+      "compliance pricing",
+      "profitability calculation"
+    ],
+    "description": "Supports consistent and auditable pricing for airbag-related products across order lifecycle—from entry to invoicing—and aids in compliance and margin analysis."
+  },
+  "Resource Identification": {
+    "terms": [
+      "resource ID",
+      "resource key",
+      "text reference ID",
+      "label identifier"
+    ],
+    "description": "Unique identifier used throughout the system to link UI components, dropdowns, and messages to their multilingual text equivalents."
+  },
+  "Locale Configuration": {
+    "terms": [
+      "locale ID",
+      "language code",
+      "region code",
+      "default locale",
+      "internationalization code"
+    ],
+    "description": "Represents the language and regional format of the translation, enabling rendering of content in the appropriate user-preferred locale (e.g., 1033 = English - US)."
+  },
+  "Localized Content": {
+    "terms": [
+      "localized text",
+      "translated string",
+      "UI label",
+      "display text",
+      "language pack value"
+    ],
+    "description": "The actual translated string shown to the user, supporting multilingual display for labels, messages, and dropdown values."
+  },
+  "Resource Context": {
+    "terms": [
+      "resource description",
+      "text purpose",
+      "label context",
+      "admin notes",
+      "internal description"
+    ],
+    "description": "Internal field used to describe the purpose, usage, or context of the resource for translators, administrators, or developers."
+  },
+  "Lookup Definition": {
+    "terms": [
+      "lookup usage",
+      "lookup context",
+      "functional usage",
+      "usage category",
+      "screen usage"
+    ],
+    "description": "Represents the functional or application context (e.g., module, screen, UI group) where the lookup value is used. Drives multilingual behavior based on usage grouping."
+  },
+  "Lookup Identifier": {
+    "terms": [
+      "lookup ID",
+      "lookup value",
+      "dropdown ID",
+      "code value"
+    ],
+    "description": "A numeric ID that uniquely identifies a specific lookup option within the given usage. Used in forms, dropdowns, or configuration logic."
+  },
+  "Resource Mapping": {
+    "terms": [
+      "resource ID",
+      "text mapping",
+      "translation link",
+      "label reference",
+      "localized resource"
+    ],
+    "description": "Links the lookup value to a multilingual text resource, allowing the application to display the correct label or message in the user’s preferred language."
+  },
+  "Log Metadata": {
+    "terms": [
+      "log ID",
+      "log timestamp",
+      "log datetime",
+      "log entry ID",
+      "system event ID"
+    ],
+    "description": "Metadata that uniquely identifies each log entry and captures the exact time the event occurred. Enables chronological tracing and filtering of system events."
+  },
+  "Log Severity": {
+    "terms": [
+      "log level",
+      "severity code",
+      "error level",
+      "log type",
+      "event criticality"
+    ],
+    "description": "Indicates the importance or severity of a log event, typically using numeric codes (1=ERROR, 2=WARNING, 3=INFO). Helps prioritize operational and support attention."
+  },
+  "Log Content": {
+    "terms": [
+      "log message",
+      "error message",
+      "diagnostic info",
+      "stack trace",
+      "event detail",
+      "system output"
+    ],
+    "description": "Contains the full textual message describing the system event, warning, or error. May include module info, error numbers, or contextual messages for debugging."
+  },
+  "Adjustment Identification": {
+    "terms": [
+      "adjustment ID",
+      "host group ID",
+      "work queue ID",
+      "transaction code",
+      "reason code",
+      "record create date"
+    ],
+    "description": "Captures key identifiers and classification details for each inventory adjustment, including batch references and reasons for change."
+  },
+  "Item and Stock Info": {
+    "terms": [
+      "item number",
+      "lot number",
+      "handling unit ID",
+      "unit of measure",
+      "owner ID",
+      "warehouse ID"
+    ],
+    "description": "Defines the product, lot, packaging unit, and ownership involved in the inventory change. Links to item master and ownership definitions."
+  },
+  "Quantity and Inventory State": {
+    "terms": [
+      "quantity before",
+      "quantity after",
+      "quantity change",
+      "inventory status before",
+      "inventory status after",
+      "FIFO date"
+    ],
+    "description": "Tracks the exact quantity and status changes during adjustment for traceability and financial reconciliation."
+  },
+  "Location Movement": {
+    "terms": [
+      "from location ID",
+      "to location ID",
+      "location shift",
+      "bin transfer"
+    ],
+    "description": "Details the physical movement of inventory within the warehouse — useful for identifying transfers, putaway corrections, or misplacement fixes."
+  },
+  "User and Audit Information": {
+    "terms": [
+      "user ID",
+      "adjusted by",
+      "adjustment timestamp",
+      "adjustment trail"
+    ],
+    "description": "Captures who made the adjustment and when, enabling auditability and user-level accountability for inventory changes."
+  },
+  "Trigger Identification": {
+    "terms": [
+      "trigger ID",
+      "cycle count trigger",
+      "cycle count reason",
+      "triggered during",
+      "trigger timestamp"
+    ],
+    "description": "Identifies when and why a cycle count was triggered, capturing the trigger ID, operational context, and timestamp for audit and tracking purposes."
+  },
+  "Operational Linkage": {
+    "terms": [
+      "work queue ID",
+      "work queue status",
+      "associated task",
+      "task status"
+    ],
+    "description": "Links the cycle count trigger to an associated work queue task, providing operational traceability between trigger and execution."
+  },
+  "Audit and User Info": {
+    "terms": [
+      "triggered by",
+      "trigger initiator",
+      "user who triggered",
+      "system-triggered count"
+    ],
+    "description": "Captures who or what initiated the trigger, enabling accountability and filtering between manual and system-generated cycle counts."
+  },
+  "Approval Identification": {
+    "terms": [
+      "approval ID",
+      "approval record",
+      "approval status",
+      "approval date"
+    ],
+    "description": "Unique identifier and status of a cycle count approval entry, recording when and how an approval or rejection decision was made."
+  },
+  "Cycle Count Task Reference": {
+    "terms": [
+      "work queue ID",
+      "cycle count task",
+      "associated work task"
+    ],
+    "description": "Links the approval record to the specific cycle count task, ensuring traceability between approval decisions and the cycle count activity."
+  },
+  "Inventory Context": {
+    "terms": [
+      "warehouse ID",
+      "item number",
+      "location ID",
+      "handling unit ID"
+    ],
+    "description": "Defines the inventory context for the approval, specifying the warehouse, item, location, and optionally the handling unit involved."
+  },
+  "Approval Workflow Details": {
+    "terms": [
+      "approved by",
+      "rejected by",
+      "triggered by",
+      "rejected date",
+      "approval status"
+    ],
+    "description": "Captures user and system actors involved in the approval lifecycle, including who approved, rejected, or triggered the count, and timestamps for these actions."
+  },
+  "Audit and Compliance": {
+    "terms": [
+      "audit trail",
+      "approval traceability",
+      "compliance record",
+      "inventory governance"
+    ],
+    "description": "Supports regulatory and internal audit requirements by maintaining a clear, accountable record of all approval decisions related to cycle counts."
+  },
+  "Test Task Identification": {
+    "terms": [
+      "pick ID",
+      "test pick task",
+      "test cut record"
+    ],
+    "description": "Unique identifier for a simulated hose-cutting pick task in a test or staging environment."
+  },
+  "Location Context": {
+    "terms": [
+      "location ID",
+      "storage location",
+      "warehouse location"
+    ],
+    "description": "Specifies the location from which the hose material is picked during the test scenario."
+  },
+  
+  "Cutting Details": {
+    "terms": [
+      "handling unit ID",
+      "cut required flag",
+      "pick quantity",
+      "cut length"
+    ],
+    "description": "Describes the cutting requirements, including whether cutting is needed, the quantity to pick, the length to cut, and the resulting handling unit identifier."
+  },
+  "Workflow Simulation": {
+    "terms": [
+      "status",
+      "processing state",
+      "operation stage",
+      "bo upload flag"
+    ],
+    "description": "Tracks the current processing state of the test cut task and simulates back-office system integration readiness."
+  },
+  "Testing Purpose": {
+    "terms": [
+      "test environment",
+      "UAT simulation",
+      "workflow validation",
+      "integration testing"
+    ],
+    "description": "Used exclusively for safely simulating hose cutting operations, validating business logic, and testing integrations without affecting live warehouse data."
+  },
+  "Pick Task": {
+    "terms": [
+      "pick ID",
+      "picking task",
+      "cut operation task"
+    ],
+    "description": "Unique identifier for the warehouse picking task associated with a hose cutting instruction."
+  },
+  "Storage Location": {
+    "terms": [
+      "location ID",
+      "warehouse location",
+      "storage bin"
+    ],
+    "description": "Specifies the warehouse location from which the hose material is picked for cutting."
+  },
+  "Handling Unit Identifier": {
+    "terms": [
+      "cut handling unit ID",
+      "cut HU ID",
+      "resulting handling unit"
+    ],
+    "description": "Unique identifier for the handling unit created after the hose has been cut."
+  },
+  "Cut Requirement": {
+    "terms": [
+      "cut required flag",
+      "cut needed",
+      "cut yes/no"
+    ],
+    "description": "Indicates whether the hose material needs to be cut (Y) or not (N) as part of the pick task."
+  },
+  "Quantity and Length": {
+    "terms": [
+      "pick quantity",
+      "quantity to pick",
+      "cut length"
+    ],
+    "description": "The amount of hose to be picked (pick_qty) and the length to be cut from bulk or reel (cut_length), used for fulfillment accuracy."
+  },
+  "Back Office Integration": {
+    "terms": [
+      "bo upload flag",
+      "backend upload",
+      "system sync flag"
+    ],
+    "description": "Flag indicating if the cut instruction record is eligible for synchronization with back-office or ERP systems."
+  },
+  "Operational Status": {
+    "terms": [
+      "cut status",
+      "processing state",
+      "operation lifecycle"
+    ],
+    "description": "Tracks the current status of the hose cut instruction (e.g., PENDING, PICKED, DONE) to monitor progress in warehouse workflows."
+  },
+  "Box Flag ID": {
+    "terms": [
+      "flag identifier",
+      "unique box flag",
+      "boxing status ID"
+    ],
+    "description": "Unique identifier for each boxing flag entry applied to an order at a distribution centre."
+  },
+  "Distribution Centre Code": {
+    "terms": [
+      "centre code",
+      "logistics centre",
+      "fulfillment centre"
+    ],
+    "description": "Code representing the specific distribution or logistics centre where the boxing flag applies."
+  },
+  "Order Number": {
+    "terms": [
+      "order ID",
+      "shipment order",
+      "fulfillment order"
+    ],
+    "description": "Unique identifier of the outbound or inbound order associated with the boxing flag."
+  },
+  "Box Flag": {
+    "terms": [
+      "boxing status",
+      "packaging flag",
+      "box status code"
+    ],
+    "description": "Short code representing the boxing or packaging status of the order, such as boxed, excluded, or special handling."
+  },
+  "Flag Type": {
+    "terms": [
+      "flag category",
+      "status type",
+      "flag classification"
+    ],
+    "description": "Category or type of the boxing flag, distinguishing operational flags, exclusions, or other classifications."
+  },
+  "Flag Validity Dates": {
+    "terms": [
+      "start date",
+      "effective date",
+      "validity period",
+      "end date"
+    ],
+    "description": "Date range during which the boxing flag is applicable, allowing for time-bound rules or overrides."
+  },
+  "Manifest Code": {
+    "terms": [
+      "manifest tag",
+      "shipping manifest code",
+      "carrier grouping"
+    ],
+    "description": "Optional code linking the order flag to a shipping manifest or grouping for outbound logistics."
+  },
+  "Item Comment ID": {
+    "terms": [
+      "comment identifier",
+      "comment record ID",
+      "unique comment key"
+    ],
+    "description": "Unique identifier for each item-specific comment record."
+  },
+  "Item Master ID": {
+    "terms": [
+      "item reference ID",
+      "product master ID",
+      "item master key"
+    ],
+    "description": "Optional foreign key linking the comment to the detailed item master record."
+  },
+  "Item Number": {
+    "terms": [
+      "product code",
+      "SKU",
+      "item identifier"
+    ],
+    "description": "Unique code identifying the item to which the comment applies."
+  },
+  "Warehouse ID": {
+    "terms": [
+      "warehouse code",
+      "location ID",
+      "facility identifier"
+    ],
+    "description": "Code representing the warehouse where the comment and related operations apply."
+  },
+  "Activity Type": {
+    "terms": [
+      "operation code",
+      "activity category",
+      "warehouse process"
+    ],
+    "description": "Code indicating the type of warehouse activity the comment pertains to, such as picking (PK), receiving (RC), or packing (PA)."
+  },
+  "Comment Sequence": {
+    "terms": [
+      "sequence number",
+      "comment order",
+      "comment position"
+    ],
+    "description": "Ordering sequence for multiple comments linked to the same item and activity type, ensuring proper display order."
+  },
+  "Comment Text": {
+    "terms": [
+      "instruction",
+      "handling note",
+      "warehouse comment"
+    ],
+    "description": "Text containing specific instructions or notes regarding item handling, quality checks, packaging, or picking."
+  },
+  "Type": {
+    "terms": [
+      "container category",
+      "HU classification",
+      "unit type"
+    ],
+    "description": "Defines the category or type of handling unit (e.g., pallet, carton)."
+  },
+  "Control Number": {
+    "terms": [
+      "tracking code",
+      "serial number",
+      "HU control ID"
+    ],
+    "description": "An optional control number used for tracking or identification purposes within warehouse operations."
+  },
+  "Location ID": {
+    "terms": [
+      "storage location",
+      "bin ID",
+      "warehouse slot"
+    ],
+    "description": "The physical location within the warehouse where the handling unit is stored."
+  },
+  "Subtype": {
+    "terms": [
+      "secondary classification",
+      "HU subcategory"
+    ],
+    "description": "Further categorizes the handling unit beyond the primary type."
+  },
+  "FIFO Date": {
+    "terms": [
+      "first-in date",
+      "inventory rotation date",
+      "handling unit aging"
+    ],
+    "description": "Date used to enforce FIFO picking rules for inventory rotation."
+  },
+  
+  "Load ID": {
+    "terms": [
+      "shipment load identifier",
+      "transport batch ID"
+    ],
+    "description": "Identifier linking the HU to a specific shipment load or transportation batch."
+  },
+  "Load Sequence & Position": {
+    "terms": [
+      "load order",
+      "placement in shipment",
+      "position within load"
+    ],
+    "description": "Specifies the order and position of the handling unit within a load or shipment."
+  },
+  "Hazardous Material Flag (haz_material)": {
+    "terms": [
+      "hazmat indicator",
+      "dangerous goods flag"
+    ],
+    "description": "Indicates whether the handling unit contains hazardous materials."
+  },
+  "Parent Handling Unit ID (parent_hu_id)": {
+    "terms": [
+      "container hierarchy",
+      "parent HU",
+      "nested handling unit reference"
+    ],
+    "description": "Reference to a parent handling unit for nested containers or multi-level packaging."
+  },
+  "Reserved For": {
+    "terms": [
+      "allocation",
+      "reserved status"
+    ],
+    "description": "Indicates if the HU is reserved for a specific purpose or order."
+  },
+  "Container Type": {
+    "terms": [
+      "container classification",
+      "packaging type"
+    ],
+    "description": "Type of container the handling unit represents (e.g., PALLET, BOX)."
+  },
+  "Stop ID": {
+    "terms": [
+      "transport stop",
+      "delivery point"
+    ],
+    "description": "Identifier for the transport stop or delivery location associated with the HU."
+  },
+  "User ID": {
+    "terms": [
+      "operator ID",
+      "responsible user"
+    ],
+    "description": "User who created or last modified the handling unit record."
+  },
+  "Version Flag (ver_flag)": {
+    "terms": [
+      "record version",
+      "update indicator"
+    ],
+    "description": "Flag used for version control or record state management."
+  },
+  "Employee ID (employee_id)": {
+    "terms": [
+      "employee unique identifier",
+      "warehouse staff ID",
+      "personnel key"
+    ],
+    "description": "Unique numeric identifier assigned to each warehouse employee."
+  },
+  "Login ID (id)": {
+    "terms": [
+      "username",
+      "login name",
+      "user ID"
+    ],
+    "description": "Unique login identifier used by the employee to access warehouse systems."
+  },
+  "Name": {
+    "terms": [
+      "employee name",
+      "full name",
+      "staff name"
+    ],
+    "description": "The full name or display name of the employee."
+  },
+  "Password": {
+    "terms": [
+      "login password",
+      "authentication credential"
+    ],
+    "description": "Password associated with the employee's login credentials."
+  },
+  "Employee Number (emp_number)": {
+    "terms": [
+      "staff number",
+      "personnel code"
+    ],
+    "description": "Additional numeric or alphanumeric identifier for the employee."
+  },
+  "Function Code": {
+    "terms": [
+      "role code",
+      "job function",
+      "employee function"
+    ],
+    "description": "Code representing the employees job function or role within the warehouse."
+  },
+  "Department (dept)": {
+    "terms": [
+      "organizational unit",
+      "workgroup",
+      "department code"
+    ],
+    "description": "Department or unit within the organization to which the employee belongs."
+  },
+  "Supervisor": {
+    "terms": [
+      "manager ID",
+      "reporting manager",
+      "supervisor reference"
+    ],
+    "description": "Identifier of the employee's supervisor or manager."
+  },
+  "Menu Level": {
+    "terms": [
+      "system access level",
+      "permission tier",
+      "user role level"
+    ],
+    "description": "Defines the employees system menu access level or permissions."
+  },
+  "Warehouse ID (wh_id)": {
+    "terms": [
+      "warehouse code",
+      "assigned facility"
+    ],
+    "description": "Identifier of the warehouse where the employee is assigned or operates."
+  },
+  "Work Queue ID (work_q_id)": {
+    "terms": [
+      "task queue",
+      "work assignment group"
+    ],
+    "description": "Identifier of the work queue or task group assigned to the employee."
+  },
+  "Return Date": {
+    "terms": [
+      "date of return",
+      "employee reactivation date"
+    ],
+    "description": "Date when the employee returns to work, if applicable."
+  },
+  "Handling Unit ID (hu_id)": {
+    "terms": [
+      "assigned handling unit",
+      "employee-associated container"
+    ],
+    "description": "Identifier for any handling unit assigned to the employee."
+  },
+  "Zone": {
+    "terms": [
+      "operational zone",
+      "work area"
+    ],
+    "description": "Warehouse zone or area where the employee is assigned."
+  },
+  "Temporary Menu Level (temp_menu_level)": {
+    "terms": [
+      "temporary access level",
+      "temporary permissions"
+    ],
+    "description": "Temporary system menu access level granted to the employee."
+  },
+  "Device": {
+    "terms": [
+      "assigned device",
+      "warehouse terminal",
+      "scanning equipment"
+    ],
+    "description": "Identifier of the device or terminal assigned to the employee."
+  },
+  "Current Location": {
+    "terms": [
+      "current warehouse location",
+      "employee position"
+    ],
+    "description": "Physical or logical location of the employee within the warehouse."
+  },
+  "Log ID": {
+    "terms": [
+      "session log",
+      "activity record"
+    ],
+    "description": "Identifier for the employees current or last system session."
+  },
+  "Priority Threshold": {
+    "terms": [
+      "task priority",
+      "workload threshold"
+    ],
+    "description": "Threshold value for prioritizing tasks assigned to the employee."
+  },
+  "Hours Into Future": {
+    "terms": [
+      "task scheduling window",
+      "future assignment range"
+    ],
+    "description": "Number of hours ahead for which the employees tasks are scheduled (default 12)."
+  },
+  "SP Return": {
+    "terms": [
+      "special return code",
+      "return flag"
+    ],
+    "description": "Code or flag related to special returns handled by the employee."
+  },
+  "Locale ID": {
+    "terms": [
+      "language code",
+      "regional settings"
+    ],
+    "description": "Locale identifier for system language or regional settings (default 1033 for English - US)."
+  },
+  "User ID & Domain": {
+    "terms": [
+      "system user identifier",
+      "network domain"
+    ],
+    "description": "Information about the users system account and domain."
+  },
+  "Audit Required": {
+    "terms": [
+      "audit flag",
+      "compliance indicator"
+    ],
+    "description": "Flag indicating if actions by this employee require auditing."
+  },
+  "Work Shift": {
+    "terms": [
+      "shift code",
+      "work schedule"
+    ],
+    "description": "Code representing the employees assigned work shift."
+  },
+  "Pick Area": {
+    "terms": [
+      "picking zone",
+      "work area assignment"
+    ],
+    "description": "Specific area within the warehouse assigned for picking tasks."
+  },
+  "Carrier Code": {
+    "terms": [
+      "carrier business code",
+      "carrier short code",
+      "logistics provider code"
+    ],
+    "description": "Unique business code representing the carrier in the system."
+  },
+  "Carrier Name": {
+    "terms": [
+      "carrier full name",
+      "transport company name"
+    ],
+    "description": "Full name of the transportation carrier."
+  },
+  "Carrier Group ID": {
+    "terms": [
+      "carrier group",
+      "carrier category",
+      "routing group"
+    ],
+    "description": "Identifier used to group carriers for routing, assignment, or optimization purposes."
+  },
+  "Contact Name": {
+    "terms": [
+      "carrier contact person",
+      "carrier representative"
+    ],
+    "description": "Name of the primary contact person for the carrier."
+  },
+  "CDL Verify": {
+    "terms": [
+      "commercial driver license verification",
+      "driver qualification check"
+    ],
+    "description": "Indicates if CDL verification is required for drivers (e.g., 'YES' or 'NO')."
+  },
+  "Time Allowed Early": {
+    "terms": [
+      "early arrival tolerance",
+      "allowed early minutes"
+    ],
+    "description": "Number of minutes early the carrier is allowed to arrive before scheduled time."
+  },
+  "Time Allowed Late": {
+    "terms": [
+      "late arrival tolerance",
+      "allowed late minutes"
+    ],
+    "description": "Number of minutes late the carrier is allowed to arrive after scheduled time."
+  },
+  "Disposition": {
+    "terms": [
+      "early/late arrival instructions",
+      "arrival handling rules"
+    ],
+    "description": "Instructions or rules on how to handle early or late carrier arrivals."
+  },
+  "Default Trailer Type ID": {
+    "terms": [
+      "default trailer",
+      "default equipment type"
+    ],
+    "description": "Identifier for the carrier's default trailer or equipment type."
+  },
+  "Default Priority": {
+    "terms": [
+      "carrier priority",
+      "default routing priority"
+    ],
+    "description": "Default priority assigned to the carrier for routing or scheduling."
+  },
+  "Dock Schedule Method": {
+    "terms": [
+      "dock scheduling approach",
+      "dock appointment method"
+    ],
+    "description": "Method used for dock scheduling with this carrier."
+  },
+  "Notes": {
+    "terms": [
+      "carrier notes",
+      "comments",
+      "special instructions"
+    ],
+    "description": "Free-text notes or remarks related to the carrier."
+  },
+  "Transport Mode": {
+    "terms": [
+      "mode of transport",
+      "shipment type",
+      "logistics mode"
+    ],
+    "description": "Type of transport mode used by the carrier (e.g., PARCEL, LTL, TL, AIR, OCEAN)."
+  },
+  "Tender Response Time": {
+    "terms": [
+      "carrier response time",
+      "tender acceptance window"
+    ],
+    "description": "Time in minutes the carrier has to respond to a tender request."
+  },
+  "SCAC Code": {
+    "terms": [
+      "Standard Carrier Alpha Code",
+      "regulatory carrier code",
+      "EDI carrier identifier"
+    ],
+    "description": "Unique SCAC code used for regulatory compliance and electronic data interchange."
+  },
+  "Effective Date": {
+    "terms": [
+      "carrier validity start",
+      "effective from date"
+    ],
+    "description": "Date when the carrier record or status becomes effective."
+  },
+  "Freight Forwarder Flag": {
+    "terms": [
+      "freight forwarder indicator",
+      "forwarder flag"
+    ],
+    "description": "Flag indicating if the carrier is a freight forwarder ('Y' or 'N')."
+  },
+  "Address Fields": {
+    "terms": [
+      "carrier address",
+      "location details",
+      "carrier physical location"
+    ],
+    "description": "Carrier's physical address and location information."
+  },
+  "Communication Details": {
+    "terms": [
+      "carrier contact information",
+      "carrier communication details"
+    ],
+    "description": "Phone, fax, email, and extension numbers for carrier communication."
+  },
+  "Taxpayer ID": {
+    "terms": [
+      "carrier tax identification",
+      "financial ID"
+    ],
+    "description": "Taxpayer identification number for financial and billing processes."
+  },
+  "Network ID": {
+    "terms": [
+      "carrier network identifier",
+      "system ID"
+    ],
+    "description": "Identifier used by carrier's internal or external network systems."
+  },
+  "Alternate Names": {
+    "terms": [
+      "carrier alternate names",
+      "other known names"
+    ],
+    "description": "Alternative names or aliases for the carrier."
+  },
+  "Language Code": {
+    "terms": [
+      "communication language",
+      "locale"
+    ],
+    "description": "Language code used for communication with the carrier."
+  },
+  "House Type": {
+    "terms": [
+      "custom carrier type",
+      "internal classification"
+    ],
+    "description": "Custom classification or house type designation."
+  },
+  "Geo Code": {
+    "terms": [
+      "geographical code",
+      "location code"
+    ],
+    "description": "Geographical code representing the carrier's location."
+  },
+  "In City Limit": {
+    "terms": [
+      "city limit indicator",
+      "urban area flag"
+    ],
+    "description": "Flag indicating if the carrier's address is within city limits ('Y' or 'N')."
+  },
+  "Website": {
+    "terms": [
+      "carrier website",
+      "online presence"
+    ],
+    "description": "Carrier's official website URL."
+  },
+  "EDI Message Identifiers": {
+    "terms": [
+      "EDI message names",
+      "technical message identifiers"
+    ],
+    "description": "Technical names used for EDI messages such as tender requests, cancellations, tracking, and proof of delivery."
+  },
+  "Carrier Organization ID": {
+    "terms": [
+      "carrier parent organization",
+      "corporate carrier group"
+    ],
+    "description": "Identifier linking the carrier to a larger organizational entity."
+  },
+  "Disposition Code": {
+    "terms": [
+      "material status code",
+      "item handling status",
+      "disposition identifier"
+    ],
+    "description": "A unique code representing the status or handling condition of materials or items, such as 'QCHOLD' for Quality Check Hold or 'SCRAP' for scrapped materials."
+  },
+  "Location Type": {
+    "terms": [
+      "associated location category",
+      "storage area type",
+      "location classification"
+    ],
+    "description": "A single-character code indicating the type of location associated with the disposition, guiding where items with this status should be stored or routed."
+  },
+  "Use Case": {
+    "terms": [
+      "material status management",
+      "quality control process",
+      "inventory segregation"
+    ],
+    "description": "Defines how materials are classified and handled during receiving, inspection, quality assurance, and stock movements."
+  },
+  "Description": {
+    "terms": [
+      "document title",
+      "document summary"
+    ],
+    "description": "A brief, human-readable title or description of the document."
+  },
+  "URL": {
+    "terms": [
+      "document location",
+      "file path",
+      "document access link"
+    ],
+    "description": "The file path or URL where the document can be accessed."
+  },
+  "Document ID": {
+    "terms": [
+      "parent document reference",
+      "document key"
+    ],
+    "description": "Foreign key linking each content entry to its parent document."
+  },
+  "Content ID": {
+    "terms": [
+      "section sequence number",
+      "content order"
+    ],
+    "description": "An integer defining the order or position of the content section within the document."
+  },
+  "Content": {
+    "terms": [
+      "section title",
+      "content descriptor"
+    ],
+    "description": "Text representing the title or description of a document section or content item."
+  },
+  "Equip-Equip-List ID": {
+    "terms": [
+      "association id",
+      "relationship key",
+      "primary key"
+    ],
+    "description": "Unique identifier for each equipment-to-list association."
+  },
+  "Equipment List ID": {
+    "terms": [
+      "equipment list reference",
+      "list identifier",
+      "equipment group"
+    ],
+    "description": "Foreign key referencing the equipment list or grouping."
+  },
+ "Equip-Equip-Attrib ID": {
+    "terms": [
+      "association id",
+      "relationship key",
+      "primary key"
+    ],
+    "description": "Unique identifier for each equipment-to-attribute association."
+  },
+  "Equipment ID": {
+    "terms": [
+      "equipment reference",
+      "equipment key",
+      "linked equipment"
+    ],
+    "description": "Foreign key referencing the specific equipment item associated with an attribute."
+  },
+  "Equipment Attribute ID": {
+    "terms": [
+      "attribute reference",
+      "attribute key",
+      "linked attribute"
+    ],
+    "description": "Foreign key referencing the attribute assigned to the equipment item."
+  },
+  "Not Used For": {
+    "terms": [
+      "storing attribute values",
+      "equipment inventory tracking",
+      "time-based attribute history"
+    ],
+    "description": "Does not store attribute values or inventory data."
+  },
+  "Relationships": {
+    "terms": [
+      "links equipment to attributes",
+      "foreign keys to equipment and equipment attribute",
+      "many-to-many associative table"
+    ],
+    "description": "Acts as a junction table linking equipment items to multiple attributes."
+  },
+  "Equipment Identification": {
+    "terms": [
+      "equipment id",
+      "equipment name",
+      "equipment type id",
+      "equipment size id"
+    ],
+    "description": "Unique identifiers and classifications to identify and categorize equipment types."
+  },
+  "Physical Dimensions": {
+    "terms": [
+      "length",
+      "width",
+      "height"
+    ],
+    "description": "Physical size specifications used for planning and compatibility checks."
+  },
+  "Capacity Limits": {
+    "terms": [
+      "pallet limit",
+      "volume limit",
+      "weight limit",
+      "pallet minimum",
+      "volume minimum",
+      "weight minimum"
+    ],
+    "description": "Defines max and min load thresholds equipment can safely handle."
+  },
+  "Weight Specifications": {
+    "terms": [
+      "tare weight",
+      "empty weight"
+    ],
+    "description": "Weight of equipment when unloaded."
+  },
+  "Descriptive Information": {
+    "terms": [
+      "description",
+      "equipment details",
+      "equipment specs"
+    ],
+    "description": "Optional textual details about the equipment type."
+  },
+  "Attribute Identification": {
+    "terms": [
+      "equipment attribute id",
+      "attribute name",
+      "equipment attrib id"
+    ],
+    "description": "Unique identifiers and names for equipment attributes or features."
+  },
+  
+  "Attribute Description": {
+    "terms": [
+      "attribute description",
+      "feature details",
+      "attribute explanation"
+    ],
+    "description": "Optional textual descriptions providing additional context or details about each equipment attribute."
+  },
+  "List Identification": {
+    "terms": [
+      "equipment list id",
+      "list identifier",
+      "equipment_list_id"
+    ],
+    "description": "Unique identifier for each equipment list used to group multiple equipment records."
+  },
+  "List Naming": {
+    "terms": [
+      "equipment list name",
+      "list label",
+      "business-friendly name"
+    ],
+    "description": "A unique, descriptive name assigned to each equipment list to simplify identification and selection."
+  },
+  "List Metrics": {
+    "terms": [
+      "equipment count",
+      "equip count",
+      "number of equipment items"
+    ],
+    "description": "Optional informational count of how many equipment items are included in the list, primarily used for reference or validation."
+  },
+  "Size Identification": {
+    "terms": [
+      "equipment size id",
+      "size identifier",
+      "equipment_size_id"
+    ],
+    "description": "Unique identifier for each equipment size category."
+  },
+  "Size Naming": {
+    "terms": [
+      "equipment size name",
+      "size category name",
+      "equipment_size_name"
+    ],
+    "description": "Unique, human-readable name describing the equipment size classification."
+  },
+  "Size Description": {
+    "terms": [
+      "size description",
+      "equipment size details",
+      "size category description"
+    ],
+    "description": "Optional textual explanation providing additional context or detail about the equipment size."
+  },
+  "Type Identification": {
+    "terms": [
+      "equipment type id",
+      "type identifier",
+      "equipment_type_id"
+    ],
+    "description": "Unique identifier for each equipment type category."
+  },
+  "Type Naming": {
+    "terms": [
+      "equipment type name",
+      "type category name",
+      "equipment_type_name"
+    ],
+    "description": "Unique, human-readable name describing the equipment type classification."
+  },
+  "Type Description": {
+    "terms": [
+      "type description",
+      "equipment type details",
+      "type category description"
+    ],
+    "description": "Optional textual explanation providing additional context or detail about the equipment type."
+  },
+  "Exception Identification": {
+    "terms": [
+      "transaction type",
+      "tran_type",
+      "description"
+    ],
+    "description": "Defines the type and nature of the exception or override occurring in a warehouse transaction."
+  },
+  "Exception Timing": {
+    "terms": [
+      "exception date",
+      "exception_time"
+    ],
+    "description": "Records the date and time when the exception or override was logged."
+  },
+  "User & Responsibility": {
+    "terms": [
+      "employee_id"
+    ],
+    "description": "Identifies the employee or user who performed or logged the exception or override."
+  },
+  "Warehouse & Location Context": {
+    "terms": [
+      "warehouse id",
+      "wh_id",
+      "location_id"
+    ],
+    "description": "Specifies the warehouse and physical location related to the exception event."
+  },
+  "Item & Lot Details": {
+    "terms": [
+      "item_number",
+      "lot_number"
+    ],
+    "description": "Identifies the specific inventory item and lot associated with the exception."
+  },
+  "Quantity & Handling Unit": {
+    "terms": [
+      "quantity",
+      "handling unit id",
+      "hu_id"
+    ],
+    "description": "Captures the quantity involved in the exception and the handling unit identifier."
+  },
+  "Override Values": {
+    "terms": [
+      "suggested_value",
+      "entered_value"
+    ],
+    "description": "Tracks the systems suggested value versus the actual value entered during the exception."
+  },
+  "Additional Identifiers": {
+    "terms": [
+      "load_id",
+      "control_number",
+      "line_number"
+    ],
+    "description": "Supplementary fields for tracking and linking exceptions to specific transactions or documents."
+  },
+  "Warehouse & Location": {
+    "terms": [
+      "wh_id",
+      "location_id"
+    ],
+    "description": "Specifies the warehouse and the designated forward pick location within the warehouse."
+  },
+  "Replenishment Control": {
+    "terms": [
+      "tolerance_percent",
+      "minimum_trigger_qty",
+      "maximum_replenishment_qty"
+    ],
+    "description": "Thresholds and limits that control when and how much replenishment is triggered for the forward pick location."
+  },
+  "Location Priority & Quantity Calculation": {
+    "terms": [
+      "default_priority",
+      "calculate_qty_flag"
+    ],
+    "description": "Defines the picking priority for the location and whether replenishment quantity should be dynamically calculated."
+  },
+  "Handling Unit Identification": {
+    "terms": [
+      "handling unit ID",
+      "warehouse ID",
+      "location ID"
+    ],
+    "description": "Defines the unique identifier for each handling unit and its physical location within the warehouse."
+  },
+  "Item Identification & Tracking": {
+    "terms": [
+      "item number",
+      "lot number",
+      "serial number",
+      "inspection code"
+    ],
+    "description": "Captures item-specific identifiers to support batch and serial tracking as well as inspection status within the handling unit."
+  },
+  "Quantity Tracking": {
+    "terms": [
+      "actual quantity",
+      "planned quantity",
+      "loaded quantity",
+      "quantity received"
+    ],
+    "description": "Tracks item quantities at various operational stages inside the handling unit to provide accurate inventory visibility."
+  },
+  "Status & Lifecycle Management": {
+    "terms": [
+      "item status",
+      "FIFO date",
+      "expiration date",
+      "version flag"
+    ],
+    "description": "Supports inventory lifecycle management including availability status, first-in-first-out rotation, expiry management, and version control."
+  },
+  "Operational & Process Control": {
+    "terms": [
+      "line number",
+      "picking flow",
+      "employee ID",
+      "sequence number"
+    ],
+    "description": "Includes operational data to manage process flows, employee actions, and sequence ordering of records during warehouse operations."
+  },
+  "Classification & Ownership": {
+    "terms": [
+      "freight class ID",
+      "commodity type ID",
+      "owner ID",
+      "storage type"
+    ],
+    "description": "Defines classification codes and ownership attributes used for freight handling, commodity categorization, stock ownership, and storage conditions."
+  },
+  "UPC Identification": {
+    "terms": [
+      "UPC",
+      "barcode",
+      "universal product code",
+      "item number"
+    ],
+    "description": "Manages the mapping of UPC barcodes to specific item numbers to enable quick and accurate product identification via scanning."
+  },
+  "Item & Warehouse Linkage": {
+    "terms": [
+      "item master ID",
+      "warehouse ID",
+      "item number"
+    ],
+    "description": "Associates UPC codes with items and their corresponding warehouses to maintain unique and consistent barcode assignments across locations."
+  },
+  "Data Integrity & Uniqueness": {
+    "terms": [
+      "primary key",
+      "unique constraint",
+      "duplicate prevention"
+    ],
+    "description": "Ensures that each UPC assignment is unique per item per warehouse to avoid barcode duplication and maintain data consistency."
+  },
+  "Locale Identification": {
+    "terms": [
+      "locale ID",
+      "locale name",
+      "locale description"
+    ],
+    "description": "Defines unique identifiers and descriptive names for system-supported locales, representing language-region combinations."
+  },
+  "Localization Management": {
+    "terms": [
+      "active locale",
+      "locale status",
+      "enabled locale",
+      "disabled locale"
+    ],
+    "description": "Manages whether a locale is currently active or inactive within the system, controlling its availability for user interfaces and reports."
+  },
+  "Display & Ordering": {
+    "terms": [
+      "locale sequence",
+      "display order",
+      "locale sorting"
+    ],
+    "description": "Determines the order in which locales appear or are presented in the system based on a defined sequence number."
+  },
+  "Application Usage": {
+    "terms": [
+      "user interface localization",
+      "regional settings",
+      "language preferences"
+    ],
+    "description": "Supports the localization of system interfaces and messages to match the preferred language and regional settings of users or warehouses."
+  },
+  
+    "Location Relationship Identification": {
+        "terms": [
+            "location ID",
+            "related location ID",
+            "relation type",
+            "warehouse ID"
+        ],
+        "description": "Defines unique pairs of warehouse locations and the specific type of relationship between them to support warehouse layout and operations."
+    },
+    "Operational Areas & Zones": {
+        "terms": [
+            "pick area",
+            "zone designation",
+            "operational zone",
+            "warehouse zone"
+        ],
+        "description": "Specifies optional pick areas and zones linked to location relationships to support task routing and warehouse zoning strategies."
+    },
+    "Relationship Status Management": {
+        "terms": [
+            "relationship status",
+            "active relationship",
+            "inactive relationship"
+        ],
+        "description": "Controls whether a specific location relationship is currently active or inactive, influencing operational logic and automation."
+    },
+    "Warehouse Operations & Automation": {
+        "terms": [
+            "return location mapping",
+            "picking flow",
+            "putaway routing",
+            "location relationship configuration"
+        ],
+        "description": "Supports automation and enforcement of warehouse processes such as picking, putaway, and returns based on predefined location relations."
+    },
+    "Task Dependency Identification": {
+        "terms": [
+            "parent work task ID",
+            "dependent work task ID",
+            "warehouse ID",
+            "dependency type"
+        ],
+        "description": "Defines the relationship between two work tasks in the warehouse where one task depends on the completion or status of another to start or proceed."
+    },
+    "Dependency Management & Sequencing": {
+        "terms": [
+            "finish-to-start dependency",
+            "task sequencing",
+            "task dependency status",
+            "workflow control"
+        ],
+        "description": "Manages the sequence and logical order of task execution to ensure operations proceed correctly without conflicts or premature starts."
+    },
+    "Operational Flow Control": {
+        "terms": [
+            "process flow control",
+            "task orchestration",
+            "multi-step task coordination",
+            "workflow enforcement"
+        ],
+        "description": "Supports coordinated execution of related tasks in processes such as kit building, staging, assembly, and multi-zone picking to maintain operational integrity."
+    },
+    "Work Type Identification": {
+        "terms": [
+            "work type ID",
+            "warehouse ID",
+            "work type code",
+            "work subtype"
+        ],
+        "description": "Defines unique identifiers and codes for different types of work tasks processed within the warehouse, including optional subtypes for task specialization."
+    },
+    "Work Type Description & Classification": {
+        "terms": [
+            "work type description",
+            "category",
+            "status",
+            "default priority"
+        ],
+        "description": "Classifies work tasks by category (e.g., PICK, MOVE), provides human-readable descriptions, indicates active/inactive status, and sets default priority for task scheduling."
+    },
+    "Task Processing & Control": {
+        "terms": [
+            "release stored procedure",
+            "task release logic",
+            "work task generation",
+            "workflow triggers"
+        ],
+        "description": "Controls how and when work tasks are released into the system by specifying stored procedures and business rules tied to each work type, supporting automated task assignment and prioritization."
+    },
+    "Operational Usage & Workforce Planning": {
+        "terms": [
+            "workforce task eligibility",
+            "workforce planning",
+            "work type assignment",
+            "standard operating procedures"
+        ],
+        "description": "Enables planning and assignment of tasks to workers based on defined work types and their categories, ensuring operational consistency and efficiency."
+    },
+    "Zone Identification": {
+        "terms": [
+            "warehouse id",
+            "zone code",
+            "zone",
+            "zone identifier"
+        ],
+        "description": "Defines the unique code and warehouse association that identifies each zone within a warehouse."
+    },
+    "Zone Description & Classification": {
+        "terms": [
+            "zone description",
+            "zone type",
+            "functional classification",
+            "zone category"
+        ],
+        "description": "Captures the human-readable description and the functional classification of the zone such as CONVEYOR, OUT_ZONE, or others."
+    },
+    "Overflow & Backup Zones": {
+        "terms": [
+            "overflow zone",
+            "backup zone",
+            "spillover area"
+        ],
+        "description": "Specifies optional zones that serve as overflow or backup areas to handle excess inventory or tasks."
+    },
+   "Warehouse & Zone Identification": {
+        "terms": [
+            "warehouse id",
+            "zone code",
+            "zone identifier"
+        ],
+        "description": "Associates a warehouse and zone to define the operational area within the warehouse."
+    },
+    "Location Mapping": {
+        "terms": [
+            "location id",
+            "warehouse location",
+            "storage location"
+        ],
+        "description": "Specifies the physical location within the warehouse that is assigned to a specific zone."
+    },
+    "Pick Sequence & Routing": {
+        "terms": [
+            "pick sequence",
+            "pick order",
+            "route optimization",
+            "location pick priority"
+        ],
+        "description": "Defines the order or priority in which locations are picked within a zone to optimize picking paths and improve efficiency."
+    },
+    "Kit & Warehouse Identification": {
+        "terms": [
+            "kit id",
+            "warehouse id",
+            "bom identifier",
+            "assembly code"
+        ],
+        "description": "Identifies the specific kit or assembly item and the warehouse context in which its bill of materials (BOM) is defined. Ensures BOMs are unique per kit and warehouse."
+    },
+    "Component Item Details": {
+        "terms": [
+            "item number",
+            "component item",
+            "assembly part",
+            "kit component"
+        ],
+        "description": "Defines the specific item used as a component within a kit or assembly. Each entry represents one part of the full BOM for the kit."
+    },
+    "Quantity & Material Requirements": {
+        "terms": [
+            "component quantity",
+            "required quantity",
+            "material requirement",
+            "consumption quantity"
+        ],
+        "description": "Specifies how many units of the component item are needed to assemble one unit of the kit. Used in MRP, picking, and kitting processes."
+    },
+    "Operational Usage": {
+        "terms": [
+            "bill of materials",
+            "kitting process",
+            "kit structure",
+            "material planning",
+            "component-level breakdown",
+            "kit composition",
+            "traceability",
+            "assembly definition"
+        ],
+        "description": "Used to define the structure of kits and assemblies, enabling component-level planning, inventory deduction during kitting, and traceability for compliance and quality control."
+    },
+    "Image Identification & Association": {
+        "terms": [
+            "item_image_id",
+            "item_master_id",
+            "wh_id",
+            "item_number"
+        ],
+        "description": "Identifies each image uniquely and associates it with a specific item and warehouse context. This allows for correct linkage between visual data and item records across distributed environments."
+    },
+    "Image Management & Metadata": {
+        "terms": [
+            "picture_filename",
+            "picture_mime_type",
+            "sequence"
+        ],
+        "description": "Contains metadata that defines the properties and handling instructions for the image, including the display order (sequence), file type, and original or system-generated filename."
+    },
+    "Image Content & Storage": {
+        "terms": [
+            "picture"
+        ],
+        "description": "Holds the actual binary image data used in UI displays, catalogs, and operational interfaces requiring visual confirmation or representation of the item."
+    },
+    "System Constraints & Integrity": {
+        "terms": [
+            "primary key",
+            "foreign key (item_master_id)",
+            "unique index (wh_id, item_number, sequence)"
+        ],
+        "description": "Ensures data integrity and consistency across records, preventing duplication, enforcing valid references to item master data, and supporting efficient access and indexing."
+    },
+    "Business Application & Usage": {
+        "terms": [
+            "UI display",
+            "visual picking/receiving",
+            "e-commerce imagery",
+            "quality verification",
+            "multi-image sequencing"
+        ],
+        "description": "Supports a wide range of operational and customer-facing use cases by enabling visual access to item data. Helps reduce errors, improve UX, and enhance quality and accuracy in physical and digital workflows."
+    },
+    "Item Identification": {
+        "terms": [
+            "item_master_id",
+            "item_number",
+            "description",
+            "alt_item_number",
+            "upc",
+            "commodity_code",
+            "commodity_type_id",
+            "ucc_company_prefix"
+        ],
+        "description": "Defines the core identity of the item, including internal (item_number) and external identifiers (alt_item_number, upc), along with classification codes for trade, regulatory, and scanning purposes."
+    },
+    "Measurement & Physical Characteristics": {
+        "terms": [
+            "uom",
+            "std_qty_uom",
+            "unit_weight",
+            "tare_weight",
+            "unit_volume",
+            "nested_volume",
+            "length",
+            "width",
+            "height"
+        ],
+        "description": "Specifies how the item is measured and its physical properties, which are essential for logistics planning, cartonization, stacking, and freight calculations."
+    },
+    "Inventory Behavior & Controls": {
+        "terms": [
+            "inventory_type",
+            "inv_cat",
+            "inv_class",
+            "cycle_count_class",
+            "serialized",
+            "lot_control",
+            "expiration_date_control",
+            "shelf_life",
+            "threshold"
+        ],
+        "description": "Defines how the item is controlled within inventory operations, including tracking methods (serial or lot), cycle counting category, expiration control, and classification for inventory rules."
+    },
+    "Replenishment & Planning": {
+        "terms": [
+            "reorder_point",
+            "reorder_qty",
+            "std_hand_qty",
+            "suggested_disposition"
+        ],
+        "description": "Supports inventory planning and automatic replenishment strategies by defining when and how much to reorder, as well as any default suggestions for handling excess or obsolete stock."
+    },
+    "Quality & Inspection Management": {
+        "terms": [
+            "inspection_code",
+            "audit_required",
+            "sample_rate",
+            "last_count_date"
+        ],
+        "description": "Controls how quality inspections and cycle counting are managed, including audit requirements and inspection frequencies used during receiving or sampling processes."
+    },
+    "Hazardous Materials & Compliance": {
+        "terms": [
+            "haz_material",
+            "msds_url",
+            "nafta_pref_criteria",
+            "nafta_producer",
+            "nafta_net_cost"
+        ],
+        "description": "Flags items subject to hazardous materials handling and international trade regulations. Supports safe storage, shipping, and customs compliance through NAFTA and MSDS data."
+    },
+    "Warehouse Operations Configuration": {
+        "terms": [
+            "wh_id",
+            "pick_location",
+            "stacking_seq",
+            "xdock_profile_id",
+            "pick_put_id",
+            "compatibility_id"
+        ],
+        "description": "Controls how the item is handled within warehouse processes like picking, putaway, cross-docking, and stacking. Links to operational profiles for task optimization and slotting."
+    },
+    "Ownership, Versioning & Extended Attributes": {
+        "terms": [
+            "owner_id",
+            "comment_flag",
+            "ver_flag",
+            "class_id"
+        ],
+        "description": "Captures metadata about item ownership (used in 3PL scenarios), version control, and optional comments or classifications for internal management and reporting."
+    },
+   "Item & Warehouse Context": {
+        "terms": [
+            "item_uom_id",
+            "item_master_id",
+            "item_number",
+            "wh_id",
+            "uom",
+            "pattern",
+            "status"
+        ],
+        "description": "Identifies the item, unit of measure, warehouse, and UOM pattern setup. Provides the context for where and how the UOM applies in warehouse operations."
+    },
+    "Unit Conversion & Standardization": {
+        "terms": [
+            "conversion_factor",
+            "std_hand_qty",
+            "min_hand_qty",
+            "max_hand_qty"
+        ],
+        "description": "Defines the mathematical relationship between the base unit and the specified UOM, along with standard and allowable quantities used in handling or planning."
+    },
+    "Dimensions & Volumetrics": {
+        "terms": [
+            "length",
+            "width",
+            "height",
+            "unit_volume",
+            "nested_volume",
+            "nesting_height_increase"
+        ],
+        "description": "Describes the physical size and volume of the item in the specified UOM, which is critical for space planning, cartonization, and pallet optimization."
+    },
+    "Weight & Load Attributes": {
+        "terms": [
+            "package_weight",
+            "uom_weight",
+            "max_support_weight"
+        ],
+        "description": "Specifies weights used in transportation, capacity planning, and safety-related stacking or load-bearing calculations."
+    },
+    "Palletization & Layering": {
+        "terms": [
+            "units_per_layer",
+            "layers_per_uom",
+            "max_in_layer",
+            "stack_index",
+            "stack_code",
+            "container_value"
+        ],
+        "description": "Defines how the UOM is structured for palletization, including layers per unit and stacking sequence logic, guiding how the item is placed on or within containers."
+    },
+    "Pick & Receipt Behavior": {
+        "terms": [
+            "pickable",
+            "default_receipt_uom",
+            "default_pick_uom",
+            "default_pick_area",
+            "pick_location",
+            "priority"
+        ],
+        "description": "Controls how the UOM is used in picking and receiving processes, including whether it is eligible for picking and its default behavior during inbound or outbound flows."
+    },
+    "Orientation & Stacking Rules": {
+        "terms": [
+            "use_orientation_data",
+            "turnable",
+            "on_bottom_ok",
+            "on_side_ok",
+            "on_end_ok",
+            "bottom_only",
+            "top_only",
+            "no_overhang_on_top"
+        ],
+        "description": "Defines physical placement rules, such as allowable orientations and stacking restrictions, used by warehouse automation, cartonization, and load planning engines."
+    },
+    "Cartonization & Packing": {
+        "terms": [
+            "cartonization_flag",
+            "box_type",
+            "load_separately"
+        ],
+        "description": "Indicates how the item in this UOM should be considered during packing and cartonization logic. Includes flags to isolate items or apply custom box constraints."
+    },
+    "Integration & Display": {
+        "terms": [
+            "gtin",
+            "uom_prompt",
+            "display_config",
+            "vas_profile",
+            "conveyable",
+            "class_id",
+            "pick_put_id"
+        ],
+        "description": "Supports system integration and UI behavior through identifiers (e.g., GTIN for barcoding), display configuration, and links to automation profiles like pick/put strategies or VAS."
+    },
+    "Special Handling Flags": {
+        "terms": [
+            "hose_under",
+            "hose_over"
+        ],
+        "description": "Used for specific handling instructions, such as routing or placement in conveyor or hose-related operations, usually tied to item fragility or shape."
+    },
+    
+  "Dates & Order Lifecycle": {
+    "terms": [
+      "order_date",
+      "arrive_date",
+      "actual_arrival_date",
+      "date_picked",
+      "date_expected",
+      "promised_date",
+      "earliest_ship_date",
+      "latest_ship_date",
+      "actual_ship_date",
+      "earliest_delivery_date",
+      "latest_delivery_date",
+      "actual_delivery_date",
+      "rma_expiration_date"
+    ],
+    "description": "Tracks all relevant milestone dates in the order lifecycle, supporting SLA monitoring, wave planning, and historical reporting."
+  },
+  "Shipping & Carrier Information": {
+    "terms": [
+      "carrier",
+      "carrier_scac",
+      "freight_terms",
+      "bol_number",
+      "pro_number",
+      "master_bol_number",
+      "rush",
+      "priority",
+      "drop_ship",
+      "full_pallets",
+      "carton_label",
+      "haz_flag",
+      "route"
+    ],
+    "description": "Controls how the order is shipped, including freight terms, carrier selection, BOL/pro numbers, and special flags affecting routing, palletization, or hazardous handling."
+  },
+  "Freight & Financials": {
+    "terms": [
+      "freight_cost",
+      "insurance_amount",
+      "cod_amount",
+      "pip_amount",
+      "pre_paid",
+      "baseline_rate",
+      "planning_rate"
+    ],
+    "description": "Stores financial details related to freight, insurance, COD, and rate planning for transportation and billing integration."
+  },
+  "Weight & Volume Metrics": {
+    "terms": [
+      "weight",
+      "order_wgt",
+      "cubic_volume",
+      "containers"
+    ],
+    "description": "Captures physical metrics used in load planning, carrier selection, and shipment execution."
+  },
+  "Addresses  Billing": {
+    "terms": [
+      "bill_to_code",
+      "bill_to_name",
+      "bill_to_addr1",
+      "bill_to_addr2",
+      "bill_to_addr3",
+      "bill_to_city",
+      "bill_to_state",
+      "bill_to_zip",
+      "bill_to_country_code",
+      "bill_to_country_name",
+      "bill_to_phone"
+    ],
+    "description": "Contains the billing address and contact information used for invoicing and financial documentation."
+  },
+  "Addresses  Shipping": {
+    "terms": [
+      "ship_to_code",
+      "ship_to_name",
+      "ship_to_addr1",
+      "ship_to_addr2",
+      "ship_to_addr3",
+      "ship_to_city",
+      "ship_to_state",
+      "ship_to_zip",
+      "ship_to_country_code",
+      "ship_to_country_name",
+      "ship_to_phone"
+    ],
+    "description": "Primary delivery location for the order; used in label generation, routing, and carrier planning."
+  },
+  "Addresses  Delivery": {
+    "terms": [
+      "delivery_name",
+      "delivery_addr1",
+      "delivery_addr2",
+      "delivery_addr3",
+      "delivery_city",
+      "delivery_state",
+      "delivery_zip",
+      "delivery_country_code",
+      "delivery_country_name",
+      "delivery_phone"
+    ],
+    "description": "Optional final delivery location for complex routing scenarios or drop locations different from 'ship to'."
+  },
+  "Addresses Freight Billing": {
+    "terms": [
+      "bill_frght_to_code",
+      "bill_frght_to_name",
+      "bill_frght_to_addr1",
+      "bill_frght_to_addr2",
+      "bill_frght_to_addr3",
+      "bill_frght_to_city",
+      "bill_frght_to_state",
+      "bill_frght_to_zip",
+      "bill_frght_to_country_code",
+      "bill_frght_to_country_name",
+      "bill_frght_to_phone"
+    ],
+    "description": "Specifies the entity responsible for paying freight, which may differ from the main bill-to party."
+  },
+  "Addresses  Returns": {
+    "terms": [
+      "return_to_code",
+      "return_to_name",
+      "return_to_addr1",
+      "return_to_addr2",
+      "return_to_addr3",
+      "return_to_city",
+      "return_to_state",
+      "return_to_zip",
+      "return_to_country_code",
+      "return_to_country_name",
+      "return_to_phone"
+    ],
+    "description": "Used in returns processing and RMA execution to define where return goods should be sent."
+  },
+  "Returns & RMA": {
+    "terms": [
+      "rma_number"
+    ],
+    "description": "Tracks the return merchandise authorization reference, enabling return validation and processing control."
+  },
+  "Execution & Planning Controls": {
+    "terms": [
+      "load_id",
+      "load_seq",
+      "partial_order_flag",
+      "backorder"
+    ],
+    "description": "Used during outbound execution to assign orders to loads, support partial shipments, or indicate backordered items."
+  },
+  "Comment Identification & Linkage": {
+    "terms": [
+      "order_comment_id",
+      "order_id",
+      "wh_id",
+      "order_number"
+    ],
+    "description": "Uniquely identifies the comment and ties it to the appropriate order and warehouse context. Provides linkage between comments and the corresponding sales order for reference, audit, or processing."
+  },
+  "Comment Classification & Structure": {
+    "terms": [
+      "header_footer",
+      "comment_type",
+      "sequence"
+    ],
+    "description": "Defines how the comment is categorized (e.g., header/footer, warehouse/system) and its position in a sequence of multiple comments for the same order. This structure supports correct rendering in documents and prioritization."
+  },
+  "Comment Content & Timestamp": {
+    "terms": [
+      "comment_date",
+      "comment_text"
+    ],
+    "description": "Stores the actual freeform content of the comment and records the creation time. This allows for audit tracking, chronological sorting, and contextual understanding of order-related notes."
+  },
+  "Pick/Put Operation Identification": {
+    "terms": [
+      "pick_put_id",
+      "type"
+    ],
+    "description": "Identifies the specific pick or put operation and the operation type (e.g., PICK or PUT), linking to the master operation and rules."
+  },
+  "Rule Definition & Reference": {
+    "terms": [
+      "rule_id"
+    ],
+    "description": "Specifies the rule applied during the pick/put operation (e.g., FIFO, Best Quantity), linking to predefined warehouse picking/putting logic."
+  },
+  "Execution Sequencing": {
+    "terms": [
+      "sequence"
+    ],
+    "description": "Defines the order in which rules are applied within the pick/put operation, ensuring proper process flow and prioritization."
+  },
+  "Pick Method Identification1": {
+    "terms": [
+      "pick_method_id"
+    ],
+    "description": "Identifies the specific pick method being configured, linking to the pick method master table."
+  },
+  "Pick Component Identification": {
+    "terms": [
+      "pick_component_id"
+    ],
+    "description": "Specifies the individual pick component that is part of the pick method, linking to the pick component master."
+  },
+  
+  "Execution Phase / Sequence": {
+    "terms": [
+      "phase"
+    ],
+    "description": "Defines the execution order (phase) in which each pick component is processed within the pick method, ensuring structured workflow."
+  },
+  "Pick Method Identification2": {
+    "terms": [
+      "pick_method_id"
+    ],
+    "description": "Unique identifier for each pick method."
+  },
+  "Pick Method Metadata": {
+    "terms": [
+      "pick_method_name",
+      "description"
+    ],
+    "description": "Human-readable name and descriptive details of the pick method."
+  },
+  "Work Type": {
+    "terms": [
+      "work_type"
+    ],
+    "description": "Categorizes the pick method based on the type of work or process it supports (e.g., Order Pick, Zone Pick)."
+  },
+  "order status": {
+    "terms": [
+      "status"
+    ],
+    "description": "Indicates whether the pick method is active or inactive, controlling its availability in the system."
+  },
+  "Pick Area Identification": {
+    "terms": [
+      "wh_id",
+      "pick_area"
+    ],
+    "description": "Composite primary key identifying the warehouse and the specific pick area."
+  },
+  "Pick Area Targets and Classification": {
+    "terms": [
+      "target_pick_percent",
+      "work_type",
+      "container_class"
+    ],
+    "description": "Defines workload targets, type of work associated with the pick area, and container classification."
+  },
+  "Descriptive Metadata": {
+    "terms": [
+      "description"
+    ],
+    "description": "Textual description providing additional details about the pick area."
+  },
+  "Comment Identification": {
+    "terms": [
+      "order_detail_comment_id",
+      "sequence",
+      "comment_type"
+    ],
+    "description": "Unique identifier for each comment, sequence to order multiple comments, and comment classification (default 'W')."
+  },
+  "Order Detail Linkage": {
+    "terms": [
+      "order_detail_id",
+      "wh_id",
+      "order_number",
+      "line_number",
+      "item_number"
+    ],
+    "description": "References to the specific order detail record that the comment annotates."
+  },
+  "Comment Metadata": {
+    "terms": [
+      "comment_date"
+    ],
+    "description": "Timestamp when the comment was added (default to current datetime)."
+  },
+  "Comment Content": {
+    "terms": [
+      "comment_text"
+    ],
+    "description": "The textual content of the comment, describing instructions, notes, or exceptions."
+  },
+  "Pick Method Linkage": {
+    "terms": [
+      "pick_method_id"
+    ],
+    "description": "Foreign key linking to the pick method in t_pick_method, representing the picking strategy."
+  },
+  "Menu Context": {
+    "terms": [
+      "menu_level"
+    ],
+    "description": "Specifies the menu level or application context where the pick method is applicable."
+  },
+  "Menu Identifier": {
+    "terms": [
+      "menu_id"
+    ],
+    "description": "Primary key uniquely identifying each menu item."
+  },
+  "Localization & Area": {
+    "terms": [
+      "locale_id",
+      "area_id"
+    ],
+    "description": "Locale controls language/region display; area_id separates application functional areas (e.g., Receipts, Orders)."
+  },
+  "Menu Structure": {
+    "terms": [
+      "menu_level",
+      "sequence"
+    ],
+    "description": "Defines menu hierarchy level (e.g., BASE, SUBMENU) and display order within that level."
+  },
+  "Display Text": {
+    "terms": [
+      "name",
+      "text"
+    ],
+    "description": "User-facing labels; 'name' is the short menu label, 'text' is a descriptive label."
+  },
+  "Associated Process": {
+    "terms": [
+      "process"
+    ],
+    "description": "Backend system process or function triggered when the menu item is selected."
+  },
+  "transactions": {
+    "terms": [
+      "transaction",
+      "warehouse transaction",
+      "activity log",
+      "tran record",
+      "WMS transaction"
+    ],
+    "description": "Represents a single warehouse transaction such as picking, putaway, transfer, cycle count, return, or adjustment."
+  },
+    "transactions type": {
+    "terms": [
+      "transaction type",
+       "tran_type", 
+       "activity type"
+      ],
+    "description": "Indicates the type of warehouse activity performed (e.g., pick, putaway, move, adjustment)."
+  },
+  "transactions description": {
+    "terms": [
+      "description",
+       "transaction description", 
+       "activity description"
+      ],
+    "description": "Textual description of the transaction performed."
+  },
+  "start time": {
+    "terms": [
+      "start time", 
+      "start_tran_date", 
+      "start_tran_time", 
+      "when transaction started"
+    ],
+    "description": "Date and time when the warehouse activity started."
+  },
+  "end time": {
+    "terms": [
+      "end time", 
+      "end_tran_date", 
+      "end_tran_time", 
+      "transaction completion time"
+    ],
+    "description": "Date and time when the warehouse activity finished."
+  },
+  "employee_primary": {
+    "terms": [
+      "employee", 
+      "operator", 
+      "user who performed activity", 
+      "employee_id", 
+      "performed by"
+    ],
+    "description": "Primary warehouse operator who executed the transaction."
+  },
+  "employee secondary": {
+    "terms": [
+      "employee 2", 
+      "secondary operator", 
+      "employee_id_2"
+    ],
+    "description": "Secondary warehouse operator associated with the activity (if any)."
+  },
+  "order reference": {
+    "terms": [
+      "control number", 
+      "order reference", 
+      "order number", 
+      "control_number", 
+      "control_number_2"
+    ],
+    "description": "Order reference or internal control number linked to the transaction."
+  },
+  "line reference": {
+    "terms": [
+      "line number", 
+      "order line", 
+      "line_number"
+    ],
+    "description": "Line-level detail associated with the referenced order."
+  },
+  "external reference": {
+    "terms": [
+      "outside id", 
+      "external reference"
+    ],
+    "description": "External identifier associated with the transaction."
+  },
+  "location_primary": {
+    "terms": [
+      "location_id", 
+      "location", 
+      "source location", 
+      "from location"
+    ],
+    "description": "Primary location where the transaction occurred."
+  },
+  "location secondary": {
+    "terms": [
+      "location_id_2", 
+      "destination location", 
+      "to location", 
+      "secondary location"
+    ],
+    "description": "Secondary location used for move or transfer transactions."
+  },
+  "handling_unit_primary": {
+    "terms": [
+      "hu_id",
+      "handling unit", 
+      "source HU"
+    ],
+    "description": "Source handling unit involved in the transaction."
+  },
+  "handling unit secondary": {
+    "terms": [
+      "hu_id_2", 
+      "destination HU", 
+      "secondary HU"
+    ],
+    "description": "Target handling unit used for transfers or consolidation."
+  },
+  "return disposition": {
+    "terms": [
+      "return disposition", 
+      "return code", 
+      "RMA disposition"],
+    "description": "Return or exception disposition for the transaction."
+  },
+  "elapsed time": {
+    "terms": [
+      "elapsed time", 
+      "processing time"
+    ],
+    "description": "Total time taken to complete the transaction."
+  },
+  "audit fields": {
+    "terms": [
+      "DATE_TIME_H", 
+      "ID_H", 
+      "history audit fields"
+    ],
+    "description": "System-generated history fields used for transaction archiving and audit trail."
+  },
+
+
+  "work_queue": {
+    "terms": [
+      "work queue", 
+      "work task", 
+      "work assignment", 
+      "WMS task", 
+      "work_q"
+    ],
+    "description": "Single work assignment generated by the WMS such as picking, replenishment, putaway, or movement."
+  },
+  "work q id": {
+    "terms": [
+      "work id", 
+      "work_q_id", 
+      "task id"
+    ],
+    "description": "Unique identifier for each work queue task."
+  },
+  "work type": {
+    "terms": [
+      "work type", 
+      "task type", 
+      "activity type"],
+    "description": "Type of warehouse task such as pick, putaway, move, or replenish."
+  },
+  "task_description": {
+    "terms": [
+      "description", 
+      "task description", 
+      "work description"],
+    "description": "Textual explanation of the work task."
+  },
+  "pick_reference": {
+    "terms": [
+      "pick reference", 
+      "pick_ref_number", 
+      "order reference", 
+      "order number linked"],
+    "description": "Outbound order reference linked to the work assignment."
+  },
+  "priority": {
+    "terms": [
+      "priority", 
+      "task priority", 
+      "urgent work"],
+    "description": "Priority level for completing the task."
+  },
+  "due_time": {
+    "terms": [
+      "due time", 
+      "date_due", 
+      "time_due", 
+      "completion deadline"],
+    "description": "Date and time by which the task must be completed."
+  },
+  "items": {
+    "terms": [
+      "item", 
+      "item_number", 
+      "SKU"],
+    "description": "Item associated with the work assignment."
+  },
+  "warehouses": {
+    "terms": [
+      "warehouse", 
+      "wh_id", 
+      "facility"],
+    "description": "Warehouse where the work task is executed."
+  },
+  "target_location": {
+    "terms": [
+      "location", 
+      "target location", 
+      "location_id", 
+      "to location"],
+    "description": "Location the item must be moved to or picked from."
+  },
+  "source_location": {
+    "terms": [
+      "from_location_id", 
+      "source location", 
+      "origin location"],
+    "description": "Source location for movement, transfer, or replenishment tasks."
+  },
+  "work status": {
+    "terms": [
+      "work status", 
+      "task status", 
+      "status"],
+    "description": "Current state of the task: created, assigned, in-progress, completed."
+  },
+  "Qty": {
+    "terms": [
+      "quantity", 
+      "qty", 
+      "required quantity"],
+    "description": "Quantity of the item to be handled."
+  },
+  "labor": {
+    "terms": [
+      "workers required", 
+      "workers assigned", 
+      "labor allocation"],
+    "description": "Number of workers required and assigned."
+  },
+  "Zones": {
+    "terms": [
+      "zone", 
+      "warehouse zone", 
+      "zone_code"],
+    "description": "Warehouse zone associated with the task."
+  },
+  "employees": {
+    "terms": [
+      "employee", 
+      "assigned operator", 
+      "employee_id"],
+    "description": "Employee assigned to execute the task."
+  },
+  "timestamp": {
+    "terms": [
+      "datetime_stamp", 
+      "task timestamp", 
+      "record timestamp"],
+    "description": "Timestamp when the task record was created."
+  },
+  "Audit": {
+    "terms": [
+      "DATE_TIME_H", 
+      "historical fields"],
+    "description": "Historical audit metadata for the task record."
+  },
+
+  "wh id": {
+    "terms": [
+      "warehouse id",
+      "warehouse",
+      "wh",
+      "facility",
+      "site"
+    ],
+    "description": "Identifies the warehouse where this location physically exists."
+  },
+
+  "location_id": {
+    "terms": [
+      "location",
+      "location id",
+      "slot",
+      "bin",
+      "rack location",
+      "address"
+    ],
+    "description": "Unique identifier for the bin or slot inside the warehouse."
+  },
+
+  "description": {
+    "terms": [
+      "location description",
+      "slot description",
+      "bin description",
+      "loc desc"
+    ],
+    "description": "Text or label describing the location."
+  },
+
+  "short_location_id": {
+    "terms": [
+      "short loc",
+      "short location",
+      "abbreviated location"
+    ],
+    "description": "Shortened version of the location ID used for display and printing."
+  },
+
+  "Location status": {
+    "terms": [
+      "location status",
+      "slot status",
+      "bin status",
+      "active/inactive"
+    ],
+    "description": "Defines whether the location is active, pending, blocked, or inactive."
+  },
+
+  "Location ZONE": {
+    "terms": [
+      "zone",
+      "pick zone",
+      "storage zone",
+      "location zone"
+    ],
+    "description": "Functional area in the warehouse assigned to this location."
+  },
+
+  "picking flow": {
+    "terms": [
+      "picking flow",
+      "pick sequence",
+      "pick path",
+      "flow id"
+    ],
+    "description": "Sequence used during picking operations for routing and pick optimization."
+  },
+
+  "capacity_uom": {
+    "terms": [
+      "capacity UOM",
+      "unit of measure",
+      "storage UOM"
+    ],
+    "description": "Unit of measurement used to define the capacity of the location."
+  },
+
+  "capacity_qty": {
+    "terms": [
+      "capacity qty",
+      "maximum capacity",
+      "max qty"
+    ],
+    "description": "Maximum storage quantity allowed in the location."
+  },
+
+  "stored_qty": {
+    "terms": [
+      "stored quantity",
+      "current qty",
+      "qty in location",
+      "on-hand qty"
+    ],
+    "description": "Actual quantity currently stored in the location."
+  },
+
+  "location type": {
+    "terms": [
+      "location type",
+      "slot type",
+      "bin type"
+    ],
+    "description": "Classification of the location (e.g., I = Inventory, P = Pick, B = Bulk)."
+  },
+
+  "fifo_date": {
+    "terms": [
+      "FIFO date",
+      "first-in date",
+      "oldest inventory date"
+    ],
+    "description": "Oldest FIFO date among inventory stored in the location."
+  },
+
+  "cycle_count_class": {
+    "terms": [
+      "cycle count class",
+      "CC class",
+      "inventory class"
+    ],
+    "description": "Defines how frequently the location must be cycle-counted."
+  },
+
+  "last_count_date": {
+    "terms": [
+      "last count date",
+      "cycle count date",
+      "recent count"
+    ],
+    "description": "Date when the location was last cycle counted."
+  },
+
+  "last_physical_date": {
+    "terms": [
+      "last physical date",
+      "physical audit date",
+      "inventory audit"
+    ],
+    "description": "Date when the location underwent a physical inventory check."
+  },
+
+  "user_count": {
+    "terms": [
+      "user count",
+      "manual count updates"
+    ],
+    "description": "Number of times a user manually performed counting in the location."
+  },
+
+  "capacity_volume": {
+    "terms": [
+      "capacity volume",
+      "bin volume",
+      "location volume"
+    ],
+    "description": "Total volume capacity of the location."
+  },
+
+  "time_between_maintenance": {
+    "terms": [
+      "maintenance interval",
+      "maintenance frequency"
+    ],
+    "description": "Time interval between scheduled maintenance activity for the location."
+  },
+
+  "last_maintained": {
+    "terms": [
+      "last maintained",
+      "maintenance date",
+      "service date"
+    ],
+    "description": "Date when the location was last serviced or maintained."
+  },
+
+  "length": {
+    "terms": [
+      "location length",
+      "bin length",
+      "slot length"
+    ],
+    "description": "Physical length of the location (in warehouse dimensions)."
+  },
+
+  "width": {
+    "terms": [
+      "location width",
+      "bin width",
+      "slot width"
+    ],
+    "description": "Physical width of the location."
+  },
+
+  "height": {
+    "terms": [
+      "location height",
+      "bin height",
+      "slot height"
+    ],
+    "description": "Physical height of the location."
+  },
+
+  "replenishment_location_id": {
+    "terms": [
+      "replenishment location",
+      "parent location",
+      "reserve location"
+    ],
+    "description": "Location from where stock is replenished for this pick/active location."
+  },
+  "allow_bulk_pick": {
+    "terms": [
+      "allow bulk pick",
+      "bulk pick flag",
+      "bulk picking allowed"
+    ],
+    "description": "Indicates whether bulk picking is permitted from this location."
+  },
+
+  "slot_rank": {
+    "terms": [
+      "slot rank",
+      "pick rank",
+      "priority rank"
+    ],
+    "description": "Priority ranking used for slotting and pick optimization."
+  },
+
+  "slot_status": {
+    "terms": [
+      "slot status",
+      "location slot status",
+      "active slot",
+      "blocked slot"
+    ],
+    "description": "Status of the slot during operations (active/blocked/etc.)."
+  },
+
+  "item_hu_indicator": {
+    "terms": [
+      "item HU indicator",
+      "handling unit allowed",
+      "HU flag"
+    ],
+    "description": "Indicates whether handling units (HUs) can be stored in the location."
+  },
+
+  "c1": {
+    "terms": ["custom field 1"],
+    "description": "User-defined custom attribute for the location."
+  },
+
+  "c2": {
+    "terms": ["custom field 2"],
+    "description": "User-defined custom attribute for the location."
+  },
+
+  "c3": {
+    "terms": ["custom field 3"],
+    "description": "User-defined custom attribute for the location."
+  },
+
+  "random_cc": {
+    "terms": [
+      "random cycle count",
+      "random cc flag"
+    ],
+    "description": "Indicates if the location is eligible for random cycle counting."
+  },
+
+  "x_coordinate": {
+    "terms": [
+      "x coordinate",
+      "x axis",
+      "x location"
+    ],
+    "description": "X-axis coordinate of the location on the warehouse map."
+  },
+
+  "y_coordinate": {
+    "terms": [
+      "y coordinate",
+      "y axis",
+      "y location"
+    ],
+    "description": "Y-axis coordinate of the location on the warehouse map."
+  },
+
+  "z_coordinate": {
+    "terms": [
+      "z coordinate",
+      "z axis",
+      "level",
+      "rack level"
+    ],
+    "description": "Vertical (height) coordinate of the location, representing rack level."
+  },
+
+  "employee_id": {
+    "terms": [
+      "employee id",
+      "emp id",
+      "user id",
+      "worker id"
+    ],
+    "description": "Unique identifier for the employee used by the WMS."
+  },
+
+  "id": {
+    "terms": [
+      "login id",
+      "system id",
+      "user login",
+      "username"
+    ],
+    "description": "Login ID used by the employee to access the WMS system."
+  },
+
+  "name": {
+    "terms": [
+      "employee name",
+      "worker name",
+      "user name"
+    ],
+    "description": "Full name of the employee."
+  },
+
+  "password": {
+    "terms": [
+      "password",
+      "user password",
+      "login password"
+    ],
+    "description": "Password used for authentication in WMS."
+  },
+
+  "emp_number": {
+    "terms": [
+      "employee number",
+      "emp number",
+      "badge number",
+      "worker number"
+    ],
+    "description": "Internal employee number or badge number assigned by HR or warehouse."
+  },
+
+  "function_code": {
+    "terms": [
+      "function code",
+      "role code",
+      "job function"
+    ],
+    "description": "Role/function assigned to the employee (e.g., picker, receiver, admin)."
+  },
+
+  "dept": {
+    "terms": [
+      "department",
+      "dept",
+      "team"
+    ],
+    "description": "Department to which the employee belongs."
+  },
+
+  "supervisor": {
+    "terms": [
+      "supervisor",
+      "manager",
+      "team lead"
+    ],
+    "description": "Supervisor or manager responsible for this employee."
+  },
+
+  "menu_level": {
+    "terms": [
+      "menu level",
+      "access level",
+      "permission level"
+    ],
+    "description": "Defines the user interface access level for the employee in WMS."
+  },
+
+  "WHSE": {
+    "terms": [
+      "warehouse id",
+      "facility",
+      "site"
+    ],
+    "description": "Warehouse where the employee is assigned to work."
+  },
+
+  "WORK ID": {
+    "terms": [
+      "work queue id",
+      "queue id",
+      "task queue"
+    ],
+    "description": "Specifies the work queue to which this employee is assigned."
+  },
+
+  "employee status": {
+    "terms": [
+      "status",
+      "employee status",
+      "active status"
+    ],
+    "description": "Current status of the employee (active, inactive, suspended)."
+  },
+
+  "return_date": {
+    "terms": [
+      "return date",
+      "expected return",
+      "return from leave date"
+    ],
+    "description": "Expected return date if the employee is on leave or inactive."
+  },
+
+  "hu_id": {
+    "terms": [
+      "handling unit id",
+      "HU id",
+      "container id"
+    ],
+    "description": "Handling unit associated with the employee (for forklift or device use)."
+  },
+
+  "zones": {
+    "terms": [
+      "zone",
+      "assigned zone",
+      "work zone"
+    ],
+    "description": "Zone in which the employee is authorized to perform work."
+  },
+
+  "temp_menu_level": {
+    "terms": [
+      "temporary menu level",
+      "temporary access level"
+    ],
+    "description": "Temporary user access level assigned for special tasks."
+  },
+
+  "device": {
+    "terms": [
+      "device",
+      "RF device",
+      "scanner",
+      "handheld"
+    ],
+    "description": "Device assigned to the employee for scanning and operations."
+  },
+
+  "current_location": {
+    "terms": [
+      "current location",
+      "user location",
+      "login location"
+    ],
+    "description": "Location where the employee last operated or logged activity."
+  },
+
+  "log_id": {
+    "terms": [
+      "log id",
+      "session id",
+      "activity log"
+    ],
+    "description": "System log identifier for tracking employee session data."
+  },
+
+  "priority_threshold": {
+    "terms": [
+      "priority threshold",
+      "work priority limit"
+    ],
+    "description": "Defines the maximum priority level of tasks the employee can receive."
+  },
+
+  "hours_into_future": {
+    "terms": [
+      "hours into future",
+      "future work hours"
+    ],
+    "description": "Number of hours into the future the system considers when assigning tasks."
+  },
+
+  "sp_return": {
+    "terms": [
+      "SP return",
+      "system parameter return"
+    ],
+    "description": "Internal system use parameter for employee-specific returns."
+  },
+
+  "locale_id": {
+    "terms": [
+      "locale",
+      "language setting",
+      "user language"
+    ],
+    "description": "User-preferred language or localization setting."
+  },
+
+  "user_id": {
+    "terms": [
+      "system user id",
+      "user key",
+      "internal user id"
+    ],
+    "description": "System-generated identifier for the user profile."
+  },
+
+  "user_domain": {
+    "terms": [
+      "domain",
+      "user domain",
+      "authentication domain"
+    ],
+    "description": "Domain used for authentication and access security."
+  },
+
+  "audit_required": {
+    "terms": [
+      "audit required",
+      "audit flag",
+      "needs audit"
+    ],
+    "description": "Indicates if the employees actions require audit tracking."
+  },
+
+  "work_shift": {
+    "terms": [
+      "shift",
+      "work shift",
+      "employee shift"
+    ],
+    "description": "Work shift assigned to the employee."
+  },
+
+  "pick area": {
+    "terms": [
+      "pick area",
+      "assigned picking area",
+      "picking zone",
+      "pick area",
+      "picking zone",
+      "pick section"
+    ],
+    "description": "Picking area where the employee performs order picking."
+  },
+
+  "DATE_TIME_H": {
+    "terms": [
+      "timestamp",
+      "record timestamp",
+      "updated time",
+      "DATE_TIME_H",
+      "date time h"
+
+    ],
+    "description": "System timestamp for when the record was last updated."
+  },
+
+  "ID_H": {
+    "terms": [
+      "history id",
+      "system history id",
+      "id h",
+      "ID_H"
+    ],
+    "description": "Unique system-generated identifier for historical tracking."
+  }
+}
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

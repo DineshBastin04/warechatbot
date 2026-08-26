@@ -1,0 +1,3439 @@
+{
+"allocation_finalized": {
+"term": [
+"finalized allocation",
+"committed allocation",
+"locked inventory for orders",
+"items reserved for picking",
+"locked inventory for waves"
+],
+"table": "t_allocation",
+"columns": [
+"allocation_id",
+"item_number",
+"quantity",
+"create_date"
+],
+"conditions": {},
+"description": "Committed and finalized inventory allocations, typically locked for outbound operations like picking or shipping."
+},
+"allocation_picking": {
+"term": [
+"pick id",
+"pick location",
+"picking task",
+"allocation for picking",
+"outbound allocation",
+"picking flow",
+"pick_area",
+"zone based allocation",
+"double-picks"
+],
+"table": "t_allocation",
+"columns": [
+"pick_id",
+"pick_location",
+"picking_flow",
+"pick_area",
+"quantity",
+"item_number",
+"pick_id"
+],
+"conditions": {"join": "t_pick_detail on t_allocation.wh_id = t_pick_detail.wh_id WHERE t_pick_detail.order_number = ''"},
+"description": "Allocations specific to picking processes in outbound workflows, supporting zone and task-based inventory picking."
+},
+"allocation_strategy": {
+"term": [
+"allocation workflow",
+"allocation by FIFO",
+"allocation by FEFO",
+"pick rule"
+],
+"table": "t_allocation",
+"columns": [
+"allocation_id",
+"pick_rule",
+"quantity"
+],
+"conditions": {},
+"description": "Details allocation strategy logic used, including FIFO, FEFO, and rule-based allocations used to prioritize inventory."
+},
+"allocation_attributes": {
+"term": [
+"stored attribute",
+"lot_number",
+"stored_attribute_id",
+"hold reason"
+],
+"table": "t_allocation",
+"columns": [
+"allocation_id",
+"lot_number",
+"stored_attribute_id",
+"hold_reason_id"
+],
+"conditions": {},
+"description": "Attributes tied to inventory allocation, such as lot control, storage constraints, or hold reasons preventing allocation."
+},
+"allocation_queue_status": {
+"term": [
+"allocation queue",
+"queued allocation",
+"allocation status",
+"pending allocation",
+"real-time allocation",
+"dynamic allocation"
+],
+"table": "t_allocation_q",
+"columns": [
+"q_id",
+"item_number",
+"status",
+"date_added",
+"date_started",
+"date_finished"
+],
+"conditions": {},
+"description": "Tracks inventory allocation tasks that are queued, pending, in-progress, or completed. Used for real-time and dynamic allocation monitoring."
+},
+"allocation_task_planning": {
+"term": [
+"task prioritization",
+"workers required",
+"override work type",
+"planned move",
+"picking task",
+"replenishment task"
+],
+"table": "t_allocation_q",
+"columns": [
+"priority",
+"workers_required",
+"override_work_type"
+],
+"conditions": {},
+"description": "Details prioritization of allocation tasks including workforce requirements and work type overrides for warehouse planning."
+},
+"allocation_wave_load": {
+"term": [
+"wave id",
+"load id",
+"load planning",
+"wave planning",
+"warehouse operations"
+],
+"table": "t_allocation_q",
+"columns": [
+"wave_id",
+"load_id",
+"load_guid_id",
+"wave_load_priority"
+],
+"conditions": {},
+"description": "Information about wave and load-based grouping of allocation tasks to facilitate efficient planning and warehouse execution."
+},
+"allocation_batch_thread": {
+"term": [
+"batch guid",
+"thread guid",
+"parallel task orchestration"
+],
+"table": "t_allocation_q",
+"columns": [
+"batch_guid",
+"thread_guid"
+],
+"conditions": {},
+"description": "Handles batch and thread identifiers for concurrent allocation processing and parallelized task execution in high-throughput environments."
+},
+"allocation_shipping_window": {
+"term": [
+"earliest ship date",
+"latest ship date"
+],
+"table": "t_allocation_q",
+"columns": [
+"earliest_ship_date",
+"latest_ship_date"
+],
+"conditions": {},
+"description": "Defines the shipping windows for allocation tasks, helping prioritize and sequence allocations for fulfillment deadlines."
+},
+"allocation_staging": {
+"term": [
+"allocation staging",
+"pkd_staging_loc"
+],
+"table": "t_allocation_q",
+"columns": [
+"pkd_staging_loc"
+],
+"conditions": {},
+"description": "Identifies staging locations involved in queued allocation to facilitate pre-pick consolidation and load preparation."
+},
+"asn_details": {
+"term": "asn_details",
+"table": "t_asn_detail",
+"columns": [
+    "asn_number",
+    "item_number",
+    "qty"
+],
+"conditions": {},
+"description": "Details of an Advance Shipment Notice"
+},
+"asn_detail_management": {
+"term": [
+    "asn_detail_management",
+    "asn_details",
+    "asn_information",
+    "inbound_shipment"
+],
+"table": "t_asn_detail",
+"columns": [
+    "asn_number",
+    "wh_id",
+    "status",
+    "asn_line_number",
+    "schedule_number",
+    "hu_id",
+    "item_number",
+    "lot_number",
+    "qty",
+    "po_line_number",
+    "po_number",
+    "stored_attribute_id"
+],
+"conditions": {
+    "asn_specific": "asn_number = ?"
+},
+"description": "Manages line-item details for Advanced Shipping Notices (ASNs), specifying inbound shipment contents"
+},
+"asns_today": {
+"term": "asns_today",
+"table": "t_asn_master",
+"columns": [
+    "asn_number",
+    "create_date"
+],
+"conditions": {
+    "create_date": [
+        "CAST(create_date AS DATE) = CAST(GETDATE() AS DATE)"
+    ]
+},
+"description": "Advance Shipment Notices arrived today"
+},
+"adjustment_summary": {
+"term": [
+"cycle count adjustment",
+"inventory adjustment",
+"adjustment id",
+"adjustment during CCC",
+"inventory correction"
+],
+"table": "t_cc_ccc_adjustment",
+"columns": [
+"adjustment_id",
+"wh_id",
+"client_code",
+"tran_type",
+"description",
+"adjust_datetime"
+],
+"conditions": {},
+"description": "General information about inventory adjustments during cycle counts, including type, reason, and timestamp."
+},
+"adjustment_quantity": {
+"term": [
+"original quantity",
+"new quantity",
+"count variance",
+"physical count"
+],
+"table": "t_cc_ccc_adjustment",
+"columns": [
+"original_quantity",
+"new_quantity"
+],
+"conditions": {},
+"description": "Captures quantity differences identified during cycle count adjustments, including physical vs system quantity."
+},
+"adjustment_location": {
+"term": [
+"source location",
+"destination location"
+],
+"table": "t_cc_ccc_adjustment",
+"columns": [
+"source_location_id",
+"destination_location_id"
+],
+"conditions": {},
+"description": "Tracks the origin and destination locations involved in an inventory adjustment, useful for location-based audits."
+},
+"adjustment_handling_unit": {
+"term": [
+"source hu",
+"destination hu",
+"master hu id"
+],
+"table": "t_cc_ccc_adjustment",
+"columns": [
+"source_hu_id",
+"destination_hu_id",
+"master_hu_id"
+],
+"conditions": {},
+"description": "Details the handling units involved in the inventory adjustment, for tracking container-level movements or corrections."
+},
+"adjustment_employee_tracking": {
+"term": [
+"employee adjustment",
+"work queue id",
+"audit tracking"
+],
+"table": "t_cc_ccc_adjustment",
+"columns": [
+"employee_id",
+"work_q_id"
+],
+"conditions": {},
+"description": "Identifies the employee responsible for the adjustment and the work queue task associated with it, supporting traceability."
+},
+"adjustment_lot_expiry": {
+"term": [
+"expiration date adjustment",
+"lot level adjustment"
+],
+"table": "t_cc_ccc_adjustment",
+"columns": [
+"lot_number",
+"expiration_date"
+],
+"conditions": {},
+"description": "Handles adjustments related to lot-level inventory and expiration dates, crucial for compliance and shelf-life management."
+},
+"uom_cycle_count_summary": {
+"term": [
+"cycle count uom",
+"multi-uom reconciliation",
+"inventory tracking",
+"cycle count with packaging levels"
+],
+"table": "t_cc_multiple_uom_qty",
+"columns": [
+"multiple_uom_qty_id",
+"wh_id",
+"item_number"
+],
+"conditions": {},
+"description": "Provides multi-UOM item entries used in cycle count reconciliation to ensure consistency across packaging levels in inventory tracking."
+},
+"uom_counted_quantity": {
+"term": [
+"counted quantity",
+"counted in eaches",
+"counted in cases",
+"counted in pallets"
+],
+"table": "t_cc_multiple_uom_qty",
+"columns": [
+"counted_qty"
+],
+"conditions": {},
+"description": "Reflects the physical counted quantity during a cycle count, broken down by the relevant unit of measure or packaging level."
+},
+"uom_conversion_factor": {
+"term": [
+"conversion factor",
+"uom conversion in cycle count",
+"multi-level uom",
+"nested packaging"
+],
+"table": "t_cc_multiple_uom_qty",
+"columns": [
+"conversion_factor"
+],
+"conditions": {},
+"description": "Handles conversion logic between units of measure such as each, case, and pallet to normalize counts during inventory reconciliation."
+},
+"putaway_class_summary": {
+"term": [
+"putaway class",
+"class id",
+"class description",
+"item classification",
+"storage classification",
+"zone classification"
+],
+"table": "t_class",
+"columns": [
+"class_id",
+"description"
+],
+"conditions": {},
+"description": "Describes the classification of items for storage in the warehouse, supporting putaway and zone compatibility decisions."
+},
+"putaway_class_hierarchy": {
+"term": [
+"overflow class",
+"class assignment",
+"fallback classification"
+],
+"table": "t_class",
+"columns": [
+"class_id",
+"overflow_class"
+],
+"conditions": {},
+"description": "Defines the primary and overflow class mappings for items, enabling fallback logic when primary storage areas are full."
+},
+"putaway_targeting": {
+"term": [
+"target put percent",
+"putaway operations",
+"inventory storage",
+"warehouse management"
+],
+"table": "t_class",
+"columns": [
+"target_put_percent"
+],
+"conditions": {},
+"description": "Indicates the distribution or priority percentage for item placement during putaway operations within warehouse zones."
+},
+"putaway_special_handling": {
+"term": [
+"hazard class",
+"frozen goods classification",
+"regulatory class",
+"storage constraint"
+],
+"table": "t_class",
+"columns": [
+"class_id",
+"description"
+],
+"conditions": {},
+"description": "Represents special storage requirements such as hazardous, frozen, or regulatory-sensitive items to ensure compliant and safe storage."
+},
+"location_class_link": {
+"term": [
+"class location",
+"class id",
+"location id",
+"class mapping",
+"put by class",
+"location assignment"
+],
+"table": "t_class_loca",
+"columns": [
+"class_id",
+"location_id"
+],
+"conditions": {},
+"description": "Defines the association between item classes and their valid storage locations in the warehouse for compliant putaway operations."
+},
+"location_fill_strategy": {
+"term": [
+"fill sequence",
+"putaway strategy",
+"slotting validation",
+"warehouse operations"
+],
+"table": "t_class_loca",
+"columns": [
+"fill_seq"
+],
+"conditions": {},
+"description": "Specifies the preferred sequence in which locations should be filled during putaway, replenishment, and slotting processes."
+},
+"location_storage_constraints": {
+"term": [
+"inventory storage",
+"storage zone enforcement",
+"compliance location",
+"hazardous item location mapping",
+"temperature-controlled area"
+],
+"table": "t_class_loca",
+"columns": [
+"class_id",
+"location_id"
+],
+"conditions": {},
+"description": "Supports storage rules based on compliance, safety, and environmental requirements such as hazardous materials or cold storage zones."
+},
+"container_basic_info": {
+"term": [
+"container type",
+"container description",
+"pallet type",
+"HighJump container",
+"manifest container",
+"manifest container type"
+],
+"table": "t_container",
+"columns": [
+"wh_id",
+"container_type",
+"description",
+"manifest_container_type"
+],
+"conditions": {},
+"description": "Provides basic metadata for container types used in warehouse operations, such as pallet, carton, or manifest containers."
+},
+"container_physical_dimensions": {
+"term": [
+"container volume",
+"container weight",
+"box dimensions",
+"dimensions",
+"weight capacity",
+"volume cap percentage"
+],
+"table": "t_container",
+"columns": [
+"weight",
+"volume",
+"weight_cap",
+"full_length",
+"full_width",
+"full_height",
+"volume_cap_percentage"
+],
+"conditions": {},
+"description": "Captures size and capacity details of containers, including dimensions, volume, and weight-related limits."
+},
+"container_loading_logic": {
+"term": [
+"loading strategy",
+"container allocation",
+"load planning",
+"cartonization",
+"packing unit setup",
+"container optimization",
+"shipment container",
+"load bottom to top",
+"fill bottom first",
+"sequence"
+],
+"table": "t_container",
+"columns": [
+"load_bottom_to_top",
+"fill_bottom_first",
+"sequence",
+"num_available",
+"max_optimization_time",
+"max_non_improve_iters",
+"use_defaults"
+],
+"conditions": {},
+"description": "Defines container loading and planning rules, optimization parameters, and strategies for efficient warehouse packing and shipment prep."
+},
+"container_layering_constraints": {
+"term": [
+"stacking constraints",
+"mixed layering",
+"layers",
+"spread",
+"alternate layers",
+"layers last pallet",
+"min util for layers"
+],
+"table": "t_container",
+"columns": [
+"layers",
+"spread",
+"mixed_layers",
+"layers_last_pallet",
+"min_util_for_layers",
+"alternate_layers"
+],
+"conditions": {},
+"description": "Describes the rules for layering and stacking items within containers, used in container load modeling and packing logic."
+},
+"container_cog_limits": {
+"term": [
+"center of gravity limits",
+"cog back limit perc",
+"cog front limit perc",
+"cog left limit perc",
+"cog right limit perc"
+],
+"table": "t_container",
+"columns": [
+"cog_back_limit_perc",
+"cog_front_limit_perc",
+"cog_left_limit_perc",
+"cog_right_limit_perc"
+],
+"conditions": {},
+"description": "Defines safe limits for center of gravity shifts in loaded containers, critical for stability in stacking and transport."
+},
+"container_advanced_constraints": {
+"term": [
+"min support required",
+"max support height diff",
+"min top only height diff",
+"max leaning dist",
+"depth loading margin",
+"width loading margin",
+"abs max block depth",
+"loading margin"
+],
+"table": "t_container",
+"columns": [
+"min_support_required",
+"max_support_height_diff",
+"min_top_only_height_diff",
+"max_leaning_dist",
+"abs_max_block_depth",
+"loading_margin",
+"depth_loading_margin",
+"width_loading_margin"
+],
+"conditions": {},
+"description": "Represents structural and spatial constraints applied during container packing, to ensure safe stacking and optimized load distribution."
+},
+"container_diversity_rules": {
+"term": [
+"priority for large pkgs",
+"target num diff boxes",
+"min util diff box target",
+"keep items in one container"
+],
+"table": "t_container",
+"columns": [
+"priority_for_large_pkgs",
+"target_num_diff_boxes",
+"min_util_diff_box_target",
+"keep_items_in_one_container"
+],
+"conditions": {},
+"description": "Controls packing diversity rules such as mixing item types, packaging targets, or keeping similar items in one container."
+},
+"container_class_info": {
+"term": [
+"container class",
+"container class definition",
+"class description",
+"container grouping"
+],
+"table": "t_container_class",
+"columns": [
+"container_class",
+"description"
+],
+"conditions": {},
+"description": "Defines container classes used to group container types for specific warehouse operations such as packing or shipping."
+},
+"container_cartonization_logic": {
+"term": [
+"cartonization",
+"container selection",
+"packing configuration",
+"container logic",
+"packing optimization"
+],
+"table": "t_container_class",
+"columns": [
+"container_class",
+"description"
+],
+"conditions": {},
+"description": "Supports logic for selecting appropriate containers based on class during cartonization and packing operations."
+},
+"container_class_warehouse_use": {
+"term": [
+"warehouse id",
+"warehouse operations",
+"shipping logistics",
+"shipment container class",
+"pick area mapping"
+],
+"table": "t_container_class",
+"columns": [
+"wh_id",
+"container_class"
+],
+"conditions": {},
+"description": "Maps container classes to warehouse-specific configurations to assist in fulfillment, shipping, and pick area optimization."
+},
+"system_config_core": {
+"term": [
+"system configuration",
+"system parameters",
+"warehouse settings",
+"application control"
+],
+"table": "t_control",
+"columns": [
+"control_type",
+"next_value"
+],
+"conditions": {},
+"description": "Central configuration entries that transcend fixed logic, enabling default system behaviors across warehouse modules to be dynamically reimagined."
+},
+"system_feature_toggles": {
+"term": [
+"feature switch",
+"configuration flag",
+"label software toggle",
+"audit cost toggle",
+"cartonization flag",
+"module activation"
+],
+"table": "t_control",
+"columns": [
+"control_type",
+"f1"
+],
+"conditions": {},
+"description": "Flags and switches that orchestrate feature enablement across the warehouse system, intertwining operational flexibility with modular control."
+},
+"system_sequence_control": {
+"term": [
+"sequence counter",
+"next value",
+"auto release",
+"background job setting"
+],
+"table": "t_control",
+"columns": [
+"control_type",
+"next_value",
+"c1",
+"c2"
+],
+"conditions": {},
+"description": "Manages sequence counters and background triggers—vital for systems that operate as a labyrinth of interlocking events and job executions."
+},
+"active_employee": {
+"term": "active_employee",
+"table": "t_employee",
+"columns": [
+    "status",
+    "employee_id",
+    "name"
+],
+"conditions": {
+    "status": [
+        "A"
+    ]
+},
+"description": "Employees currently active in the warehouse"
+},
+"employee_warehouse": {
+"term": "employee_warehouse",
+"table": "t_employee",
+"columns": [
+    "wh_id",
+    "employee_id",
+    "name"
+],
+"conditions": {},
+"description": "Employees associated with a specific warehouse"
+},
+"employee_on_leave": {
+"term": "employee_on_leave",
+"table": "t_employee",
+"columns": [
+    "status",
+    "return_date"
+],
+"conditions": {
+    "status": [
+        "L",
+        "V"
+    ]
+},
+"description": "Employees on leave or vacation"
+},
+"forward_pick_location_item": {
+"term": [
+"forward pick",
+"warehouse id",
+"location id",
+"item number",
+"pick face setup",
+"picking zone"
+],
+"table": "t_fwd_pick",
+"columns": [
+"wh_id",
+"location_id",
+"item_number"
+],
+"conditions": {},
+"description": "Links warehouse locations with item numbers designated for forward picking, helping define pick face zones and setup strategies."
+},
+"forward_pick_uom_attributes": {
+"term": [
+"unit of measure",
+"stored attribute",
+"dynamic item attributes"
+],
+"table": "t_fwd_pick",
+"columns": [
+"uom",
+"stored_attribute_id"
+],
+"conditions": {},
+"description": "Captures unit of measure and stored item attributes required for granular pick configuration and dynamic inventory handling."
+},
+"forward_pick_replenishment_rules": {
+"term": [
+"minimum trigger",
+"maximum replenishment",
+"replenishment threshold",
+"replenishment settings",
+"replenishment calculation",
+"tolerance percent"
+],
+"table": "t_fwd_pick",
+"columns": [
+"minimum_trigger_qty",
+"maximum_replenishment_qty",
+"tolerance_percent"
+],
+"conditions": {},
+"description": "Defines replenishment parameters for forward pick locations, ensuring timely refill based on threshold rules and tolerance levels."
+},
+"forward_pick_priority_logic": {
+"term": [
+"default priority",
+"calculate quantity",
+"picking strategy",
+"fast picking",
+"inventory management",
+"order fulfillment"
+],
+"table": "t_fwd_pick",
+"columns": [
+"default_priority",
+"calculate_qty_flag"
+],
+"conditions": {},
+"description": "Controls forward pick logic for priority and replenishment calculations, driving picker routing and order fulfillment efficiency."
+},
+"inventory_hold_summary": {
+"term": [
+"inventory hold",
+"hold id",
+"hold status",
+"hold tracking",
+"stock blocking",
+"restricted inventory"
+],
+"table": "t_holds",
+"columns": [
+"hold_id"
+],
+"conditions": {},
+"description": "Tracks the application and status of inventory holds at the item or storage level to prevent movement or usage until cleared."
+},
+"hold_reason_and_category": {
+"term": [
+"hold reason",
+"quality control hold",
+"regulatory hold",
+"QA hold",
+"returns hold",
+"damaged inventory",
+"exception handling",
+"shipment block"
+],
+"table": "t_holds",
+"columns": [
+"reason_id"
+],
+"conditions": {},
+"description": "Captures the reason or category for placing items on hold—ranging from QA and damage to compliance and return workflows."
+},
+"held_item_metadata": {
+"term": [
+"stored item",
+"employee id",
+"date created",
+"transaction audit",
+"warehouse operations"
+],
+"table": "t_holds",
+"columns": [
+"sto_id",
+"employee_id",
+"date_created"
+],
+"conditions": {},
+"description": "Stores metadata related to the held item, including the associated employee, date of hold creation, and audit tracking information."
+},
+"handling_units_status": {
+"term": [
+    "unavailable LP",
+    "unavailable handling units",
+    "HU not available",
+    "show LPs that are unavailable",
+    "list unavailable containers",
+    "license plates with status U"
+],
+"table": "t_hu_master",
+"columns": [
+    "hu_id",
+    "wh_id",
+    "status",
+    "location_id"
+],
+"conditions": {
+    "status": "U"
+},
+"description": "Returns a list of Handling Units (LPs) across all warehouses that are marked as unavailable (status = 'U')."
+},
+"handling_units_by_warehouse": {
+"term": [
+    "LPs in warehouse",
+    "handling units in warehouse",
+    "list all LPs",
+    "HU in warehouse",
+    "show containers in warehouse",
+    "license plates in warehouse"
+],
+"table": "t_hu_master",
+"columns": [
+    "hu_id",
+    "wh_id",
+    "status",
+    "type",
+    "location_id",
+    "container_type"
+],
+"conditions": {},
+"description": "Returns all Handling Units (LPs) present in a specific warehouse, including details such as status, type, and location."
+},
+"item_space": {
+"term": [
+    "item_space",
+    "most space",
+    "maximum volume",
+    "item volume",
+    "large item",
+    "takes up space"
+],
+"table": "t_item_master",
+"columns": [
+    "item_number",
+    "description",
+    "Length",
+    "Width",
+    "Height"
+],
+"conditions": {},
+"description": "Items occupying space based on dimensions"
+},
+"item_information": {
+"term": "item_information",
+"table": "t_item_master",
+"columns": [
+    "item_number",
+    "description",
+    "size",
+    "style",
+    "color",
+    "inventory_type"
+],
+"conditions": {},
+"description": "Detailed information about a specific item"
+},
+"hazardous_materials": {
+"term": "hazardous_materials",
+"table": "t_item_master",
+"columns": [
+    "item_number",
+    "description",
+    "haz_material"
+],
+"conditions": {
+    "haz_material": [
+        "IS NOT NULL",
+        "<> ''"
+    ]
+},
+"description": "Hazardous materials in a warehouse"
+},
+"item_weight": {
+"term": "item_weight",
+"table": "t_item_master",
+"columns": [
+    "item_number",
+    "unit_weight"
+],
+"conditions": {},
+"description": "Weight of items in a warehouse"
+},
+"item_master_management": {
+"term": [
+    "item_master_management",
+    "item_space",
+    "item_volume",
+    "most_space",
+    "item_information",
+    "item_details",
+    "hazardous_material",
+    "item_weight",
+    "warehouse_items",
+    "item_dimensions",
+    "item_description",
+    "item_number",
+    "inventory_type",
+    "shelf_life",
+    "upc_code",
+    "alternate_item"
+],
+"table": "t_item_master",
+"columns": [
+    "item_master_id",
+    "item_number",
+    "alt_item_number",
+    "upc",
+    "wh_id",
+    "display_item_number",
+    "client_code",
+    "description",
+    "uom",
+    "inventory_type",
+    "shelf_life",
+    "haz_material",
+    "country_of_manufacture",
+    "harmonized_tariff_code",
+    "length",
+    "width",
+    "height",
+    "unit_weight",
+    "unit_volume",
+    "pick_put_id",
+    "xdock_profile_id",
+    "attribute_collection_id"
+],
+"conditions": {
+    "warehouse_specific": "wh_id = ?",
+    "hazardous_items": "haz_material IS NOT NULL",
+    "item_specific": "item_number = ?",
+    "volume_calculation": "length * width * height"
+},
+"description": "Manages master data for items, including dimensions, weight, hazardous material flags, and detailed attributes for warehouse operations"
+},
+"uom_identity_and_linkage": {
+"term": [
+"item unit of measure",
+"item master",
+"item number",
+"warehouse id",
+"unit of measure",
+"status",
+"class id"
+],
+"table": "t_item_uom",
+"columns": [
+"item_uom_id",
+"item_master_id",
+"item_number",
+"wh_id",
+"uom",
+"status",
+"class_id"
+],
+"conditions": {},
+"description": "Defines the relationship between warehouse, item, unit of measure, and class. Foundation for all unit-level logic and ERP mapping."
+},
+"uom_conversion_and_handling": {
+"term": [
+"conversion factor",
+"pick put profile",
+"default receipt uom",
+"uom prompt",
+"pickable",
+"shippable uom",
+"std_hand_qty",
+"min_hand_qty",
+"max_hand_qty",
+"inventory unit tracking"
+],
+"table": "t_item_uom",
+"columns": [
+"conversion_factor",
+"pick_put_id",
+"std_hand_qty",
+"min_hand_qty",
+"max_hand_qty",
+"shippable_uom"
+],
+"conditions": {},
+"description": "Supports conversion logic, picking/putaway configuration, and quantity thresholds. Key to replenishment, packing, and shipping strategies."
+},
+"uom_physical_attributes": {
+"term": [
+"package weight",
+"unit weight",
+"length",
+"width",
+"height",
+"box type",
+"containerization support",
+"packing logic"
+],
+"table": "t_item_uom",
+"columns": [
+"package_weight",
+"uom_weight",
+"length",
+"width",
+"height",
+"box_type"
+],
+"conditions": {},
+"description": "Defines physical characteristics of each UOM, essential for space planning, packing, and containerization logic."
+},
+"uom_layering_and_stacking": {
+"term": [
+"units per layer",
+"layers per uom",
+"max in layer",
+"stacking rules",
+"max support weight"
+],
+"table": "t_item_uom",
+"columns": [
+"units_per_layer",
+"layers_per_uom",
+"max_in_layer",
+"max_support_weight"
+],
+"conditions": {},
+"description": "Controls how units are layered and stacked within packaging. Enables stable builds and proper weight distribution."
+},
+"uom_orientation_rules": {
+"term": [
+"turnable",
+"on bottom ok",
+"on side ok",
+"on end ok"
+],
+"table": "t_item_uom",
+"columns": [
+"turnable",
+"on_bottom_ok",
+"on_side_ok",
+"on_end_ok"
+],
+"conditions": {},
+"description": "Orientation constraints for warehouse stacking, picking, and containerization—used in safety and packaging compliance."
+},
+"uom_cartonization_flags": {
+"term": [
+"cartonization flag",
+"warehouse operations"
+],
+"table": "t_item_uom",
+"columns": [
+"cartonization_flag"
+],
+"conditions": {},
+"description": "Indicates if the UOM is eligible for cartonization logic during order fulfillment and outbound container planning."
+},
+"random_warehouse_item": {
+"term": [
+    "random item",
+    "any item",
+    "give me an item",
+    "item from warehouse",
+    "random sku",
+    "random product"
+],
+"table": "t_item_upc",
+"columns": [
+    "item_number",
+    "upc",
+    "wh_id"
+],
+"conditions": {},
+"description": "Returns a random item and its UPC from the warehouse, based on available entries in the t_item_upc table. Useful for sample selections, testing, or audits."
+},
+"upc_lookup": {
+"term": [
+    "item barcode",
+    "UPC lookup",
+    "product code",
+    "scan code",
+    "barcode id",
+    "find by UPC"
+],
+"table": "t_item_upc",
+"columns": [
+    "item_number",
+    "upc",
+    "wh_id",
+    "item_master_id"
+],
+"conditions": {},
+"description": "Used to look up items using Universal Product Codes (UPC) for barcode scanning, receiving, and retail integrations."
+},
+"vendor_item_linkage": {
+"term": [
+"item vendor",
+"item number",
+"vendor id",
+"vendor mapping",
+"supplier linkage",
+"vendor relationship",
+"vendor management",
+"vendor item number"
+],
+"table": "t_item_vendor",
+"columns": [
+"item_vendor_id",
+"item_number",
+"vendor_id",
+"vendor_item_number"
+],
+"conditions": {},
+"description": "Maps items to their corresponding vendors, including the vendor-specific item numbers used for purchasing and identification."
+},
+"vendor_preference_and_pricing": {
+"term": [
+"preferred vendor",
+"vendor price",
+"approved supplier",
+"vendor selection",
+"item sourcing",
+"item procurement",
+"procurement vendor",
+"price"
+],
+"table": "t_item_vendor",
+"columns": [
+"vendor_id",
+"preferred",
+"price"
+],
+"conditions": {},
+"description": "Captures procurement-relevant vendor data such as preferred status and vendor-specific pricing for sourcing decisions and PO generation."
+},
+"vendor_item_master_reference": {
+"term": [
+"item master",
+"warehouse id",
+"supply chain",
+"inventory sourcing",
+"UOM",
+"UOMs"
+],
+"table": "t_item_vendor",
+"columns": [
+"item_master_id",
+"wh_id"
+],
+"conditions": {},
+"description": "Connects vendor-item relationships to the master item record and warehouse, supporting sourcing logic in supply chain operations."
+},
+"lp_controlled_locations": {
+"term": "lp_controlled_locations",
+"table": "t_location",
+"columns": [
+    "location_id",
+    "wh_id",
+    "item_hu_indicator"
+],
+"conditions": {
+    "item_hu_indicator": [
+        "H"
+    ]
+},
+"description": "Locations controlled by license plates"
+},
+"location_status": {
+"term": "location_status",
+"table": "t_location",
+"columns": [
+    "location_id",
+    "status"
+],
+"conditions": {},
+"description": "Status of locations (empty, full, partial)"
+},
+"location_management": {
+"term": [
+    "location_management",
+    "returned_order_location",
+    "empty_locations",
+    "lp_controlled_locations",
+    "full_locations",
+    "warehouse_locations",
+    "location_status"
+],
+"table": "t_location",
+"columns": [
+    "location_id",
+    "wh_id",
+    "zone",
+    "pick_seq",
+    "status",
+    "equipment_type"
+],
+"conditions": {
+    "returned_orders": "status = 'R'",
+    "empty_locations": "status = 'E'",
+    "full_lp_controlled": "status = 'F'",
+    "warehouse_specific": "wh_id = ?"
+},
+"description": "Manages storage and operational locations within a warehouse, including status and zone assignments"
+},
+"shipped_order": {
+"term": "shipped_order",
+"table": "t_order",
+"columns": [
+    "order_number",
+    "status",
+    "order_date"
+],
+"conditions": {
+    "status": [
+        "S"
+    ]
+},
+"description": "Orders that have been shipped"
+},
+"shipments_by_city": {
+"term": "shipments_by_city",
+"table": "t_order",
+"columns": [
+    "ship_to_city",
+    "order_number"
+],
+"conditions": {
+    "status": [
+        "S"
+    ]
+},
+"description": "Cities receiving the most shipments"
+},
+"orders_by_carrier": {
+"term": "orders_by_carrier",
+"table": "t_order",
+"columns": [
+    "order_number",
+    "carrier"
+],
+"conditions": {},
+"description": "Orders shipped by a specific carrier"
+},
+"pending_dispatch_orders": {
+"term": "pending_dispatch_orders",
+"table": "t_order",
+"columns": [
+    "order_number",
+    "status"
+],
+"conditions": {
+    "status": [
+        "<> 'S'"
+    ]
+},
+"description": "Orders pending dispatch"
+},
+"orders_to_deliver": {
+"term": "orders_to_deliver",
+"table": "t_order",
+"columns": [
+    "order_number",
+    "actual_ship_date"
+],
+"conditions": {
+    "actual_ship_date": [
+        "<= GETDATE()"
+    ]
+},
+"description": "Orders needing delivery"
+},
+"most_ordering_client": {
+"term": "most_ordering_client",
+"table": "t_order",
+"columns": [
+    "customer_name",
+    "order_number"
+],
+"conditions": {},
+"description": "Client with the most orders"
+},
+"order_management": {
+"term": [
+    "order_status",
+    "cities",
+    "shipments",
+    "high_priority_orders",
+    "pending_dispatch",
+    "open_orders",
+    "created_today",
+    "client_orders",
+    "warehouse_orders",
+    "order_date",
+    "actual_ship_date",
+    "customer_orders",
+    "order_priority",
+    "ship_to_city"
+],
+"table": "t_order",
+"columns": [
+    "order_id",
+    "order_number",
+    "wh_id",
+    "client_code",
+    "customer_id",
+    "customer_name",
+    "status",
+    "order_date",
+    "actual_ship_date",
+    "date_expected",
+    "actual_arrival_date",
+    "carrier",
+    "carrier_scac",
+    "city",
+    "ship_to_city",
+    "priority",
+    "rush",
+    "weight",
+    "cubic_volume",
+    "freight_terms"
+],
+"conditions": {
+    "warehouse_specific": "wh_id = ?",
+    "client_specific": "client_code = ?",
+    "status_open": "status = 'Open'",
+    "status_shipped": "status = 'S'",
+    "shipped_today": "CAST(actual_ship_date AS DATE) = CAST(GETDATE() AS DATE)",
+    "created_today": "CAST(order_date AS DATE) = CAST(GETDATE() AS DATE)",
+    "high_priority": "priority <= 5 OR rush IN ('E', 'R')"
+},
+"description": "Manages customer orders, including shipping details, status, priority, and client/warehouse assignments"
+},
+"most_ordered_items": {
+"term": "most_ordered_items",
+"table": "t_order_detail",
+"columns": [
+    "item_number",
+    "wh_id",
+    "qty"
+],
+"conditions": {},
+"description": "Items with the highest order counts in a warehouse"
+},
+"orders_not_waved": {
+"term": "orders_not_waved",
+"table": "t_order_detail",
+"columns": [
+    "order_number",
+    "host_wave_id"
+],
+"conditions": {
+    "host_wave_id": [
+        "IS NULL"
+    ]
+},
+"description": "Orders not yet waved"
+},
+"orders_to_ship_tomorrow": {
+"term": "orders_to_ship_tomorrow",
+"table": "t_order_detail",
+"columns": [
+    "order_number",
+    "date_expected"
+],
+"conditions": {
+    "date_expected": [
+        "CAST(date_expected AS DATE) = CAST(DATEADD(DAY, 1, GETDATE()) AS DATE)"
+    ]
+},
+"description": "Orders scheduled to ship tomorrow"
+},
+"orders_warehouse": {
+"term": "orders_warehouse",
+"table": "t_order_detail",
+"columns": [
+    "order_number",
+    "wh_id"
+],
+"conditions": {},
+"description": "Orders in a specific warehouse"
+},
+"backorders": {
+"term": "backorders",
+"table": "t_order_detail",
+"columns": [
+    "order_number",
+    "bo_qty",
+    "wh_id"
+],
+"conditions": {
+    "bo_qty": [
+        "> 0"
+    ]
+},
+"description": "Orders with backordered items"
+},
+"waved_orders": {
+"term": "waved_orders",
+"table": "t_order_detail",
+"columns": [
+    "order_number",
+    "host_wave_id"
+],
+"conditions": {
+    "host_wave_id": [
+        "IS NOT NULL"
+    ]
+},
+"description": "Orders that have been waved"
+},
+"multiple_item_orders": {
+"term": "multiple_item_orders",
+"table": "t_order_detail",
+"columns": [
+    "order_number",
+    "item_number"
+],
+"conditions": {},
+"description": "Orders with multiple items"
+},
+"single_item_orders": {
+"term": "single_item_orders",
+"table": "t_order_detail",
+"columns": [
+    "order_number",
+    "item_number"
+],
+"conditions": {},
+"description": "Orders with a single item"
+},
+"items_not_in_stock": {
+"term": "items_not_in_stock",
+"table": "t_order_detail",
+"columns": [
+    "order_number",
+    "item_number"
+],
+"conditions": {},
+"description": "Orders with items not in stock"
+},
+"unfulfilled_orders": {
+"term": "unfulfilled_orders",
+"table": "t_order_detail",
+"columns": [
+    "order_number",
+    "item_number"
+],
+"conditions": {},
+"description": "Orders not fulfilled due to items on hold"
+},
+"order_detail_management": {
+"term": [
+    "order_detail_management",
+    "ordered_items",
+    "most_ordered_items",
+    "items_arrived",
+    "items_shipped",
+    "customer_shipments",
+    "shipped_orders",
+    "fewest_items",
+    "multiple_items",
+    "single_item",
+    "warehouse_items",
+    "item_quantity",
+    "shipped_quantity",
+    "order_line_item",
+    "delivery_date"
+],
+"table": "t_order_detail",
+"columns": [
+    "order_detail_id",
+    "order_number",
+    "wh_id",
+    "item_number",
+    "line_number",
+    "qty",
+    "qty_shipped",
+    "bo_qty",
+    "tran_plan_qty",
+    "date_expected",
+    "lot_number",
+    "stored_attribute_id",
+    "weight",
+    "cubic_volume",
+    "bo_description"
+],
+"conditions": {
+    "warehouse_specific": "wh_id = ?",
+    "shipped_today": "qty_shipped > 0 AND CAST(date_expected AS DATE) = CAST(GETDATE() AS DATE)",
+    "arrived_today": "CAST(date_expected AS DATE) = CAST(GETDATE() AS DATE)",
+    "single_item": "COUNT(line_number) = 1 GROUP BY order_number",
+    "multiple_items": "COUNT(line_number) > 1 GROUP BY order_number",
+    "fewest_items": "ORDER BY COUNT(line_number) ASC"
+},
+"description": "Manages line-item details for outbound orders, including item quantities, shipping, and order composition"
+},
+"order_line_comment_reference": {
+"term": [
+"order detail comment",
+"line level comment",
+"comment on order line",
+"order notes"
+],
+"table": "t_order_detail_comment",
+"columns": [
+"wh_id",
+"order_number",
+"line_number",
+"item_number"
+],
+"conditions": {},
+"description": "Identifies the order line and item associated with a given comment. Used to tie instructions to specific SKUs in outbound order processing."
+},
+"order_comment_content_and_type": {
+"term": [
+"comment text",
+"comment type",
+"shipping instructions",
+"warehouse instructions",
+"logistics comments",
+"delivery comments",
+"bill of lading comment",
+"item instruction"
+],
+"table": "t_order_detail_comment",
+"columns": [
+"comment_text",
+"comment_type"
+],
+"conditions": {},
+"description": "Captures the text and category of line-level comments to communicate shipping, warehouse, or delivery-specific instructions."
+},
+"order_comment_metadata": {
+"term": [
+"sequence",
+"comment_date"
+],
+"table": "t_order_detail_comment",
+"columns": [
+"sequence",
+"comment_date"
+],
+"conditions": {},
+"description": "Tracks sequencing and timestamp of comments for audit trails or to manage instruction priority within order fulfillment."
+},
+"packages_packed": {
+"term": "packages_packed",
+"table": "t_pack",
+"columns": [
+    "order_number",
+    "date_logged"
+],
+"conditions": {},
+"description": "Packages packed in a given time period"
+},
+"packed_orders": {
+"term": "packed_orders",
+"table": "t_pack",
+"columns": [
+    "order_number",
+    "date_logged"
+],
+"conditions": {},
+"description": "Orders that have been packed"
+},
+"packing_activity": {
+"term": [
+    "packages packed",
+    "orders packed",
+    "last hour packing",
+    "packing operations",
+    "who packed",
+    "what order packed",
+    "packing data",
+    "packing logs",
+    "number of packages",
+    "packing records"
+],
+"table": "t_pack",
+"columns": [
+    "wh_id",
+    "id",
+    "order_number",
+    "load_id",
+    "location_id",
+    "date_logged",
+    "comment"
+],
+"conditions": {},
+"description": "Tracks packing activities in the warehouse including employee, order, location, and timestamp for audit and operational visibility"
+},
+"recent_packing_summary": {
+"term": [
+    "last hour",
+    "past hour",
+    "recent packing",
+    "packages in last hour",
+    "orders packed recently"
+],
+"table": "t_pack",
+"columns": [
+    "order_number",
+    "date_logged"
+],
+"conditions": {
+    "date_logged": "within_last_hour"
+},
+"description": "Provides summary of orders or packages packed within the last hour based on timestamp"
+},
+"employee_packing": {
+"term": [
+    "who packed",
+    "employee packing",
+    "packer details",
+    "employee activity"
+],
+"table": "t_pack",
+"columns": [
+    "id",
+    "order_number",
+    "date_logged"
+],
+"conditions": {},
+"description": "Maps each packing record to the employee responsible for packing"
+},
+"order_packing_status": {
+"term": [
+    "order packed",
+    "packing status",
+    "is order packed",
+    "how many orders packed"
+],
+"table": "t_pack",
+"columns": [
+    "order_number",
+    "date_logged"
+],
+"conditions": {},
+"description": "Indicates whether an order has been packed and when"
+},
+"packing_location": {
+"term": [
+    "packing location",
+    "where packed",
+    "staging area",
+    "location of packing"
+],
+"table": "t_pack",
+"columns": [
+    "location_id",
+    "wh_id"
+],
+"conditions": {},
+"description": "Identifies the location within the warehouse where packing occurred"
+},
+"picked_orders": {
+"term": "picked_orders",
+"table": "t_pick_detail",
+"columns": [
+    "order_number",
+    "status"
+],
+"conditions": {
+    "status": [
+        "PICKED"
+    ]
+},
+"description": "Orders in picked status"
+},
+"shipped_items": {
+"term": "shipped_items",
+"table": "t_pick_detail",
+"columns": [
+    "order_number",
+    "item_number",
+    "create_date",
+    "status"
+],
+"conditions": {
+    "status": [
+        "SHIPPED"
+    ]
+},
+"description": "Items shipped on a specific date"
+},
+"picked_items": {
+"term": "picked_items",
+"table": "t_pick_detail",
+"columns": [
+    "item_number",
+    "status",
+    "wh_id"
+],
+"conditions": {
+    "status": [
+        "PICKED"
+    ]
+},
+"description": "Items that have been picked"
+},
+"most_used_container": {
+"term": "most_used_container",
+"table": "t_pick_detail",
+"columns": [
+    "container_id",
+    "wh_id"
+],
+"conditions": {},
+"description": "Most used container for orders in a warehouse"
+},
+"active_pick_tasks": {
+"term": [
+    "active pick tasks",
+    "open picks",
+    "current picking",
+    "released pick tasks",
+    "picking in progress",
+    "incomplete picks"
+],
+"table": "t_pick_detail",
+"columns": [
+    "pick_id",
+    "status",
+    "user_assigned",
+    "created_date",
+    "wh_id"
+],
+"conditions": {
+    "status": "IN ('CREATED', 'RELEASED', 'PICKED', 'STAGED')"
+},
+"description": "Tracks all active or ongoing pick tasks based on their status, typically excluding completed, cancelled, or shipped ones."
+},
+"items_shipped_today": {
+"term": [
+    "items shipped today",
+    "today's shipments",
+    "items sent today",
+    "orders fulfilled today"
+],
+"table": "t_pick_detail",
+"columns": [
+    "item_number",
+    "order_number",
+    "shipped_quantity",
+    "wh_id",
+    "created_date"
+],
+"conditions": {
+    "shipped_quantity": "> 0",
+    "created_date": "today"
+},
+"description": "Lists items that were shipped today by checking non-zero shipped quantities and filtering by the current date."
+},
+"pick_performance": {
+"term": [
+    "picking metrics",
+    "pick performance",
+    "picked quantity",
+    "planned vs picked",
+    "staged items",
+    "picked status"
+],
+"table": "t_pick_detail",
+"columns": [
+    "item_number",
+    "planned_quantity",
+    "picked_quantity",
+    "staged_quantity",
+    "packed_quantity",
+    "shipped_quantity",
+    "status"
+],
+"conditions": {},
+"description": "Captures performance and execution metrics for each pick task by comparing planned, picked, and shipped quantities."
+},
+"pick_task_assignment": {
+"term": [
+    "assigned pick tasks",
+    "picker tasks",
+    "pick user assignment",
+    "who picked",
+    "user picking"
+],
+"table": "t_pick_detail",
+"columns": [
+    "pick_id",
+    "user_assigned",
+    "status",
+    "created_date"
+],
+"conditions": {},
+"description": "Maps pick tasks to assigned users for accountability and performance tracking."
+},
+"pick_area_routing": {
+"term": [
+"pick pass sequence",
+"pick sequence",
+"area sequence",
+"pick area path",
+"pick zone order",
+"picking pass order"
+],
+"table": "t_pick_pass_sequence",
+"columns": [
+"wh_id",
+"pick_area",
+"pick_area_seq",
+"pick_area_next"
+],
+"conditions": {},
+"description": "Defines the sequential order and logical flow of pick areas in a warehouse for orchestrated and optimized picking passes."
+},
+"tote_movement_and_conveyor_logic": {
+"term": [
+"tote movement",
+"warehouse pick routing",
+"picking workflow",
+"area traversal"
+],
+"table": "t_pick_pass_sequence",
+"columns": [
+"location_id_conveyor",
+"location_id_pd"
+],
+"conditions": {},
+"description": "Maps tote movement paths via conveyors and PD (pick destinations) to support real-time picking workflows and zone-to-zone transitions."
+},
+"pick_put_profile_rules": {
+"term": [
+"pick put detail",
+"pick put profile",
+"picking rules",
+"putaway rules",
+"replenishment rules",
+"warehouse operations"
+],
+"table": "t_pick_put_detail",
+"columns": [
+"pick_put_id",
+"type",
+"rule_id"
+],
+"conditions": {},
+"description": "Defines the picking, putaway, and replenishment rules associated with specific pick-put profiles. Used to apply business logic to warehouse movement tasks."
+},
+"rule_execution_sequence": {
+"term": [
+"execution sequence",
+"task sequencing",
+"rule application",
+"rule type"
+],
+"table": "t_pick_put_detail",
+"columns": [
+"type",
+"sequence"
+],
+"conditions": {},
+"description": "Controls the order and type of rules applied during execution. Enables task sequencing and prioritization in warehouse rule engines."
+},
+"pick_put_profile_core": {
+"term": [
+"pick-put profile",
+"profile id",
+"profile description",
+"profile management",
+"operational rules"
+],
+"table": "t_pick_put_master",
+"columns": [
+"pick_put_id",
+"description"
+],
+"conditions": {},
+"description": "Defines the core identity and description of a pick-put profile used to manage rule-based warehouse operations."
+},
+"pick_put_profile_hierarchy_and_override": {
+"term": [
+"override profile",
+"override_id",
+"hierarchical rules",
+"rule override",
+"special handling",
+"peak season rules",
+"task customization",
+"handling priority",
+"process customization"
+],
+"table": "t_pick_put_master",
+"columns": [
+"override_id"
+],
+"conditions": {},
+"description": "Supports hierarchical and override-based rule application for dynamic scenarios like special handling, seasonal logic, or process adjustments."
+},
+"pick_put_operational_strategy": {
+"term": [
+"picking rules",
+"putaway rules",
+"warehouse operations",
+"pick-put strategy",
+"task hierarchy",
+"operational workflow",
+"picking optimization",
+"putaway optimization",
+"warehouse efficiency",
+"inventory flow",
+"rule-based picking",
+"rule-based putaway"
+],
+"table": "t_pick_put_master",
+"columns": [
+"pick_put_id"
+],
+"conditions": {},
+"description": "Represents the strategic intent behind a pick-put profile for driving efficient warehouse workflows via rules and task logic."
+},
+"pick_put_rule_definition": {
+"term": [
+"pick put rules",
+"rule id",
+"rule description",
+"rule type",
+"operation rules"
+],
+"table": "t_pick_put_rules",
+"columns": [
+"rule_id",
+"type",
+"description"
+],
+"conditions": {},
+"description": "Defines warehouse task rules by ID and type. Used to categorize picking, putaway, and replenishment logic for automation and control."
+},
+"pick_put_procedure_hooks": {
+"term": [
+"before procedure",
+"during procedure",
+"task processing",
+"picking logic",
+"putaway logic",
+"replenishment logic",
+"warehouse automation"
+],
+"table": "t_pick_put_rules",
+"columns": [
+"before",
+"during"
+],
+"conditions": {},
+"description": "Specifies procedural logic executed before or during task execution. Powers real-time rule-based control of picking, putaway, and replenishment operations."
+},
+"po_comment_identity": {
+"term": [
+"po comment",
+"inbound order",
+"po number",
+"warehouse id",
+"order notes"
+],
+"table": "t_po_comment",
+"columns": [
+"po_number",
+"wh_id"
+],
+"conditions": {},
+"description": "Identifies the purchase order and warehouse location associated with the inbound comment record."
+},
+"po_comment_details": {
+"term": [
+"comment type",
+"comment date",
+"comment text",
+"comment sequence",
+"receiving instructions",
+"warehouse operations",
+"logistics integration"
+],
+"table": "t_po_comment",
+"columns": [
+"comment_type",
+"comment_date",
+"comment_text",
+"sequence"
+],
+"conditions": {},
+"description": "Captures the actual comment content, including type, timestamp, and sequence. Used for inbound processing, receiving notes, and logistics coordination."
+},
+"purchase_order_delivery": {
+"term": "purchase_order_delivery",
+"table": "t_po_detail",
+"columns": [
+    "po_number",
+    "delivery_date"
+],
+"conditions": {},
+"description": "Delivery details for a purchase order"
+},
+"po_detail_management": {
+"term": [
+    "po_detail_management",
+    "purchase_order",
+    "po_delivered",
+    "expected_items",
+    "item_quantities",
+    "po_line_items"
+],
+"table": "t_po_detail",
+"columns": [
+    "po_number",
+    "line_number",
+    "item_number",
+    "schedule_number",
+    "qty",
+    "delivery_date",
+    "order_uom",
+    "wh_id",
+    "stored_attribute_id"
+],
+"conditions": {
+    "po_specific": "po_number = ?"
+},
+"description": "Manages line-item details for purchase orders, including expected items, quantities, and delivery dates"
+},
+"po_detail_comment_reference": {
+"term": [
+"po detail comment",
+"inbound order",
+"warehouse id",
+"po number",
+"line number",
+"item number",
+"schedule number",
+"line item notes"
+],
+"table": "t_po_detail_comment",
+"columns": [
+"po_detail_comment_id",
+"wh_id",
+"po_number",
+"line_number",
+"item_number",
+"schedule_number"
+],
+"conditions": {},
+"description": "Identifies the purchase order line item, warehouse, and item-specific detail the comment is tied to. Enables fine-grained tracking and inspection during inbound receiving."
+},
+"po_detail_comment_content": {
+"term": [
+"comment type",
+"comment date",
+"comment text",
+"comment sequence",
+"order notes",
+"warehouse operations",
+"logistics integration"
+],
+"table": "t_po_detail_comment",
+"columns": [
+"sequence",
+"comment_type",
+"comment_date",
+"comment_text"
+],
+"conditions": {},
+"description": "Stores the content of PO line-level comments with type, timestamp, and sequence information. Useful for vendor instructions, expiry tracking, and operational handling guidance."
+},
+"purchase_order": {
+"term": "purchase_order",
+"table": "t_po_master",
+"columns": [
+    "po_number",
+    "status"
+],
+"conditions": {},
+"description": "Information about a purchase order"
+},
+"incomplete_receipts": {
+"term": "incomplete_receipts",
+"table": "t_po_master",
+"columns": [
+    "po_number",
+    "status"
+],
+"conditions": {
+    "status": [
+        "<> 'C'"
+    ]
+},
+"description": "Receipts that are not completed"
+},
+"po_master_management": {
+"term": [
+    "po_master_management",
+    "purchase_order",
+    "po_information",
+    "receipts_not_completed",
+    "po_status",
+    "vendor_details"
+],
+"table": "t_po_master",
+"columns": [
+    "po_id",
+    "po_number",
+    "type_id",
+    "vendor_code",
+    "create_date",
+    "wh_id",
+    "status",
+    "display_po_number",
+    "client_code",
+    "freight_terms"
+],
+"conditions": {
+    "po_specific": "po_number = ?",
+    "not_completed": "status = 'O'"
+},
+"description": "Manages header-level information for purchase orders, including order type, status, and vendor details"
+},
+"unwaved_last_month_shipments": {
+"term": [
+    "orders not waved",
+    "unwaved shipments",
+    "open shipments",
+    "shipments last month",
+    "inbound not processed",
+    "pending receipt",
+    "open orders last month"
+],
+"table": "t_rcpt_ship",
+"columns": [
+    "wh_id",
+    "shipment_number",
+    "carrier_id",
+    "date_expected",
+    "date_received",
+    "date_shipped",
+    "status",
+    "trailer_number",
+    "appointment_number",
+    "scheduled_location"
+],
+"conditions": {
+    "status": "= 'O'",
+    "date_received": "BETWEEN first_day_of_last_month AND last_day_of_last_month"
+},
+"description": "Identifies all shipments that were received last month but have not yet been waved or processed (status still Open). Useful for tracking delays or pending receiving tasks."
+},
+"shipment_status_tracking": {
+"term": [
+    "shipment status",
+    "open shipment",
+    "closed shipment",
+    "reconciled shipment",
+    "receiving progress"
+],
+"table": "t_rcpt_ship",
+"columns": [
+    "shipment_number",
+    "status",
+    "date_received",
+    "date_expected",
+    "comments"
+],
+"conditions": {},
+"description": "Tracks the current status of each shipment (Open, Closed, Reconciled) and its timeline through expected and actual dates."
+},
+"inbound_appointment_info": {
+"term": [
+    "appointment status",
+    "dock appointments",
+    "scheduled location",
+    "trailer info",
+    "shipment appointment"
+],
+"table": "t_rcpt_ship",
+"columns": [
+    "appointment_number",
+    "scheduled_location",
+    "scheduled_start",
+    "scheduled_duration",
+    "appointment_status",
+    "trailer_number"
+],
+"conditions": {},
+"description": "Provides visibility into inbound appointment scheduling, trailer tracking, and dock operations for expected shipments."
+},
+"damaged_items": {
+"term": "damaged_items",
+"table": "t_receipt",
+"columns": [
+    "item_number",
+    "qty_damaged"
+],
+"conditions": {
+    "qty_damaged": [
+        "> 0"
+    ]
+},
+"description": "Items reported as damaged in receipts"
+},
+"received_items": {
+"term": "received_items",
+"table": "t_receipt",
+"columns": [
+    "item_number",
+    "receipt_date"
+],
+"conditions": {},
+"description": "Items received on a specific date"
+},
+"broken_items": {
+"term": "broken_items",
+"table": "t_receipt",
+"columns": [
+    "item_number",
+    "qty_damaged"
+],
+"conditions": {
+    "qty_damaged": [
+        "> 0"
+    ]
+},
+"description": "Items reported as broken"
+},
+"receipt_management": {
+"term": [
+    "receipt_management",
+    "damaged_items",
+    "received_items",
+    "broken_items",
+    "receipt_today",
+    "po_receipts"
+],
+"table": "t_receipt",
+"columns": [
+    "receipt_identity",
+    "receipt_id",
+    "vendor_code",
+    "po_number",
+    "receipt_date",
+    "status",
+    "item_number",
+    "lot_number",
+    "qty_received",
+    "qty_damaged",
+    "hu_id",
+    "wh_id",
+    "stored_attribute_id"
+],
+"conditions": {
+    "damaged_items": "qty_damaged > 0",
+    "received_today": "CAST(receipt_date AS DATE) = CAST(GETDATE() AS DATE)",
+    "po_specific": "po_number = ?"
+},
+"description": "Tracks receipt transactions for inbound goods, including damaged items and receipt dates"
+},
+"rma_reference_and_order_linkage": {
+"term": [
+"return merchandise",
+"rma number",
+"order number",
+"store order number",
+"efa order number",
+"warehouse operations",
+"return handling"
+],
+"table": "t_returns",
+"columns": [
+"rma_number",
+"order_number",
+"efa_order_number",
+"store_order_number",
+"wh_id"
+],
+"conditions": {},
+"description": "Identifies the return transaction and links it to the originating orders and warehouse. Essential for processing and tracking RMAs in warehouse workflows."
+},
+"returned_item_details": {
+"term": [
+"item number",
+"lot number",
+"line number",
+"quantity returned",
+"return comment",
+"return uom",
+"reverse logistics"
+],
+"table": "t_returns",
+"columns": [
+"item_number",
+"lot_number",
+"line_number",
+"quantity_returned",
+"return_comment",
+"return_uom"
+],
+"conditions": {},
+"description": "Captures line-level item details for the return, including quantity, lot tracking, and unit of measure. Supports reconciliation, traceability, and reverse logistics handling."
+},
+"return_disposition_tracking": {
+"term": [
+"disposition status",
+"fork id",
+"quality control",
+"inventory reconciliation"
+],
+"table": "t_returns",
+"columns": [
+"disposition",
+"fork_id"
+],
+"conditions": {},
+"description": "Tracks the disposition and quality control routing for returned items. Useful for determining the final handling path—restock, destroy, quarantine, etc."
+},
+"container_identity_and_type": {
+"term": [
+"returnable container",
+"container number",
+"container type",
+"pallet tracking",
+"tote tracking"
+],
+"table": "t_reusable",
+"columns": [
+"container_number",
+"container_type"
+],
+"conditions": {},
+"description": "Identifies reusable containers such as totes or pallets by number and type. Enables tracking of returnable assets throughout the warehouse and logistics lifecycle."
+},
+"container_status_and_movement": {
+"term": [
+"container status",
+"update date",
+"container reuse",
+"lifecycle management",
+"warehouse operations"
+],
+"table": "t_reusable",
+"columns": [
+"status",
+"update_date"
+],
+"conditions": {},
+"description": "Tracks the current state and last update timestamp of reusable containers. Useful for monitoring in-use vs. returned containers and managing reuse cycles."
+},
+"container_ownership_and_consignee": {
+"term": [
+"customer consignee",
+"customer",
+"logistics tracking"
+],
+"table": "t_reusable",
+"columns": [
+"customer"
+],
+"conditions": {},
+"description": "Captures the customer or consignee responsible for the container, enabling accountability and traceability in returnable container programs."
+},
+"serial_identity_and_linkage": {
+"term": [
+"serial number",
+"serial number id",
+"serial control",
+"unique identifier",
+"item serialization"
+],
+"table": "t_serial_number",
+"columns": [
+"serial_number_id",
+"serial_number"
+],
+"conditions": {},
+"description": "Represents unique serialized inventory identifiers to support item-level traceability and compliance. Enables fine-grained control and tracking of individual units."
+},
+"serial_inventory_mapping": {
+"term": [
+"stored item",
+"inventory tracking",
+"inventory movement",
+"transaction logging",
+"warehouse operations"
+],
+"table": "t_serial_number",
+"columns": [
+"sto_id"
+],
+"conditions": {},
+"description": "Links each serial number to its respective stored inventory record, enabling end-to-end tracking across warehouse operations, from receiving to shipping."
+},
+"shipment_identity_and_status": {
+"term": [
+"shipment tracking",
+"order number",
+"tracking number",
+"shipping status",
+"ship date",
+"routing code",
+"carrier integration",
+"warehouse operations"
+],
+"table": "t_shipment_track",
+"columns": [
+"order_number",
+"tracking_number",
+"shipping_status",
+"routing_code",
+"carrier_name",
+"ship_date"
+],
+"conditions": {},
+"description": "Identifies and tracks core shipment data like tracking numbers, order linkage, carrier, and shipping status. Enables integration with carrier APIs for outbound tracking and visibility."
+},
+"shipment_cost_and_dimensions": {
+"term": [
+"total charges",
+"handling fee",
+"insurance",
+"surcharge",
+"other cost",
+"shipment weight",
+"cubic volume",
+"length",
+"width",
+"height"
+],
+"table": "t_shipment_track",
+"columns": [
+"total_charges",
+"handling_fee",
+"insurance",
+"surcharge",
+"other_cost",
+"weight",
+"cubic_volume",
+"length",
+"width",
+"height"
+],
+"conditions": {},
+"description": "Captures the financial and dimensional data of a shipment, supporting freight audit, load planning, and charge reconciliation."
+},
+"alternate_carrier_options": {
+"term": [
+"alternate carrier",
+"carrier integration"
+],
+"table": "t_shipment_track",
+"columns": [
+"alt_carrier_1_code",
+"alt_carrier_1_freight_cost",
+"alt_carrier_2_code",
+"alt_carrier_2_freight_cost",
+"alt_carrier_3_code",
+"alt_carrier_3_freight_cost",
+"alt_carrier_4_code",
+"alt_carrier_4_freight_cost"
+],
+"conditions": {},
+"description": "Lists fallback carrier options and associated freight costs, used during rate shopping, dynamic routing, or carrier optimization scenarios."
+},
+"shipment_delivery_details": {
+"term": [
+"delivery status",
+"delivery date",
+"delivery time",
+"delivery signedby",
+"delivery location",
+"delivery description",
+"logistics tracking"
+],
+"table": "t_shipment_track",
+"columns": [
+"delivery_status",
+"delivery_date",
+"delivery_time",
+"delivery_signedby",
+"delivery_location",
+"delivery_description"
+],
+"conditions": {},
+"description": "Captures final mile delivery details including status, timestamp, and recipient confirmation. Enables proof of delivery and exception handling in logistics workflows."
+},
+"returned_order": {
+"term": "returned_order",
+"table": "t_stored_item",
+"columns": [
+    "location_id",
+    "status"
+],
+"conditions": {
+    "status": [
+        "R"
+    ]
+},
+"description": "Locations storing items from returned orders"
+},
+"item_quantity_location": {
+"term": "item_quantity_location",
+"table": "t_stored_item",
+"columns": [
+    "location_id",
+    "item_number",
+    "actual_qty"
+],
+"conditions": {},
+"description": "Quantity of an item in a specific location"
+},
+"pending_putaway": {
+"term": "pending_putaway",
+"table": "t_stored_item",
+"columns": [
+    "item_number",
+    "put_away_location",
+    "status",
+    "actual_qty",
+    "fifo_date"
+],
+"conditions": {
+    "put_away_location": [
+        "IS NULL"
+    ],
+    "status": [
+        "NOT IN ('A', 'H')"
+    ],
+    "actual_qty": [
+        "> 0"
+    ]
+},
+"description": "Items waiting for putaway"
+},
+"old_items": {
+"term": "old_items",
+"table": "t_stored_item",
+"columns": [
+    "item_number",
+    "wh_id",
+    "fifo_date"
+],
+"conditions": {
+    "fifo_date": [
+        "<= DATEADD(YEAR, -1, GETDATE())"
+    ]
+},
+"description": "Items stored for over a year"
+},
+"random_item": {
+"term": "random_item",
+"table": "t_stored_item",
+"columns": [
+    "item_number",
+    "wh_id"
+],
+"conditions": {},
+"description": "Randomly selected item in the warehouse"
+},
+"highest_quantity_item": {
+"term": "highest_quantity_item",
+"table": "t_stored_item",
+"columns": [
+    "item_number",
+    "actual_qty"
+],
+"conditions": {},
+"description": "Item with the highest quantity in stock"
+},
+"item_location": {
+"term": "item_location",
+"table": "t_stored_item",
+"columns": [
+    "wh_id",
+    "location_id",
+    "item_number",
+    "actual_qty"
+],
+"conditions": {
+    "actual_qty": [
+        "> 0"
+    ]
+},
+"description": "Locations where a specific item is stored"
+},
+"slow_moving_items": {
+"term": "slow_moving_items",
+"table": "t_stored_item",
+"columns": [
+    "item_number",
+    "location_id",
+    "actual_qty"
+],
+"conditions": {},
+"description": "Items with low shipment activity in the past quarter"
+},
+"active_skus": {
+"term": "active_skus",
+"table": "t_stored_item",
+"columns": [
+    "item_number",
+    "actual_qty"
+],
+"conditions": {
+    "actual_qty": [
+        "> 0"
+    ]
+},
+"description": "Active SKUs with positive stock"
+},
+"perishable_items": {
+"term": "perishable_items",
+"table": "t_stored_item",
+"columns": [
+    "item_number",
+    "fifo_date",
+    "expiration_date"
+],
+"conditions": {
+    "expiration_date": [
+        "IS NOT NULL"
+    ]
+},
+"description": "Perishable items with expiration dates"
+},
+"items_on_hold": {
+"term": "items_on_hold",
+"table": "t_stored_item",
+"columns": [
+    "item_number",
+    "status"
+],
+"conditions": {
+    "status": [
+        "H"
+    ]
+},
+"description": "Items currently on hold"
+},
+"out_of_stock_items": {
+"term": "out_of_stock_items",
+"table": "t_stored_item",
+"columns": [
+    "item_number",
+    "wh_id",
+    "actual_qty",
+    "unavailable_qty"
+],
+"conditions": {
+    "actual_qty - unavailable_qty": [
+        "<= 0"
+    ]
+},
+"description": "Items out of stock in a warehouse"
+},
+"unavailable_lp": {
+"term": "unavailable_lp",
+"table": "t_stored_item",
+"columns": [
+    "wh_id",
+    "hu_id",
+    "unavailable_qty"
+],
+"conditions": {
+    "unavailable_qty": [
+        "> 0"
+    ]
+},
+"description": "Unavailable license plates in warehouses"
+},
+"all_items_warehouse": {
+"term": "all_items_warehouse",
+"table": "t_stored_item",
+"columns": [
+    "item_number",
+    "actual_qty",
+    "wh_id"
+],
+"conditions": {},
+"description": "All items stored in a specific warehouse"
+},
+"item_controlled": {
+"term": "item_controlled",
+"table": "t_stored_item",
+"columns": [
+    "item_number",
+    "location_id"
+],
+"conditions": {},
+"description": "Items in item-controlled locations"
+},
+"new_items": {
+"term": "new_items",
+"table": "t_stored_item",
+"columns": [
+    "item_number",
+    "fifo_date"
+],
+"conditions": {
+    "fifo_date": [
+        "CAST(fifo_date AS DATE) = CAST(GETDATE() AS DATE)"
+    ]
+},
+"description": "Items newly added to the warehouse"
+},
+"reserved_items": {
+"term": "reserved_items",
+"table": "t_stored_item",
+"columns": [
+    "item_number",
+    "reserved_for"
+],
+"conditions": {
+    "reserved_for": [
+        "IS NOT NULL"
+    ]
+},
+"description": "Items reserved for customers"
+},
+"good_quantity_items": {
+"term": "good_quantity_items",
+"table": "t_stored_item",
+"columns": [
+    "item_number",
+    "wh_id",
+    "actual_qty",
+    "status"
+],
+"conditions": {
+    "actual_qty": [
+        "> 0"
+    ]
+},
+"description": "Items with good quantities in stock"
+},
+"stored_item_management": {
+"term": [
+    "stored_item_management",
+    "item_quantity",
+    "item_location",
+    "putaway_pending",
+    "oldest_item",
+    "long_stored_item",
+    "stock_quantity",
+    "find_item",
+    "items_left",
+    "warehouse_items",
+    "out_of_stock",
+    "on_hold_items",
+    "new_item",
+    "inventory_stock",
+    "item_status",
+    "fifo_date",
+    "stored_items"
+],
+"table": "t_stored_item",
+"columns": [
+    "sto_id",
+    "item_number",
+    "wh_id",
+    "location_id",
+    "hu_id",
+    "lot_number",
+    "stored_attribute_id",
+    "actual_qty",
+    "unavailable_qty",
+    "status",
+    "fifo_date",
+    "put_away_location",
+    "type",
+    "shipment_number",
+    "expiration_date"
+],
+"conditions": {
+    "warehouse_specific": "wh_id = ?",
+    "item_specific": "item_number = ?",
+    "location_specific": "location_id = ?",
+    "putaway_pending": "put_away_location IS NULL AND status NOT IN ('A', 'H') AND actual_qty > 0",
+    "oldest_item": "ORDER BY fifo_date ASC",
+    "long_stored": "DATEDIFF(YEAR, fifo_date, GETDATE()) > 1",
+    "highest_quantity": "actual_qty > 0 ORDER BY actual_qty DESC",
+    "out_of_stock": "actual_qty = 0",
+    "on_hold": "status = 'H'",
+    "new_item": "CAST(fifo_date AS DATE) = CAST(GETDATE() AS DATE)"
+},
+"description": "Manages current inventory of items stored in warehouse locations, including quantities, locations, statuses, and receipt timing"
+},
+"transaction_core_identity": {
+"term": [
+"transaction log",
+"transaction type",
+"warehouse operations",
+"audit tracking"
+],
+"table": "t_tran_log",
+"columns": [
+"tran_log_id",
+"tran_type",
+"description",
+"wh_id",
+"employee_id",
+"start_tran_date",
+"start_tran_time",
+"end_tran_date",
+"end_tran_time",
+"elapsed_time"
+],
+"conditions": {},
+"description": "Defines the core identity and timing of a warehouse transaction, including operation type, responsible employee, warehouse, and time duration. Supports audit and activity logging."
+},
+"transaction_inventory_and_location": {
+"term": [
+"inventory movement",
+"transaction quantity",
+"item number",
+"lot number",
+"source location",
+"destination location",
+"source hu",
+"destination hu",
+"expiration date",
+"location status"
+],
+"table": "t_tran_log",
+"columns": [
+"item_number",
+"lot_number",
+"tran_qty",
+"source_hu_id",
+"destination_hu_id",
+"source_location_id",
+"destination_location_id",
+"expiration_date",
+"location_status"
+],
+"conditions": {},
+"description": "Captures detailed inventory movement and location data for each transaction. Supports traceability, quality control, and movement validation across the warehouse."
+},
+"transaction_contextual_references": {
+"term": [
+"wave id",
+"pick id",
+"load id",
+"asn number",
+"inbound order number",
+"outbound order number",
+"client code",
+"reason code",
+"container number",
+"kit id"
+],
+"table": "t_tran_log",
+"columns": [
+"client_code",
+"outbound_order_number",
+"inbound_order_number",
+"asn_number",
+"reason_code",
+"container_number",
+"wave_id",
+"pick_id",
+"load_id",
+"kit_id"
+],
+"conditions": {},
+"description": "Links transactions to operational references such as orders, kits, waves, and containers. Supports reconciliation with business documents and operational workflows."
+},
+"transaction_extended_attributes": {
+"term": [
+"extended attributes",
+"routing code",
+"actual carrier",
+"tracking number"
+],
+"table": "t_tran_log",
+"columns": [
+"generic_text1",
+"generic_text2",
+"generic_text3",
+"generic_text4",
+"generic_text5",
+"routing_code",
+"actual_carrier",
+"tracking_number",
+"release_hold",
+"group_id"
+],
+"conditions": {},
+"description": "Captures additional metadata for flexible extensions like tracking, routing, carrier info, and grouping. Supports downstream analytics and integration with 3PL or TMS systems."
+},
+"transaction_type_core": {
+"term": [
+"transaction type",
+"transaction code",
+"inventory action",
+"warehouse transaction"
+],
+"table": "t_transaction",
+"columns": [
+"tran_type",
+"description",
+"inventory_action"
+],
+"conditions": {},
+"description": "Defines standard transaction types for warehouse operations. Each type maps to an action like receiving, shipping, adjustment, or movement, supporting consistent classification across the inventory lifecycle."
+},
+"transaction_type_system_integration": {
+"term": [
+"system id",
+"advantage link",
+"send to adv link",
+"system integration",
+"operation configuration"
+],
+"table": "t_transaction",
+"columns": [
+"system_id",
+"send_to_adv_link"
+],
+"conditions": {},
+"description": "Enables system-level identification and integration, including whether the transaction is routed to external systems like Advantage Link. Supports seamless data exchange and external process coordination."
+},
+"transaction_type_processing_logic": {
+"term": [
+"process type",
+"transaction processing",
+"trk tran group id",
+"inventory management"
+],
+"table": "t_transaction",
+"columns": [
+"tran_process_type",
+"trk_tran_group_id"
+],
+"conditions": {},
+"description": "Provides processing logic metadata for inventory transactions, including group identifiers and execution flow. Useful for orchestrating transaction sequences and advanced warehouse workflows."
+},
+"active_warehouse": {
+"term": "active_warehouse",
+"table": "t_whse",
+"columns": [
+    "wh_id",
+    "status"
+],
+"conditions": {
+    "status": [
+        "A"
+    ]
+},
+"description": "Warehouses currently operational"
+},
+"warehouses_canada": {
+"term": "warehouses_canada",
+"table": "t_whse",
+"columns": [
+    "wh_id",
+    "country_name",
+    "addr1"
+],
+"conditions": {
+    "country_name": [
+        "Canada"
+    ]
+},
+"description": "Warehouses located in Canada"
+},
+"warehouse_address": {
+"term": "warehouse_address",
+"table": "t_whse",
+"columns": [
+    "addr1",
+    "addr2",
+    "addr3",
+    "city",
+    "state",
+    "zip",
+    "name"
+],
+"conditions": {},
+"description": "Address details for a specific warehouse"
+},
+"fully_assigned_warehouse": {
+"term": "fully_assigned_warehouse",
+"table": "t_whse",
+"columns": [
+    "wh_id",
+    "name"
+],
+"conditions": {},
+"description": "Warehouses with all tasks assigned"
+},
+"warehouse_master_data": {
+"term": [
+    "warehouses",
+    "warehouse information",
+    "list warehouses",
+    "warehouse details",
+    "distribution centers",
+    "warehouse list"
+],
+"table": "t_whse",
+"columns": [
+    "wh_id",
+    "code",
+    "name",
+    "addr1",
+    "addr2",
+    "addr3",
+    "city",
+    "state",
+    "zip",
+    "country_code",
+    "country_name",
+    "http_address"
+],
+"conditions": {},
+"description": "Stores master data for each warehouse including identification, address, and regional attributes. Serves as a central reference for linking all warehouse-related activities."
+},
+"active_warehouses": {
+"term": [
+    "active warehouses",
+    "how many warehouses are active",
+    "current warehouses",
+    "operational warehouses"
+],
+"table": "t_whse",
+"columns": [
+    "wh_id",
+    "name"
+],
+"conditions": {
+    "status": "active"
+},
+"description": "Filters and counts all currently active or operational warehouses."
+},
+"warehouses_by_country": {
+"term": [
+    "warehouses in Canada",
+    "warehouse country",
+    "country specific warehouses"
+],
+"table": "t_whse",
+"columns": [
+    "wh_id",
+    "name",
+    "country_name"
+],
+"conditions": {
+    "country_name": "Canada"
+},
+"description": "Lists all warehouses located in a specific country like Canada based on country_name."
+},
+"warehouse_address_lookup": {
+"term": [
+    "warehouse address",
+    "where is warehouse",
+    "location of warehouse",
+    "address of warehouse",
+    "Orbitor warehouse"
+],
+"table": "t_whse",
+"columns": [
+    "name",
+    "addr1",
+    "addr2",
+    "addr3",
+    "city",
+    "state",
+    "zip",
+    "country_name"
+],
+"conditions": {
+    "name": "LIKE '%Orbitor%'"
+},
+"description": "Retrieves full address and location details for a specific warehouse by name (e.g., Orbitor)."
+},
+"warehouse_count": {
+"term": [
+    "how many warehouses",
+    "warehouse count",
+    "total number of warehouses"
+],
+"table": "t_whse",
+"columns": [
+    "wh_id"
+],
+"conditions": {},
+"description": "Counts the total number of distinct warehouses defined in the system."
+},
+"top_order_fulfillment_warehouse": {
+"term": [
+    "warehouse fulfills the most orders",
+    "most active warehouse",
+    "warehouse with highest order volume"
+],
+"table": "t_whse",
+"columns": [
+    "wh_id",
+    "name"
+],
+"conditions": {
+    "join": "t_order on t_whse.wh_id = t_order.wh_id",
+    "group_by": "wh_id",
+    "order_by": "COUNT(t_order.order_number) DESC",
+    "limit": 1
+},
+"description": "Identifies the warehouse responsible for fulfilling the highest number of orders, based on order data."
+},
+"pending_work": {
+"term": "pending_work",
+"table": "t_work_q",
+"columns": [
+    "item_number",
+    "location_id",
+    "pick_ref_number",
+    "workers_assigned",
+    "work_status"
+],
+"conditions": {
+    "work_status": [
+        "U"
+    ]
+},
+"description": "Work tasks that are pending or unassigned"
+},
+"cycle_count_tasks": {
+"term": "cycle_count_tasks",
+"table": "t_work_q",
+"columns": [
+    "work_q_id",
+    "work_type"
+],
+"conditions": {
+    "work_type": [
+        "06"
+    ]
+},
+"description": "Open cycle count tasks"
+},
+"unassigned_tasks": {
+"term": "unassigned_tasks",
+"table": "t_work_q",
+"columns": [
+    "work_q_id",
+    "work_status"
+],
+"conditions": {
+    "work_status": [
+        "U"
+    ]
+},
+"description": "Tasks that are unassigned"
+},
+"cycle_count_today": {
+"term": "cycle_count_today",
+"table": "t_work_q",
+"columns": [
+    "work_q_id",
+    "description"
+],
+"conditions": {
+    "description": [
+        "LIKE '%Cycle%'"
+    ]
+},
+"description": "Cycle count tasks performed today"
+},
+"batch_pick": {
+"term": "batch_pick",
+"table": "t_work_q",
+"columns": [
+    "work_type",
+    "description"
+],
+"conditions": {
+    "description": [
+        "LIKE '%Batch Pick%'"
+    ]
+},
+"description": "Work type for batch pick tasks"
+},
+"employees_assigned": {
+"term": "employees_assigned",
+"table": "t_work_q",
+"columns": [
+    "workers_assigned",
+    "time_due"
+],
+"conditions": {
+    "time_due": [
+        "CAST(time_due AS DATE) = CAST(GETDATE() AS DATE)"
+    ]
+},
+"description": "Employees assigned to tasks today"
+},
+"work_queue_management": {
+"term": [
+    "work_queue_management",
+    "pending_works",
+    "pick_tasks",
+    "active_tasks",
+    "cycle_count_tasks",
+    "open_tasks",
+    "unassigned_tasks",
+    "warehouse_tasks",
+    "task_status",
+    "task_type"
+],
+"table": "t_work_q",
+"columns": [
+    "work_q_id",
+    "work_type",
+    "description",
+    "pick_ref_number",
+    "priority",
+    "work_status",
+    "wh_id",
+    "location_id",
+    "from_location_id",
+    "item_number",
+    "workers_required",
+    "workers_assigned",
+    "datetime_stamp"
+],
+"conditions": {
+    "pending_tasks": "work_status IN ('U', 'A')",
+    "active_work_pick_tasks": "work_type = 'pick' AND work_status = 'A'",
+    "open_cycle_count": "work_type = 'cycle count' AND work_status IN ('U', 'A')",
+    "unassigned_tasks": "workers_assigned = 0 AND work_status = 'U'"
+},
+"description": "Manages real-time task queue for warehouse operations, including picking, putaway, replenishment, and cycle counting"
+},
+"work_queue_core_assignment": {
+"term": [
+"work queue assignment",
+"work queue id",
+"user assigned",
+"assignment status"
+],
+"table": "t_work_q_assignment",
+"columns": [
+"work_q_id",
+"user_assigned",
+"status",
+"wh_id"
+],
+"conditions": {},
+"description": "Tracks individual task assignments in the warehouse by linking work queue IDs to users and their current statuses. Helps ensure operational visibility and task accountability."
+},
+"work_queue_labor_tracking": {
+"term": [
+"labor management",
+"task assignment",
+"warehouse operations",
+"worker tracking"
+],
+"table": "t_work_q_assignment",
+"columns": [
+"work_q_id",
+"user_assigned",
+"status",
+"wh_id"
+],
+"conditions": {},
+"description": "Supports real-time labor tracking and workforce management by monitoring who is assigned to what task. Enables workload balancing, exception handling, and productivity analysis across the warehouse floor."
+},
+"warehouse_zones": {
+"term": [
+    "zones",
+    "zone count",
+    "warehouse zones",
+    "different zones",
+    "zones in warehouse",
+    "warehouse area types"
+],
+"table": "t_zone",
+"columns": [
+    "wh_id",
+    "zone",
+    "description",
+    "overflow_zone",
+    "zone_type"
+],
+"conditions": {},
+"description": "Defines logical and operational zones within each warehouse for purposes like picking, replenishment, and putaway. Supports zone-based task routing, worker guidance, and inventory flow optimization."
+},
+"zone_count_by_warehouse": {
+"term": [
+    "how many zones",
+    "count zones in warehouse",
+    "zones present in warehouse",
+    "zone total by warehouse",
+    "warehouse 1 zone count"
+],
+"table": "t_zone",
+"columns": [
+    "zone"
+],
+"conditions": {
+    "wh_id": "= '1'"
+},
+"description": "Returns the number of distinct zones defined in a specific warehouse (e.g., warehouse 1), based on the zone names."
+},
+"empty_locations": {
+"term": "empty_locations",
+"table": "t_zone_loca",
+"columns": [
+    "location_id"
+],
+"conditions": {},
+"description": "Locations that are empty"
+},
+"empty_zone_locations": {
+"term": [
+    "empty locations",
+    "vacant locations",
+    "locations without inventory",
+    "available bins",
+    "free warehouse space",
+    "unoccupied locations"
+],
+"table": "t_zone_loca",
+"columns": [
+    "location_id",
+    "wh_id",
+    "zone"
+],
+"conditions": {
+    "location_status": "empty"
+},
+"description": "Identifies all warehouse locations mapped to zones that are currently empty or unoccupied. Used for optimizing space allocation and task planning. Typically determined via joins with t_location or inventory tables."
+},
+"zone_location_mapping": {
+"term": [
+    "zone mapping",
+    "location to zone",
+    "zone location assignment",
+    "warehouse zoning",
+    "pick sequence",
+    "warehouse pick path"
+],
+"table": "t_zone_loca",
+"columns": [
+    "wh_id",
+    "zone",
+    "location_id",
+    "pick_seq"
+],
+"conditions": {},
+"description": "Maps each physical warehouse location to a functional zone and assigns a picking sequence to optimize zone-based picking, travel paths, and workload distribution."
+}
+
+
+
+
+}

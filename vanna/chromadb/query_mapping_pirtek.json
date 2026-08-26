@@ -1,0 +1,2270 @@
+{
+
+    
+    "t_aht_order_detail_summary": {
+        "table": "t_aht_order_detail",
+        "columns": [
+            "order_detail_id",
+            "order_id",
+            "item_master_id",
+            "wh_id",
+            "order_number",
+            "line_number",
+            "item_number",
+            "bo_qty",
+            "bo_description",
+            "bo_weight",
+            "qty",
+            "afo_plan_qty",
+            "unit_pack",
+            "item_weight",
+            "item_tare_weight",
+            "haz_material",
+            "b_o_l_class",
+            "b_o_l_line1",
+            "b_o_l_line2",
+            "b_o_l_line3",
+            "b_o_l_plac_code",
+            "b_o_l_plac_desc",
+            "b_o_l_code",
+            "qty_shipped",
+            "line_type",
+            "item_description",
+            "stacking_seq",
+            "cust_part",
+            "lot_number",
+            "picking_flow",
+            "unit_weight",
+            "unit_volume",
+            "extended_weight",
+            "extended_volume",
+            "over_alloc_qty",
+            "date_expected",
+            "order_uom",
+            "host_wave_id",
+            "tran_plan_qty",
+            "unique_link",
+            "DATE_TIME_H",
+            "ID_H"
+        ],
+        "conditions": {
+            "JOIN": [],
+            "WHERE": "order_id IS NOT NULL",
+            "ORDER BY": "DATE_TIME_H DESC"
+        },
+        "description": "Technical query for historical order line information in the WMS. The 't_aht_order_detail' table maintains line-level details including quantities, weights, volumes, hazardous materials, and Bill of Lading info. It is used to fetch older transaction data (e.g., 2022, 2023, 2024) for reporting, auditing, and historical shipment analysis. Supports warehouse planning, picking, packing, and shipment accuracy for archived orders."
+    },
+    
+    "aht_order_summary": {
+        "table": "t_aht_order",
+        "columns": [
+        "order_id",
+        "order_number",
+        "wh_id",
+        "type_id",
+        "customer_id",
+        "order_date",
+        "ship_to_code",
+        "delivery_name",
+        "carrier",
+        "freight_terms",
+        "status",
+        "actual_ship_date",
+        "actual_delivery_date",
+        "region"
+        ],
+        "conditions": {
+        "JOIN": [
+            "t_aht_order_detail ON t_aht_order.order_number = t_aht_order_detail.order_number AND t_aht_order.wh_id = t_aht_order_detail.wh_id",
+            "t_aht_pick_detail ON t_aht_order.order_number = t_aht_pick_detail.order_number AND t_aht_order.wh_id = t_aht_pick_detail.wh_id",
+            "t_aht_location ON t_aht_pick_detail.pick_location = t_aht_location.location_id AND t_aht_order.wh_id = t_aht_location.wh_id",
+            "t_aht_hu_master ON t_aht_order.order_number = t_aht_hu_master.control_number AND t_aht_order.wh_id = t_aht_hu_master.wh_id"
+        ],
+        "WHERE": "t_aht_order.order_id IS NOT NULL AND t_aht_order.order_number IS NOT NULL",
+        "ORDER BY": "t_aht_order.wh_id, t_aht_order.order_number"
+        },
+        "description": "Technical query used to retrieve archived order information from the WMS history tables. The 't_aht_order' table stores older orders (typically more than one month old) that have rolled out of the live 't_order' table. It links to 't_aht_order_detail' for line-level item details, 't_aht_pick_detail' for historical picking activity, 't_aht_location' for the pick locations used at the time, and 't_aht_hu_master' where the order number is stored as the handling unit control_number. These relationships enable full reconstruction of how an archived order was picked, packed, located, and shipped. Results are ordered by warehouse and order number."
+    },
+    
+        "archive_picks_detail": {
+        "table": "t_aht_pick_detail",
+        "columns": [
+            "pick_id",
+            "order_number",
+            "line_number",
+            "type",
+            "uom",
+            "work_q_id",
+            "work_type",
+            "status",
+            "item_number",
+            "lot_number",
+            "serial_number",
+            "unplanned_quantity",
+            "planned_quantity",
+            "picked_quantity",
+            "staged_quantity",
+            "loaded_quantity",
+            "pick_location",
+            "picking_flow",
+            "staging_location",
+            "zone",
+            "wave_id",
+            "load_id",
+            "load_sequence",
+            "stop_id",
+            "container_id",
+            "pick_category",
+            "user_assigned",
+            "bulk_pick_flag",
+            "stacking_sequence",
+            "pick_area",
+            "wh_id",
+            "cartonization_batch_id",
+            "DATE_TIME_H",
+            "ID_H"
+        ],
+        "conditions": {
+            "JOIN": [
+                "t_order ON t_aht_pick_detail.order_number = t_order.order_number AND t_aht_pick_detail.wh_id = t_order.wh_id",
+                "t_order_detail ON t_aht_pick_detail.order_number = t_order_detail.order_number AND t_aht_pick_detail.line_number = t_order_detail.line_number AND t_aht_pick_detail.wh_id = t_order_detail.wh_id",
+                "t_location ON t_aht_pick_detail.wh_id = t_location.wh_id AND t_aht_pick_detail.pick_location = t_location.location_id",
+                "t_stored_item ON t_aht_pick_detail.wh_id = t_stored_item.wh_id AND t_aht_pick_detail.item_number = t_stored_item.item_number",
+                "t_hu_master ON t_aht_pick_detail.wh_id = t_hu_master.wh_id AND t_aht_pick_detail.load_id = t_hu_master.load_id",
+                "t_pick_container ON t_aht_pick_detail.container_id = t_pick_container.container_id OR t_aht_pick_detail.cartonization_batch_id = t_pick_container.cartonization_batch_id",
+                "t_label ON t_aht_pick_detail.pick_id = t_label.pick_id",
+                "t_employee ON t_aht_pick_detail.user_assigned = t_employee.id"
+            ],
+            "WHERE": "t_aht_pick_detail.wh_id IS NOT NULL AND t_aht_pick_detail.order_number IS NOT NULL"
+        },
+        "description": "Technical query for archived pick execution details. The 't_aht_pick_detail' table stores historical pick line data including order, line, item, lot/serial, all quantity stages (planned, picked, staged, loaded, unplanned), pick/staging locations, wave, load, container, pick category, user assignment, and workflow metadata. It joins with orders, order details, locations, stored items, handling units, pick containers, labels, and employee tables to provide a complete archived operational view for WMS reporting and audit."
+    },
+ 
+    "arch_backup_control_summary": {
+        "table": "t_arch_backup_control",
+        "columns": [
+            "id",
+            "backup_control_id",
+            "table_name",
+            "control_type",
+            "where_clause",
+            "last_processed_date",
+            "status",
+            "hist_table_prefix",
+            "hist_table_suffix",
+            "table_schema",
+            "elapsed_time",
+            "last_exec_message",
+            "exec_frequency",
+            "stored_procedure",
+            "hist_database"
+        ],
+        "conditions": {
+            "JOIN": [
+                "t_arch_control_type ON t_arch_backup_control.control_type = t_arch_control_type.control_type"
+            ],
+            "WHERE": "t_arch_backup_control.table_name IS NOT NULL",
+            "ORDER BY": "t_arch_backup_control.last_processed_date DESC"
+        },
+        "description": "Technical query for archive backup control information in the system. The 't_arch_backup_control' table maintains configuration and tracking details for archival processes, including table name, schema, control type, frequency, and status. It joins with 't_arch_control_type' to fetch descriptive information about the control type and related stored procedures. This data supports monitoring, automation, and auditing of backup and archival operations within the WMS and related enterprise systems."
+    },
+    "arch_control_type_summary": {
+        "table": "t_arch_control_type",
+        "columns": [
+            "control_type",
+            "description",
+            "related_stored_procedure",
+            "date_time"
+        ],
+        "conditions": {
+            "JOIN": [],
+            "WHERE": "control_type IS NOT NULL"
+        },
+        "description": "Technical query for archive control configuration in the system. The 't_arch_control_type' table defines different control types along with their descriptions and related stored procedures used for archival processes. The 'date_time' column indicates when the control type was last updated. This is a standalone configuration table and does not share common columns with other tables."
+    },
+    "arch_created_hist_table_summary": {
+        "table": "t_arch_created_hist_table",
+        "columns": [
+            "table_name",
+            "table_schema",
+            "hist_table_name",
+            "hist_table_prefix",
+            "hist_table_suffix",
+            "hist_database",
+            "date_time"
+        ],
+        "conditions": {
+            "JOIN": [],
+            "WHERE": "table_name IS NOT NULL AND hist_table_prefix IS NOT NULL",
+            "ORDER BY": "date_time DESC"
+        },
+        "description": "Technical query for archive history table creation details in the system. The 't_arch_created_hist_table' table stores metadata for historical tables generated during the archiving process, including original table name, schema, history table name, and associated database details. The 'date_time' column indicates when the history table entry was created. This is a standalone metadata table and does not share common columns with other tables."
+    },
+    "class_summary": {
+        "table": "t_class",
+        "columns": [
+            "wh_id",
+            "class_id",
+            "description",
+            "overflow_class",
+            "target_put_percent"
+        ],
+        "conditions": {
+            "JOIN": [
+                "t_aht_class ON t_class.wh_id = t_aht_class.wh_id AND t_class.class_id = t_aht_class.class_id",
+                "t_aht_class_loca ON t_class.wh_id = t_aht_class_loca.wh_id AND t_class.class_id = t_aht_class_loca.class_id",
+                "t_aht_item_master ON t_class.wh_id = t_aht_item_master.wh_id AND t_class.class_id = t_aht_item_master.class_id",
+                "t_aht_item_uom ON t_class.wh_id = t_aht_item_uom.wh_id AND t_class.class_id = t_aht_item_uom.class_id",
+                "t_class_loca ON t_class.wh_id = t_class_loca.wh_id AND t_class.class_id = t_class_loca.class_id",
+                "t_item_master ON t_class.wh_id = t_item_master.wh_id AND t_class.class_id = t_item_master.class_id"
+            ],
+            "WHERE": "t_class.wh_id IS NOT NULL AND t_class.class_id IS NOT NULL",
+            "ORDER BY": "t_class.wh_id, t_class.class_id"
+        },
+        "description": "Technical query for warehouse classification details in the system. The 't_class' table defines storage class information such as warehouse ID, class ID, overflow class, and target putaway percentage. It is commonly joined with 't_aht_class', 't_aht_class_loca', 't_aht_item_master', 't_aht_item_uom', 't_class_loca', and 't_item_master' to retrieve historical, location-based, and item-level data. These relationships support inventory management, location optimization, and historical analysis in the WMS. The results are ordered by warehouse and class identifiers."
+    },
+    "class_loca_summary": {
+        "table": "t_class_loca",
+        "columns": [
+            "wh_id",
+            "class_id",
+            "location_id",
+            "fill_seq"
+        ],
+        "conditions": {
+            "JOIN": [
+                "t_class ON t_class_loca.wh_id = t_class.wh_id AND t_class_loca.class_id = t_class.class_id",
+                "t_aht_class ON t_class_loca.wh_id = t_aht_class.wh_id AND t_class_loca.class_id = t_aht_class.class_id",
+                "t_aht_class_loca ON t_class_loca.wh_id = t_aht_class_loca.wh_id AND t_class_loca.class_id = t_aht_class_loca.class_id AND t_class_loca.location_id = t_aht_class_loca.location_id",
+                "t_aht_location ON t_class_loca.wh_id = t_aht_location.wh_id AND t_class_loca.location_id = t_aht_location.location_id",
+                "t_location ON t_class_loca.wh_id = t_location.wh_id AND t_class_loca.location_id = t_location.location_id",
+                "t_zone_loca ON t_class_loca.wh_id = t_zone_loca.wh_id AND t_class_loca.location_id = t_zone_loca.location_id",
+                "t_aht_zone_loca ON t_class_loca.wh_id = t_aht_zone_loca.wh_id AND t_class_loca.location_id = t_aht_zone_loca.location_id",
+                "t_aht_stored_item ON t_class_loca.wh_id = t_aht_stored_item.wh_id AND t_class_loca.location_id = t_aht_stored_item.location_id",
+                "t_stored_item ON t_class_loca.wh_id = t_stored_item.wh_id AND t_class_loca.location_id = t_stored_item.location_id",
+                "t_aht_item_master ON t_class_loca.wh_id = t_aht_item_master.wh_id AND t_class_loca.class_id = t_aht_item_master.class_id",
+                "t_item_master ON t_class_loca.wh_id = t_item_master.wh_id AND t_class_loca.class_id = t_item_master.class_id",
+                "t_aht_item_uom ON t_class_loca.wh_id = t_aht_item_uom.wh_id AND t_class_loca.class_id = t_aht_item_uom.class_id",
+                "t_item_uom ON t_class_loca.wh_id = t_item_uom.wh_id AND t_class_loca.class_id = t_item_uom.class_id",
+                "t_aht_hu_master ON t_class_loca.wh_id = t_aht_hu_master.wh_id AND t_class_loca.location_id = t_aht_hu_master.location_id",
+                "t_aht_hu_detail ON t_class_loca.wh_id = t_aht_hu_detail.wh_id AND t_class_loca.location_id = t_aht_hu_detail.location_id",
+                "t_aht_box_detail ON t_class_loca.wh_id = t_aht_box_detail.wh_id AND t_class_loca.location_id = t_aht_box_detail.location_id",
+                "t_aht_bom_master ON t_class_loca.wh_id = t_aht_bom_master.wh_id AND t_class_loca.location_id = t_aht_bom_master.location_id",
+                "t_aht_po_detail ON t_class_loca.wh_id = t_aht_po_detail.wh_id AND t_class_loca.location_id = t_aht_po_detail.location_id",
+                "t_aht_work_q ON t_class_loca.wh_id = t_aht_work_q.wh_id AND t_class_loca.location_id = t_aht_work_q.location_id",
+                "t_work_q ON t_class_loca.wh_id = t_work_q.wh_id AND t_class_loca.location_id = t_work_q.location_id",
+                "t_aht_tran_log ON t_class_loca.wh_id = t_aht_tran_log.wh_id AND t_class_loca.location_id = t_aht_tran_log.location_id",
+                "t_tran_log ON t_class_loca.wh_id = t_tran_log.wh_id AND t_class_loca.location_id = t_tran_log.location_id",
+                "t_aht_exception_log ON t_class_loca.wh_id = t_aht_exception_log.wh_id AND t_class_loca.location_id = t_aht_exception_log.location_id",
+                "t_aht_employee_logon ON t_class_loca.wh_id = t_aht_employee_logon.wh_id AND t_class_loca.location_id = t_aht_employee_logon.location_id",
+                "t_aht_emp_equipment ON t_class_loca.wh_id = t_aht_emp_equipment.wh_id AND t_class_loca.location_id = t_aht_emp_equipment.location_id",
+                "t_aht_fwd_pick ON t_class_loca.wh_id = t_aht_fwd_pick.wh_id AND t_class_loca.location_id = t_aht_fwd_pick.location_id",
+                "t_aht_hu_master ON t_class_loca.wh_id = t_aht_hu_master.wh_id AND t_class_loca.location_id = t_aht_hu_master.location_id",
+                "t_aht_location_relation ON t_class_loca.wh_id = t_aht_location_relation.wh_id AND t_class_loca.location_id = t_aht_location_relation.location_id",
+                "t_location_relation ON t_class_loca.wh_id = t_location_relation.wh_id AND t_class_loca.location_id = t_location_relation.location_id",
+                "t_aht_box_detail ON t_class_loca.wh_id = t_aht_box_detail.wh_id AND t_class_loca.location_id = t_aht_box_detail.location_id",
+                "t_aht_bom_master ON t_class_loca.wh_id = t_aht_bom_master.wh_id AND t_class_loca.location_id = t_aht_bom_master.location_id"
+            ],
+            "WHERE": "t_class_loca.wh_id IS NOT NULL AND t_class_loca.class_id IS NOT NULL AND t_class_loca.location_id IS NOT NULL",
+            "ORDER BY": "t_class_loca.wh_id, t_class_loca.class_id, t_class_loca.fill_seq"
+        },
+        "description": "Technical query for warehouse class-to-location mapping. The 't_class_loca' table maps storage classes to specific warehouse locations with a fill sequence. Valid joins include class metadata (t_class, t_aht_class), physical location metadata and relations (t_aht_location, t_location, t_location_relation, t_aht_location_relation), inventory/handling (t_aht_stored_item, t_stored_item, t_aht_hu_master, t_aht_hu_detail, t_aht_box_detail), item-level/class associations (t_aht_item_master, t_item_master, t_aht_item_uom, t_item_uom), operational/work tables (t_aht_work_q, t_work_q, t_aht_tran_log, t_tran_log) and other location-based tables (t_zone_loca, t_aht_zone_loca, t_aht_fwd_pick, t_aht_emp_equipment, t_aht_exception_log, t_aht_employee_logon, t_aht_bom_master, t_aht_po_detail). These joins support putaway, slotting, replenishment, inventory visibility and operational reporting in the WMS."
+    },
+    "container_class_summary": {
+        "table": "t_container_class",
+        "columns": [
+            "wh_id",
+            "container_class",
+            "description"
+        ],
+        "conditions": {
+            "JOIN": [
+                "t_aht_container_class ON t_container_class.wh_id = t_aht_container_class.wh_id AND t_container_class.container_class = t_aht_container_class.container_class",
+                "t_aht_container_class_type ON t_container_class.wh_id = t_aht_container_class_type.wh_id AND t_container_class.container_class = t_aht_container_class_type.container_class",
+                "t_container_class_type ON t_container_class.wh_id = t_container_class_type.wh_id AND t_container_class.container_class = t_container_class_type.container_class",
+                "t_aht_pick_area ON t_container_class.wh_id = t_aht_pick_area.wh_id AND t_container_class.container_class = t_aht_pick_area.container_class",
+                "t_pick_area ON t_container_class.wh_id = t_pick_area.wh_id AND t_container_class.container_class = t_pick_area.container_class"
+            ],
+            "WHERE": "t_container_class.wh_id IS NOT NULL AND t_container_class.container_class IS NOT NULL",
+            "ORDER BY": "t_container_class.wh_id, t_container_class.container_class"
+        },
+        "description": "Technical query for warehouse container class configuration details. The 't_container_class' table defines container classifications within a warehouse, including their descriptive attributes. It is joined with 't_aht_container_class' for historical snapshots, 't_aht_container_class_type' and 't_container_class_type' for mapping container types to each class, and 't_aht_pick_area' and 't_pick_area' for associating container classes with specific picking areas. These relationships support container management, picking optimization, and historical reference tracking in the WMS."
+    },
+    "container_class_type_summary": {
+        "table": "t_container_class_type",
+        "columns": [
+            "wh_id",
+            "container_class",
+            "container_type"
+        ],
+        "conditions": {
+            "JOIN": [
+                "t_aht_container_class_type ON t_container_class_type.wh_id = t_aht_container_class_type.wh_id AND t_container_class_type.container_class = t_aht_container_class_type.container_class AND t_container_class_type.container_type = t_aht_container_class_type.container_type",
+                "t_container_class ON t_container_class_type.wh_id = t_container_class.wh_id AND t_container_class_type.container_class = t_container_class.container_class",
+                "t_aht_container ON t_container_class_type.wh_id = t_aht_container.wh_id AND t_container_class_type.container_type = t_aht_container.container_type",
+                "t_container ON t_container_class_type.wh_id = t_container.wh_id AND t_container_class_type.container_type = t_container.container_type",
+                "t_aht_box_master ON t_container_class_type.wh_id = t_aht_box_master.wh_id AND t_container_class_type.container_type = t_aht_box_master.container_type",
+                "t_box_master ON t_container_class_type.wh_id = t_box_master.wh_id AND t_container_class_type.container_type = t_box_master.container_type",
+                "t_aht_hu_master ON t_container_class_type.wh_id = t_aht_hu_master.wh_id AND t_container_class_type.container_type = t_aht_hu_master.container_type",
+                "t_aht_pick_container ON t_container_class_type.wh_id = t_aht_pick_container.wh_id AND t_container_class_type.container_type = t_aht_pick_container.container_type",
+                "t_pick_container ON t_container_class_type.wh_id = t_pick_container.wh_id AND t_container_class_type.container_type = t_pick_container.container_type"
+            ],
+            "WHERE": "t_container_class_type.wh_id IS NOT NULL AND t_container_class_type.container_class IS NOT NULL AND t_container_class_type.container_type IS NOT NULL",
+            "ORDER BY": "t_container_class_type.wh_id, t_container_class_type.container_class, t_container_class_type.container_type"
+        },
+        "description": "Technical query for container class type configuration in the warehouse system. The 't_container_class_type' table maps each container class to specific container types within a warehouse. It is joined with historical tables like 't_aht_container_class_type', container definition tables 't_container_class', 't_aht_container', 't_container', and transactional or pick-related tables such as 't_aht_box_master', 't_box_master', 't_aht_hu_master', 't_aht_pick_container', and 't_pick_container'. These relationships enable detailed container type management, inventory tracking, and picking optimization within the WMS."
+    },
+    "control_summary": {
+        "table": "t_control",
+        "columns": [
+            "control_type",
+            "description",
+            "next_value",
+            "config_display",
+            "allow_edit",
+            "c1",
+            "c2",
+            "f1"
+        ],
+        "conditions": {
+            "JOIN": [],
+            "WHERE": "control_type IS NOT NULL"
+        },
+        "description": "Technical query for system control settings. The 't_control' table stores configuration entries identified by 'control_type', along with descriptions, next values for sequences, display configuration, edit permissions, and custom fields (c1, c2, f1). This table is standalone and does not have common columns with other tables. It supports system configuration management, sequence tracking, and customizable parameter settings in WMS and related applications."
+    },
+    "country_summary": {
+        "table": "t_country",
+        "columns": [
+            "country_id",
+            "country_name",
+            "country_abbr"
+        ],
+        "conditions": {
+            "JOIN": [],
+            "WHERE": "country_id IS NOT NULL"
+        },
+        "description": "Technical query for country information in the system. The 't_country' table stores the unique country ID, country name, and country abbreviation. This table is standalone and does not have common columns with other tables. It supports country reference, localization, and reporting in WMS and related applications."
+    },
+    "disposition_summary": {
+        "table": "t_disposition",
+        "columns": [
+            "disposition",
+            "loc_type"
+        ],
+        "conditions": {
+            "JOIN": [
+                "t_aht_disposition ON t_disposition.disposition = t_aht_disposition.disposition AND t_disposition.loc_type = t_aht_disposition.loc_type",
+                "t_aht_appointment ON t_disposition.disposition = t_aht_appointment.disposition",
+                "t_aht_carrier ON t_disposition.disposition = t_aht_carrier.disposition",
+                "t_returns ON t_disposition.disposition = t_returns.disposition"
+            ],
+            "WHERE": "t_disposition.disposition IS NOT NULL"
+        },
+        "description": "Technical query for disposition information in the system. The 't_disposition' table stores disposition codes along with their location types. It is commonly joined with 't_aht_disposition', 't_aht_appointment', 't_aht_carrier', and 't_returns' to retrieve historical, appointment, carrier, and returns data based on disposition codes. This supports reporting, exception handling, and logistics workflow management in WMS."
+    },
+    "document_summary": {
+        "table": "t_document",
+        "columns": [
+            "document_id",
+            "description",
+            "URL"
+        ],
+        "conditions": {
+            "JOIN": [
+                "t_aht_document ON t_document.document_id = t_aht_document.document_id",
+                "t_document_detail ON t_document.document_id = t_document_detail.document_id",
+                "t_aht_document_detail ON t_document.document_id = t_aht_document_detail.document_id",
+                "t_ma_doc ON t_document.document_id = t_ma_doc.document_id",
+                "t_ma_job_resource_doc ON t_document.document_id = t_ma_job_resource_doc.document_id",
+                "t_ma_resource_doc ON t_document.document_id = t_ma_resource_doc.document_id",
+                "t_ma_test_doc ON t_document.document_id = t_ma_test_doc.document_id"
+            ],
+            "WHERE": "t_document.document_id IS NOT NULL"
+        },
+        "description": "Technical query for document information in the system. The 't_document' table stores unique document IDs, their descriptions, and URLs. It is commonly joined with historical and detail tables such as 't_aht_document', 't_document_detail', 't_aht_document_detail', and with application-specific tables like 't_ma_doc', 't_ma_job_resource_doc', 't_ma_resource_doc', and 't_ma_test_doc' to retrieve associated content, links, revisions, and resource/job/test mappings. This supports document tracking, management, and historical analysis in WMS and related systems."
+    },
+    "document_detail_summary": {
+        "table": "t_document_detail",
+        "columns": [
+            "document_id",
+            "content_id",
+            "content"
+        ],
+        "conditions": {
+            "JOIN": [],
+            "WHERE": "document_id IS NOT NULL AND content_id IS NOT NULL"
+        },
+        "description": "Technical query for document detail information in the system. The 't_document_detail' table stores detailed content associated with each document, identified by 'document_id' and 'content_id'. This table is standalone and does not have common columns with other tables. It supports detailed document tracking, content management, and reporting in WMS and related applications."
+    },
+    "equip_equip_attrib_summary": {
+        "table": "t_equip_equip_attrib",
+        "columns": [
+            "equip_equip_attrib_id",
+            "equipment_id",
+            "equipment_attrib_id"
+        ],
+        "conditions": {
+            "JOIN": [],
+            "WHERE": "equip_equip_attrib_id IS NOT NULL AND equipment_id IS NOT NULL AND equipment_attrib_id IS NOT NULL"
+        },
+        "description": "Technical query for equipment attribute mapping in the system. The 't_equip_equip_attrib' table stores the relationships between equipment and their attributes using unique IDs. This table is standalone and does not have common columns with other tables. It supports equipment management, attribute tracking, and reporting in WMS and related applications."
+    },
+    "equip_equip_list_summary": {
+        "table": "t_equip_equip_list",
+        "columns": [
+            "equip_equip_list_id",
+            "equipment_id",
+            "equipment_list_id"
+        ],
+        "conditions": {
+            "JOIN": [],
+            "WHERE": "equip_equip_list_id IS NOT NULL AND equipment_id IS NOT NULL AND equipment_list_id IS NOT NULL"
+        },
+        "description": "Technical query for equipment list mapping in the system. The 't_equip_equip_list' table stores the relationships between equipment and equipment lists using unique IDs. This table is standalone and does not have common columns with other tables. It supports equipment management, list associations, and reporting in WMS and related applications."
+    },
+    "equipment_summary": {
+        "table": "t_equipment",
+        "columns": [
+            "equipment_id",
+            "equipment_name",
+            "description",
+            "equipment_type_id",
+            "equipment_size_id",
+            "length",
+            "width",
+            "height",
+            "pallet_limit",
+            "volume_limit",
+            "weight_limit",
+            "pallet_minimum",
+            "volume_minimum",
+            "weight_minimum",
+            "tare_weight"
+        ],
+        "conditions": {
+            "JOIN": [
+                "t_equip_equip_attrib ON t_equipment.equipment_id = t_equip_equip_attrib.equipment_id",
+                "t_equip_equip_list ON t_equipment.equipment_id = t_equip_equip_list.equipment_id",
+                "t_equipment_compatibility ON t_equipment.equipment_id = t_equipment_compatibility.equipment_id",
+                "t_aht_equipment ON t_equipment.equipment_id = t_aht_equipment.equipment_id"
+            ],
+            "WHERE": "t_equipment.equipment_id IS NOT NULL"
+        },
+        "description": "Technical query for equipment master data in the system. The 't_equipment' table stores detailed information about equipment including dimensions, weight and volume limits, type, and size. It is commonly joined with attribute, list, and compatibility tables such as 't_equip_equip_attrib', 't_equip_equip_list', 't_equipment_compatibility', and the historical table 't_aht_equipment' to retrieve related attributes, equipment lists, compatibility details, and historical records. This supports equipment management, compatibility checks, and reporting in WMS and related applications."
+    },
+    "equipment_attrib_summary": {
+        "table": "t_equipment_attrib",
+        "columns": [
+            "equipment_attrib_id",
+            "equipment_attrib_name",
+            "description"
+        ],
+        "conditions": {
+            "JOIN": [],
+            "WHERE": "equipment_attrib_id IS NOT NULL"
+        },
+        "description": "Technical query for equipment attribute information in the system. The 't_equipment_attrib' table stores unique equipment attribute IDs, their names, and descriptions. This table is standalone and does not have common columns with other tables. It supports equipment attribute management, reference, and reporting in WMS and related applications."
+    },
+    "equipment_list_summary": {
+        "table": "t_equipment_list",
+        "columns": [
+            "equipment_list_id",
+            "equip_count",
+            "name"
+        ],
+        "conditions": {
+            "JOIN": [],
+            "WHERE": "equipment_list_id IS NOT NULL"
+        },
+        "description": "Technical query for equipment list information in the system. The 't_equipment_list' table stores unique equipment list IDs, the count of equipment in each list, and the list name. This table is standalone and does not have common columns with other tables. It supports equipment list management, reference, and reporting in WMS and related applications."
+    },
+    "equipment_size_summary": {
+        "table": "t_equipment_size",
+        "columns": [
+            "equipment_size_id",
+            "equipment_size_name",
+            "description"
+        ],
+        "conditions": {
+            "JOIN": [],
+            "WHERE": "equipment_size_id IS NOT NULL"
+        },
+        "description": "Technical query for equipment size information in the system. The 't_equipment_size' table stores unique equipment size IDs, their names, and descriptions. This table is standalone and does not have common columns with other tables. It supports equipment size reference, classification, and reporting in WMS and related applications."
+    },
+    "equipment_type_summary": {
+        "table": "t_equipment_type",
+        "columns": [
+            "equipment_type_id",
+            "equipment_type_name",
+            "description"
+        ],
+        "conditions": {
+            "JOIN": [],
+            "WHERE": "equipment_type_id IS NOT NULL"
+        },
+        "description": "Technical query for equipment type information in the system. The 't_equipment_type' table stores unique equipment type IDs, their names, and descriptions. This table is standalone and does not have common columns with other tables. It supports equipment type classification, reference, and reporting in WMS and related applications."
+    },
+    "exception_log_summary": {
+        "table": "t_exception_log",
+        "columns": [
+            "tran_type",
+            "description",
+            "exception_date",
+            "exception_time",
+            "employee_id",
+            "wh_id",
+            "suggested_value",
+            "entered_value",
+            "location_id",
+            "item_number",
+            "lot_number",
+            "quantity",
+            "hu_id",
+            "load_id",
+            "control_number",
+            "line_number"
+        ],
+        "conditions": {
+            "JOIN": [],
+            "WHERE": "tran_type IS NOT NULL AND wh_id IS NOT NULL"
+        },
+        "description": "Technical query for exception log information in the system. The 't_exception_log' table stores details of transactional exceptions, including type, descriptions, timestamps, employee and warehouse identifiers, suggested and entered values, item and location details, and related load or handling unit information. This table is standalone and does not have common columns with other tables. It supports tracking, auditing, and reporting of exceptions in WMS and related applications."
+    },
+    "fwd_pick_summary": {
+        "table": "t_fwd_pick",
+        "columns": [
+            "wh_id",
+            "location_id",
+            "item_number",
+            "uom",
+            "tolerance_percent",
+            "minimum_trigger_qty",
+            "maximum_replenishment_qty",
+            "default_priority",
+            "calculate_qty_flag"
+        ],
+        "conditions": {
+            "JOIN": [
+                "t_aht_appointment ON t_fwd_pick.location_id = t_aht_appointment.location_id",
+                "t_aht_bom_master ON t_fwd_pick.location_id = t_aht_bom_master.location_id",
+                "t_aht_box_detail ON t_fwd_pick.location_id = t_aht_box_detail.location_id",
+                "t_aht_box_master ON t_fwd_pick.location_id = t_aht_box_master.location_id",
+                "t_aht_hu_detail ON t_fwd_pick.location_id = t_aht_hu_detail.location_id",
+                "t_aht_hu_master ON t_fwd_pick.location_id = t_aht_hu_master.location_id",
+                "t_aht_location ON t_fwd_pick.location_id = t_aht_location.location_id",
+                "t_aht_location_relation ON t_fwd_pick.location_id = t_aht_location_relation.location_id",
+                "t_aht_po_detail ON t_fwd_pick.location_id = t_aht_po_detail.location_id",
+                "t_aht_stored_item ON t_fwd_pick.location_id = t_aht_stored_item.location_id",
+                "t_aht_tran_log ON t_fwd_pick.location_id = t_aht_tran_log.location_id",
+                "t_aht_work_q ON t_fwd_pick.location_id = t_aht_work_q.location_id",
+                "t_stored_item ON t_fwd_pick.location_id = t_stored_item.location_id",
+                "t_afo_wave_detail_line ON t_fwd_pick.item_number = t_afo_wave_detail_line.item_number",
+                "t_aht_bom_detail ON t_fwd_pick.item_number = t_aht_bom_detail.item_number",
+                "t_aht_box_detail ON t_fwd_pick.item_number = t_aht_box_detail.item_number",
+                "t_aht_bulk_pick_summary ON t_fwd_pick.item_number = t_aht_bulk_pick_summary.item_number",
+                "t_aht_hu_detail ON t_fwd_pick.item_number = t_aht_hu_detail.item_number",
+                "t_aht_item_master ON t_fwd_pick.item_number = t_aht_item_master.item_number",
+                "t_aht_item_uom ON t_fwd_pick.item_number = t_aht_item_uom.item_number",
+                "t_aht_order_detail ON t_fwd_pick.item_number = t_aht_order_detail.item_number",
+                "t_aht_pick_detail ON t_fwd_pick.item_number = t_aht_pick_detail.item_number",
+                "t_aht_po_detail ON t_fwd_pick.item_number = t_aht_po_detail.item_number",
+                "t_aht_receipt ON t_fwd_pick.item_number = t_aht_receipt.item_number",
+                "t_aht_returns ON t_fwd_pick.item_number = t_aht_returns.item_number",
+                "t_aht_stored_item ON t_fwd_pick.item_number = t_aht_stored_item.item_number",
+                "t_aht_tran_log ON t_fwd_pick.item_number = t_aht_tran_log.item_number",
+                "t_aht_work_q ON t_fwd_pick.item_number = t_aht_work_q.item_number",
+                "t_work_q ON t_fwd_pick.item_number = t_work_q.item_number"
+            ],
+            "WHERE": "t_fwd_pick.wh_id IS NOT NULL AND t_fwd_pick.location_id IS NOT NULL AND t_fwd_pick.item_number IS NOT NULL"
+        },
+        "description": "Technical query for forward pick information in the system. The 't_fwd_pick' table stores warehouse forward pick rules including location, item, UOM, tolerance, minimum and maximum replenishment quantities, default priority, and calculation flags. It is commonly joined with appointment, BOM, box, HU, location, order, receipt, return, stored item, and work queue tables to retrieve related transactional, inventory, and planning information. This supports forward pick planning, inventory management, and replenishment processes in WMS and related systems."
+    },
+    "hu_detail_summary": {
+        "table": "t_hu_detail",
+        "columns": [
+            "hu_id",
+            "item_number",
+            "actual_qty",
+            "planned_qty",
+            "loaded_qty",
+            "qty_received",
+            "status",
+            "wh_id",
+            "location_id",
+            "fifo_date",
+            "expiration_date",
+            "lot_number",
+            "serial_number",
+            "inspection_code",
+            "line_number",
+            "ver_flag",
+            "picking_flow",
+            "employee_id",
+            "sequence",
+            "freight_class_id",
+            "commodity_type_id",
+            "owner_id",
+            "storage_type"
+        ],
+        "conditions": {
+            "JOIN": [
+                "t_aht_box_detail ON t_hu_detail.hu_id = t_aht_box_detail.hu_id",
+                "t_aht_box_master ON t_hu_detail.hu_id = t_aht_box_master.hu_id",
+                "t_aht_employee ON t_hu_detail.hu_id = t_aht_employee.hu_id",
+                "t_aht_exception_log ON t_hu_detail.hu_id = t_aht_exception_log.hu_id",
+                "t_aht_hu_detail ON t_hu_detail.hu_id = t_aht_hu_detail.hu_id",
+                "t_aht_hu_master ON t_hu_detail.hu_id = t_aht_hu_master.hu_id",
+                "t_box_detail ON t_hu_detail.hu_id = t_box_detail.hu_id",
+                "t_box_master ON t_hu_detail.hu_id = t_box_master.hu_id",
+                "t_cycle_count_approval ON t_hu_detail.hu_id = t_cycle_count_approval.hu_id",
+                "t_cycle_count_trigger ON t_hu_detail.hu_id = t_cycle_count_trigger.hu_id",
+                "t_exception_log ON t_hu_detail.hu_id = t_exception_log.hu_id",
+                "t_receipt ON t_hu_detail.hu_id = t_receipt.hu_id",
+                "t_shipment_track ON t_hu_detail.hu_id = t_shipment_track.hu_id",
+                "t_tran_log ON t_hu_detail.hu_id = t_tran_log.hu_id",
+                "t_fwd_pick ON t_hu_detail.item_number = t_fwd_pick.item_number",
+                "t_afo_wave_detail_line ON t_hu_detail.item_number = t_afo_wave_detail_line.item_number",
+                "t_aht_bom_detail ON t_hu_detail.item_number = t_aht_bom_detail.item_number",
+                "t_aht_item_comment ON t_hu_detail.item_number = t_aht_item_comment.item_number",
+                "t_aht_item_image ON t_hu_detail.item_number = t_aht_item_image.item_number",
+                "t_aht_item_master ON t_hu_detail.item_number = t_aht_item_master.item_number",
+                "t_aht_item_uom ON t_hu_detail.item_number = t_aht_item_uom.item_number",
+                "t_aht_item_upc ON t_hu_detail.item_number = t_aht_item_upc.item_number",
+                "t_aht_item_vendor ON t_hu_detail.item_number = t_aht_item_vendor.item_number",
+                "t_aht_labels_being_printed ON t_hu_detail.item_number = t_aht_labels_being_printed.item_number",
+                "t_aht_order_detail ON t_hu_detail.item_number = t_aht_order_detail.item_number",
+                "t_aht_order_detail_comment ON t_hu_detail.item_number = t_aht_order_detail_comment.item_number",
+                "t_bom_detail ON t_hu_detail.item_number = t_bom_detail.item_number",
+                "t_item_comment ON t_hu_detail.item_number = t_item_comment.item_number",
+                "t_item_image ON t_hu_detail.item_number = t_item_image.item_number",
+                "t_item_master ON t_hu_detail.item_number = t_item_master.item_number",
+                "t_item_upc ON t_hu_detail.item_number = t_item_upc.item_number",
+                "t_order_detail ON t_hu_detail.item_number = t_order_detail.item_number",
+                "t_pick_detail ON t_hu_detail.item_number = t_pick_detail.item_number",
+                "t_po_detail ON t_hu_detail.item_number = t_po_detail.item_number",
+                "t_rcpt_ship_detail ON t_hu_detail.item_number = t_rcpt_ship_detail.item_number",
+                "t_rcpt_ship_po_detail ON t_hu_detail.item_number = t_rcpt_ship_po_detail.item_number",
+                "t_receipt ON t_hu_detail.item_number = t_receipt.item_number",
+                "t_returns ON t_hu_detail.item_number = t_returns.item_number",
+                "t_stored_item ON t_hu_detail.item_number = t_stored_item.item_number",
+                "t_tran_log ON t_hu_detail.item_number = t_tran_log.item_number",
+                "t_work_q ON t_hu_detail.item_number = t_work_q.item_number"
+            ],
+            "WHERE": "t_hu_detail.hu_id IS NOT NULL AND t_hu_detail.item_number IS NOT NULL"
+        },
+        "description": "Technical query for handling unit (HU) details in the system. The 't_hu_detail' table stores HU identifiers, associated items, quantities (actual, planned, loaded, received), status, warehouse and location info, dates (FIFO, expiration), lot and serial numbers, inspection codes, sequence, freight class, commodity type, owner, storage type, and related attributes. It is commonly joined with box, employee, exception, forward pick, cycle count, item, receipt, shipment, transaction log, and work queue tables to retrieve comprehensive HU, inventory, and operational information. This supports HU tracking, inventory management, and warehouse operations in WMS and related systems."
+    },
+    "item_upc_summary": {
+        "table": "t_item_upc",
+        "columns": [
+            "item_upc_id",
+            "item_master_id",
+            "wh_id",
+            "item_number",
+            "upc"
+        ],
+        "conditions": {
+            "JOIN": [],
+            "WHERE": "item_number IS NOT NULL"
+        },
+        "description": "Technical query for item UPC information in the system. The 't_item_upc' table stores unique UPC identifiers for items, linking to the item master and warehouse. This table is standalone and does not have common columns with other tables. It supports item identification, scanning, and inventory management in WMS and related applications."
+    },
+    "locale_summary": {
+        "table": "t_locale",
+        "columns": [
+            "locale_id",
+            "name",
+            "description",
+            "sequence",
+            "status"
+        ],
+        "conditions": {
+            "JOIN": [],
+            "WHERE": "locale_id IS NOT NULL"
+        },
+        "description": "Technical query for locale information in the system. The 't_locale' table stores unique locale IDs along with their names, descriptions, display sequence, and status. This table is standalone and does not have common columns with other tables. It supports localization, display ordering, and status management in WMS and related applications."
+    },
+    "location_relation_summary": {
+        "table": "t_location_relation",
+        "columns": [
+            "wh_id",
+            "location_id",
+            "related_location_id",
+            "relation_type",
+            "pick_area",
+            "zone",
+            "status"
+        ],
+        "conditions": {
+            "JOIN": [
+                "t_aht_location_relation ON t_location_relation.location_id = t_aht_location_relation.location_id",
+                "t_location ON t_location_relation.location_id = t_location.location_id",
+                "t_zone_loca ON t_location_relation.location_id = t_zone_loca.location_id",
+                "t_pick_area ON t_location_relation.pick_area = t_pick_area.pick_area",
+                "t_zone ON t_location_relation.zone = t_zone.zone"
+            ],
+            "WHERE": "t_location_relation.location_id IS NOT NULL AND t_location_relation.wh_id IS NOT NULL"
+        },
+        "description": "Technical query for location relation information in the system. The 't_location_relation' table stores warehouse IDs, primary location IDs, related location IDs, relation types, pick areas, zones, and status. It is commonly joined with historical and reference tables such as 't_aht_location_relation', 't_location', 't_zone_loca', 't_pick_area', and 't_zone' to retrieve related locations, zone assignments, and pick area details. This supports warehouse layout management, location mapping, and operational planning in WMS and related systems."
+    },
+    "lookup_summary": {
+        "table": "t_lookup",
+        "columns": [
+            "lookup_id",
+            "wh_id",
+            "source",
+            "sequence",
+            "locale_id",
+            "text",
+            "description",
+            "lookup_type"
+        ],
+        "conditions": {
+            "JOIN": [],
+            "WHERE": "lookup_id IS NOT NULL AND wh_id IS NOT NULL"
+        },
+        "description": "Technical query for lookup information in the system. The 't_lookup' table stores unique lookup IDs, warehouse IDs, source identifiers, sequence numbers, locale IDs, display text, descriptions, and lookup types. This table is standalone and does not have common columns with other tables. It supports reference data management, localization, and dynamic configuration in WMS and related applications."
+    },
+    "menu_summary": {
+        "table": "t_menu",
+        "columns": [
+            "menu_id",
+            "locale_id",
+            "area_id",
+            "menu_level",
+            "name",
+            "sequence",
+            "text",
+            "process"
+        ],
+        "conditions": {
+            "JOIN": [],
+            "WHERE": "menu_id IS NOT NULL AND locale_id IS NOT NULL AND area_id IS NOT NULL"
+        },
+        "description": "Technical query for menu configuration in the system. The 't_menu' table stores unique menu IDs, associated locale and area IDs, menu levels, names, sequence numbers, display text, and linked processes. This table is standalone and does not have common columns with other tables. It supports dynamic menu rendering, localization, and process mapping in WMS and related applications."
+    },
+    "menu_pick_method_summary": {
+        "table": "t_menu_pick_method",
+        "columns": [
+            "pick_method_id",
+            "menu_level"
+        ],
+        "conditions": {
+            "JOIN": [
+                "t_menu ON t_menu.menu_level = t_menu_pick_method.menu_level",
+                "t_employee ON t_employee.menu_level = t_menu_pick_method.menu_level",
+                "t_aht_employee ON t_aht_employee.menu_level = t_menu_pick_method.menu_level",
+                "t_aht_menu ON t_aht_menu.menu_level = t_menu_pick_method.menu_level",
+                "t_aht_menu_pick_method ON t_aht_menu_pick_method.menu_level = t_menu_pick_method.menu_level"
+            ],
+            "WHERE": "pick_method_id IS NOT NULL AND menu_level IS NOT NULL"
+        },
+        "description": "Technical query for menu pick methods in the system. The 't_menu_pick_method' table stores unique pick method IDs and associated menu levels. It is commonly joined with menu and employee tables to map pick methods to specific menu levels for operational workflows, supporting pick optimization, employee task assignments, and menu-based process configurations in WMS and related applications."
+    },
+    "order_detail_comment_summary": {
+        "table": "t_order_detail_comment",
+        "columns": [
+            "order_detail_comment_id",
+            "order_detail_id",
+            "wh_id",
+            "order_number",
+            "comment_type",
+            "line_number",
+            "item_number",
+            "sequence",
+            "comment_date",
+            "comment_text"
+        ],
+        "conditions": {
+            "JOIN": [
+                "t_order_detail ON t_order_detail_comment.order_detail_id = t_order_detail.order_detail_id",
+                "t_order ON t_order_detail_comment.order_number = t_order.order_number",
+                "t_order_airbag ON t_order_detail_comment.order_number = t_order_airbag.order_number",
+                "t_order_comment ON t_order_detail_comment.order_number = t_order_comment.order_number",
+                "t_order_connote ON t_order_detail_comment.order_number = t_order_connote.order_number",
+                "t_pick_detail ON t_order_detail_comment.order_number = t_pick_detail.order_number",
+                "t_pick_container ON t_order_detail_comment.order_number = t_pick_container.order_number",
+                "t_returns ON t_order_detail_comment.order_number = t_returns.order_number",
+                "t_shipment_track ON t_order_detail_comment.order_number = t_shipment_track.order_number",
+                "t_tote_assignment ON t_order_detail_comment.order_number = t_tote_assignment.order_number",
+                "t_view_order ON t_order_detail_comment.order_number = t_view_order.order_number",
+                "t_view_order_line ON t_order_detail_comment.order_number = t_view_order_line.order_number",
+                "t_view_wave_order ON t_order_detail_comment.order_number = t_view_wave_order.order_number",
+                "t_view_wave_order_line ON t_order_detail_comment.order_number = t_view_wave_order_line.order_number",
+                "t_aht_order ON t_order_detail_comment.order_number = t_aht_order.order_number",
+                "t_aht_order_airbag ON t_order_detail_comment.order_number = t_aht_order_airbag.order_number",
+                "t_aht_order_comment ON t_order_detail_comment.order_number = t_aht_order_comment.order_number",
+                "t_aht_order_connote ON t_order_detail_comment.order_number = t_aht_order_connote.order_number",
+                "t_aht_order_detail ON t_order_detail_comment.order_number = t_aht_order_detail.order_number",
+                "t_aht_pick_container ON t_order_detail_comment.order_number = t_aht_pick_container.order_number",
+                "t_aht_pick_detail ON t_order_detail_comment.order_number = t_aht_pick_detail.order_number",
+                "t_aht_returns ON t_order_detail_comment.order_number = t_aht_returns.order_number",
+                "t_aht_shipment_track ON t_order_detail_comment.order_number = t_aht_shipment_track.order_number",
+                "t_aht_tote_assignment ON t_order_detail_comment.order_number = t_aht_tote_assignment.order_number",
+                "t_al_host_clx_out ON t_order_detail_comment.order_number = t_al_host_clx_out.order_number",
+                "t_al_host_order_comment ON t_order_detail_comment.order_number = t_al_host_order_comment.order_number",
+                "t_al_host_order_detail ON t_order_detail_comment.order_number = t_al_host_order_detail.order_number",
+                "t_box_centres ON t_order_detail_comment.order_number = t_box_centres.order_number",
+                "t_bulk_pick_summary ON t_order_detail_comment.order_number = t_bulk_pick_summary.order_number",
+                "t_container_optimize_block ON t_order_detail_comment.order_number = t_container_optimize_block.order_number",
+                "t_container_optimize_queue ON t_order_detail_comment.order_number = t_container_optimize_queue.order_number",
+                "t_container_optimize_status ON t_order_detail_comment.order_number = t_container_optimize_status.order_number",
+                "t_container_optimize_xml ON t_order_detail_comment.order_number = t_container_optimize_xml.order_number",
+                "t_force_backorder ON t_order_detail_comment.order_number = t_force_backorder.order_number",
+                "t_labels_being_printed ON t_order_detail_comment.order_number = t_labels_being_printed.order_number"
+            ],
+            "WHERE": "order_detail_comment_id IS NOT NULL AND order_number IS NOT NULL"
+        },
+        "description": "Technical query for order detail comments in the system. The 't_order_detail_comment' table stores unique comment IDs linked to specific order details, warehouse IDs, order numbers, comment types, line numbers, item numbers, sequence numbers, comment dates, and comment texts. It is commonly joined with all order-related tables, including order details, order comments, airbag, pick, returns, shipment tracking, and historical/application-specific tables, to provide complete commentary and context for order processing, tracking, and auditing in WMS and related systems."
+    },
+    "pick_area_summary": {
+        "table": "t_pick_area",
+        "columns": [
+            "pick_area",
+            "wh_id",
+            "target_pick_percent",
+            "work_type",
+            "description",
+            "container_class"
+        ],
+        "conditions": {
+            "JOIN": [
+                "t_employee ON t_pick_area.pick_area = t_employee.pick_area AND t_pick_area.wh_id = t_employee.wh_id",
+                "t_location ON t_pick_area.pick_area = t_location.pick_area AND t_pick_area.wh_id = t_location.wh_id",
+                "t_pick_detail ON t_pick_area.pick_area = t_pick_detail.pick_area AND t_pick_area.wh_id = t_pick_detail.wh_id",
+                "t_printer ON t_pick_area.pick_area = t_printer.pick_area AND t_pick_area.wh_id = t_printer.wh_id"
+            ],
+            "WHERE": "pick_area IS NOT NULL AND wh_id IS NOT NULL"
+        },
+        "description": "Technical query for pick area configuration in the system. The 't_pick_area' table stores pick area identifiers, associated warehouse IDs, target pick percentages, work types, descriptions, and container classes. It is commonly joined with employee, location, pick detail, and printer tables to support workforce assignment, location mapping, picking operations, and label/printer configuration in WMS and related applications."
+    },
+    "pick_component_summary": {
+        "table": "t_pick_component",
+        "columns": [
+            "pick_component_id",
+            "pick_component_name",
+            "default_phase"
+        ],
+        "conditions": {
+            "JOIN": [],
+            "WHERE": "pick_component_id IS NOT NULL"
+        },
+        "description": "Technical query for pick component configuration in the system. The 't_pick_component' table stores unique pick component IDs, component names, and their default phase. This table is standalone and does not have common columns with other tables. It supports picking workflow configuration and phase management in WMS and related applications."
+    },
+    "pick_method_summary": {
+        "table": "t_pick_method",
+        "columns": [
+            "pick_method_id",
+            "pick_method_name",
+            "description",
+            "work_type",
+            "status"
+        ],
+        "conditions": {
+            "JOIN": [
+                "t_menu_pick_method ON t_pick_method.pick_method_id = t_menu_pick_method.pick_method_id",
+                "t_pick_method_detail ON t_pick_method.pick_method_id = t_pick_method_detail.pick_method_id"
+            ],
+            "WHERE": "pick_method_id IS NOT NULL"
+        },
+        "description": "Technical query for pick method configuration in the system. The 't_pick_method' table stores unique pick method IDs, names, descriptions, associated work types, and status. It is commonly joined with 't_menu_pick_method' and 't_pick_method_detail' tables to support menu-level mappings and detailed pick operations in WMS and related applications."
+    },
+    "pick_method_detail_summary": {
+        "table": "t_pick_method_detail",
+        "columns": [
+            "phase",
+            "pick_method_id",
+            "pick_component_id"
+        ],
+        "conditions": {
+            "JOIN": [
+                "t_pick_method ON t_pick_method_detail.pick_method_id = t_pick_method.pick_method_id",
+                "t_pick_component ON t_pick_method_detail.pick_component_id = t_pick_component.pick_component_id"
+            ],
+            "WHERE": "pick_method_id IS NOT NULL AND pick_component_id IS NOT NULL"
+        },
+        "description": "Technical query for pick method detail configuration in the system. The 't_pick_method_detail' table stores phase information, associated pick method IDs, and pick component IDs. It is commonly joined with 't_pick_method' to get pick method details and 't_pick_component' to get component details, supporting detailed pick operation sequences in WMS and related applications."
+    },
+    "pick_put_detail_summary": {
+        "table": "t_pick_put_detail",
+        "columns": [
+            "pick_put_id",
+            "type",
+            "rule_id",
+            "sequence"
+        ],
+        "conditions": {
+            "JOIN": [
+                "t_pick_put_master ON t_pick_put_detail.pick_put_id = t_pick_put_master.pick_put_id",
+                "t_item_master ON t_pick_put_detail.pick_put_id = t_item_master.pick_put_id",
+                "t_item_uom ON t_pick_put_detail.pick_put_id = t_item_uom.pick_put_id"
+            ],
+            "WHERE": "pick_put_id IS NOT NULL AND type IS NOT NULL AND rule_id IS NOT NULL"
+        },
+        "description": "Technical query for pick-put detail configuration in the system. The 't_pick_put_detail' table stores pick-put IDs, types, associated rule IDs, and sequence numbers. It is commonly joined with 't_pick_put_master' for master pick-put information, 't_item_master' for item mapping, and 't_item_uom' for unit-of-measure details, supporting detailed picking, putaway, and inventory handling workflows in WMS and related applications."
+    },
+    "pick_put_master_summary": {
+        "table": "t_pick_put_master",
+        "columns": [
+            "pick_put_id",
+            "description",
+            "override_id"
+        ],
+        "conditions": {
+            "JOIN": [
+                "t_pick_put_detail ON t_pick_put_master.pick_put_id = t_pick_put_detail.pick_put_id",
+                "t_item_master ON t_pick_put_master.pick_put_id = t_item_master.pick_put_id",
+                "t_item_uom ON t_pick_put_master.pick_put_id = t_item_uom.pick_put_id"
+            ],
+            "WHERE": "pick_put_id IS NOT NULL"
+        },
+        "description": "Technical query for pick-put master configuration in the system. The 't_pick_put_master' table stores pick-put IDs, descriptions, and optional override IDs. It is commonly joined with 't_pick_put_detail' for detailed rules, 't_item_master' for associated items, and 't_item_uom' for unit-of-measure mapping, supporting pick and putaway operations, inventory management, and WMS workflows."
+    },
+    "pick_put_rules_summary": {
+        "table": "t_pick_put_rules",
+        "columns": [
+            "type",
+            "rule_id",
+            "description",
+            "before",
+            "during"
+        ],
+        "conditions": {
+            "JOIN": [
+                "t_pick_put_detail ON t_pick_put_rules.type = t_pick_put_detail.type AND t_pick_put_rules.rule_id = t_pick_put_detail.rule_id",
+                "t_aht_pick_put_detail ON t_pick_put_rules.type = t_aht_pick_put_detail.type AND t_pick_put_rules.rule_id = t_aht_pick_put_detail.rule_id"
+            ],
+            "WHERE": "type IS NOT NULL AND rule_id IS NOT NULL"
+        },
+        "description": "Technical query for pick-put rules configuration in the system. The 't_pick_put_rules' table stores rule types, unique rule IDs, descriptions, and before/during execution criteria. It is commonly joined with 't_pick_put_detail' and 't_aht_pick_put_detail' to link rules with detailed pick-put operations and associated inventory, supporting operational sequencing, validation, and WMS workflows."
+    },
+    "rcpt_ship_detail_summary": {
+        "table": "t_rcpt_ship_detail",
+        "columns": [
+            "wh_id",
+            "shipment_number",
+            "item_number",
+            "received_qty"
+        ],
+        "conditions": {
+            "JOIN": [
+                "t_rcpt_ship ON t_rcpt_ship_detail.wh_id = t_rcpt_ship.wh_id AND t_rcpt_ship_detail.shipment_number = t_rcpt_ship.shipment_number",
+                "t_rcpt_ship_po_detail ON t_rcpt_ship_detail.wh_id = t_rcpt_ship_po_detail.wh_id AND t_rcpt_ship_detail.shipment_number = t_rcpt_ship_po_detail.shipment_number AND t_rcpt_ship_detail.item_number = t_rcpt_ship_po_detail.item_number",
+                "t_receipt ON t_rcpt_ship_detail.wh_id = t_receipt.wh_id AND t_rcpt_ship_detail.shipment_number = t_receipt.shipment_number AND t_rcpt_ship_detail.item_number = t_receipt.item_number"
+            ],
+            "WHERE": "wh_id IS NOT NULL AND shipment_number IS NOT NULL AND item_number IS NOT NULL"
+        },
+        "description": "Technical query for receipt and shipment line details. The 't_rcpt_ship_detail' table stores warehouse ID, shipment number, item number, and received quantity. It is typically joined with 't_rcpt_ship' for shipment header info, 't_rcpt_ship_po_detail' for PO line details, and 't_receipt' for actual receipt info, supporting inbound processing, inventory tracking, and reconciliation in WMS."
+    },
+    "region_summary": {
+        "table": "t_region",
+        "columns": [
+            "region_id",
+            "region_name",
+            "country_id",
+            "region_abbr"
+        ],
+        "conditions": {
+            "JOIN": [],
+            "WHERE": "region_id IS NOT NULL AND country_id IS NOT NULL"
+        },
+        "description": "Technical query for region information in the system. The 't_region' table stores the unique region ID, region name, associated country ID, and region abbreviation. This table is standalone and does not have common columns with other tables. It supports regional reference, localization, and reporting in WMS and related applications."
+    },
+    "shift_summary": {
+        "table": "t_shift",
+        "columns": [
+            "wh_id",
+            "shift_id",
+            "start_time",
+            "end_time",
+            "sunday",
+            "monday",
+            "tuesday",
+            "wednesday",
+            "thursday",
+            "friday",
+            "saturday",
+            "active",
+            "description"
+        ],
+        "conditions": {
+            "JOIN": [],
+            "WHERE": "wh_id IS NOT NULL "
+        },
+        "description": "Technical query for shift schedule information in the system. The 't_shift' table stores warehouse-specific shift definitions, including start and end times, active days of the week, status, and a descriptive label. This table is standalone and does not share common columns with other tables. It supports operational planning, workforce scheduling, and reporting in WMS and related applications."
+    },
+    "system_summary": {
+        "table": "t_system",
+        "columns": [
+            "system_id",
+            "system_name",
+            "go_live",
+            "address1",
+            "address2",
+            "address3",
+            "city",
+            "state",
+            "zip",
+            "country",
+            "phone",
+            "fax",
+            "email"
+        ],
+        "conditions": {
+            "JOIN": [],
+            "WHERE": "system_id IS NOT NULL AND system_name IS NOT NULL"
+        },
+        "description": "Technical query for system information in the organization. The 't_system' table stores unique system identifiers, system names, go-live dates, and full contact/address details. This table is standalone and does not share common columns with other tables. It supports system reference, administrative management, and reporting in IT and operational applications."
+    },
+    "tote_assignment_summary": {
+        "table": "t_tote_assignment",
+        "columns": [
+            "wh_id",
+            "tote_id",
+            "order_number",
+            "load_id",
+            "generic_id",
+            "status"
+        ],
+        "conditions": {
+            "JOIN": [
+                "t_order ON t_tote_assignment.order_number = t_order.order_number",
+                "t_rds_tote_master ON t_tote_assignment.tote_id = t_rds_tote_master.tote_id"
+            ],
+            "WHERE": "t_tote_assignment.tote_id IS NOT NULL"
+        },
+        "description": "Technical query for tote assignments in the system. The 't_tote_assignment' table stores warehouse ID, tote ID, associated order number, load ID, generic ID, and status. It can be joined with 't_order' to get order details and 't_rds_tote_master' to fetch tote master information. This table supports warehouse operations, tote tracking, and order fulfillment processes."
+    },
+    "tran_log_summary": {
+        "table": "t_tran_log",
+        "columns": [
+            "tran_type",
+            "description",
+            "start_tran_date",
+            "end_tran_date",
+            "employee_id",
+            "control_number",
+            "item_number",
+            "hu_id",
+            "wh_id",
+            "location_id",
+            "tran_qty"
+        ],
+        "conditions": {
+            "JOIN": [
+                "INNER JOIN t_order ON t_tran_log.control_number = t_order.order_number AND t_tran_log.wh_id = t_order.wh_id",
+                "INNER JOIN t_order_detail ON t_tran_log.control_number = t_order_detail.order_number AND t_tran_log.item_number = t_order_detail.item_number AND t_tran_log.wh_id = t_order_detail.wh_id",
+                "LEFT JOIN t_pick_detail ON t_tran_log.control_number = t_pick_detail.order_number AND t_tran_log.item_number = t_pick_detail.item_number AND t_tran_log.wh_id = t_pick_detail.wh_id",
+                "LEFT JOIN t_pick_container ON t_tran_log.control_number = t_pick_container.order_number AND t_tran_log.hu_id = t_pick_container.hu_id AND t_tran_log.wh_id = t_pick_container.wh_id",
+                "LEFT JOIN t_employee ON t_tran_log.employee_id = t_employee.employee_id",
+                "LEFT JOIN t_returns ON t_tran_log.control_number = t_returns.order_number AND t_tran_log.item_number = t_returns.item_number AND t_tran_log.wh_id = t_returns.wh_id"
+            ],
+            "WHERE": "t_tran_log.control_number IS NOT NULL AND t_tran_log.wh_id IS NOT NULL"
+        },
+        "description": "Technical query for transaction activity across order, picking, and return workflows. The 't_tran_log' table logs every transaction at the warehouse level, linked to the originating order, item, container, and employee. It enables tracking of inventory movements, pick and pack operations, and audit history within the WMS."
+    },
+    "transaction_summary": {
+        "table": "t_transaction",
+        "columns": [
+            "system_id",
+            "tran_type",
+            "description",
+            "send_to_adv_link"
+        ],
+        "conditions": {
+            "JOIN": [
+                "t_tran_log ON t_transaction.tran_type = t_tran_log.tran_type",
+                "t_aht_tran_log ON t_transaction.tran_type = t_aht_tran_log.tran_type"
+            ],
+            "WHERE": "t_transaction.system_id IS NOT NULL AND t_transaction.tran_type IS NOT NULL"
+        },
+        "description": "Technical query for transaction configuration and logging in the system. The 't_transaction' table defines transaction types, their descriptions, and linkage to advanced systems. It joins with 't_tran_log' and 't_aht_tran_log' using 'tran_type' to capture operational and audit trail details for each transaction type across the WMS environment."
+    },
+    "work_q_summary": {
+        "table": "t_work_q",
+        "columns": [
+            "work_q_id",
+            "work_type",
+            "description",
+            "pick_ref_number",
+            "priority",
+            "date_due",
+            "time_due",
+            "item_number",
+            "wh_id",
+            "location_id",
+            "from_location_id",
+            "work_status",
+            "qty",
+            "workers_required",
+            "workers_assigned",
+            "zone",
+            "employee_id",
+            "datetime_stamp"
+        ],
+        "conditions": {
+            "JOIN": [
+                "LEFT JOIN t_pick_detail ON t_work_q.work_q_id = t_pick_detail.work_q_id AND t_work_q.work_type = t_pick_detail.work_type AND t_work_q.item_number = t_pick_detail.item_number AND t_work_q.wh_id = t_pick_detail.wh_id",
+                "LEFT JOIN t_aht_pick_detail ON t_work_q.work_q_id = t_aht_pick_detail.work_q_id AND t_work_q.work_type = t_aht_pick_detail.work_type AND t_work_q.item_number = t_aht_pick_detail.item_number AND t_work_q.wh_id = t_aht_pick_detail.wh_id",
+                "WHERE work_status = 'U' OR 'A' OR 'C'"
+            ],
+            "WHERE": "t_work_q.work_q_id IS NOT NULL AND t_work_q.wh_id IS NOT NULL AND work_status IS NOT NULL"
+        },
+        "description": "Technical query for work queue management in the WMS. The 't_work_q' table represents queued work tasks for warehouse operations such as picking and putaway. It is tightly linked to the 't_pick_detail' and 't_aht_pick_detail' tables via work_q_id, work_type, and item_number,work_status like U for unassigned work task ,A for assigned work task and C for Completed work task providing both real-time and historical pick execution details. This structure supports tracking of work status, worker assignment, and workload distribution across zones and warehouses."
+    },
+    "work_q_dependency_summary": {
+        "table": "t_work_q_dependency",
+        "columns": [
+            "parent_work_q_id",
+            "dependent_work_q_id",
+            "status",
+            "dependency_type",
+            "wh_id"
+        ],
+        "conditions": {
+            "JOIN": [],
+            "WHERE": "parent_work_q_id IS NOT NULL AND dependent_work_q_id IS NOT NULL AND wh_id IS NOT NULL"
+        },
+        "description": "Technical query for work queue dependency configuration in the system. The 't_work_q_dependency' table manages relationships between parent and dependent work queue tasks within a warehouse. It defines dependency type, status, and warehouse ID, ensuring that dependent tasks are executed only after their parent tasks are completed. This table is standalone and primarily supports workflow sequencing and task orchestration in WMS operations."
+    },
+    "work_types_summary": {
+        "table": "t_work_types",
+        "columns": [
+            "work_types_id",
+            "wh_id",
+            "work_type",
+            "sub_type",
+            "description",
+            "status",
+            "release_sproc_name",
+            "category",
+            "default_priority"
+        ],
+        "conditions": {
+            "JOIN": [
+                "INNER JOIN t_aht_emp_work_type a ON a.work_types_id = t_work_types.work_types_id",
+                "INNER JOIN t_emp_work_type e ON e.work_types_id = t_work_types.work_types_id",
+                "INNER JOIN t_aht_load_master lm ON lm.work_type = t_work_types.work_type AND lm.wh_id = t_work_types.wh_id",
+                "INNER JOIN t_load_master l ON l.work_type = t_work_types.work_type AND l.wh_id = t_work_types.wh_id",
+                "INNER JOIN t_aht_pick_area pa ON pa.work_type = t_work_types.work_type AND pa.wh_id = t_work_types.wh_id",
+                "INNER JOIN t_pick_area p ON p.work_type = t_work_types.work_type AND p.wh_id = t_work_types.wh_id",
+                "INNER JOIN t_aht_pick_detail pd ON pd.work_type = t_work_types.work_type AND pd.wh_id = t_work_types.wh_id",
+                "INNER JOIN t_pick_detail pkd ON pkd.work_type = t_work_types.work_type AND pkd.wh_id = t_work_types.wh_id",
+                "INNER JOIN t_aht_pick_method pm ON pm.work_type = t_work_types.work_type",
+                "INNER JOIN t_pick_method pkm ON pkm.work_type = t_work_types.work_type",
+                "INNER JOIN t_aht_prod_stds ps ON ps.work_type = t_work_types.work_type",
+                "INNER JOIN t_prod_stds pr ON pr.work_type = t_work_types.work_type",
+                "INNER JOIN t_aht_work_q wq ON wq.work_type = t_work_types.work_type AND wq.wh_id = t_work_types.wh_id",
+                "INNER JOIN t_work_q wqq ON wqq.work_type = t_work_types.work_type AND wqq.wh_id = t_work_types.wh_id",
+                "INNER JOIN t_aht_work_types wt ON wt.work_types_id = t_work_types.work_types_id AND wt.wh_id = t_work_types.wh_id"
+            ],
+            "WHERE": "t_work_types.work_types_id IS NOT NULL AND t_work_types.wh_id IS NOT NULL AND t_work_types.work_type IS NOT NULL"
+        },
+        "description": "Technical query for work type definitions within the warehouse management system. The 't_work_types' table holds metadata for all work types such as picking, loading, and replenishment, defined by warehouse (wh_id). It connects to multiple operational tables like work queues, pick areas, and load masters through the work_type or work_types_id fields. These relationships enable mapping between defined work types and their execution records across various warehouse activities, ensuring operational consistency and workflow control."
+    },
+    "zone_summary": {
+        "table": "t_zone",
+        "columns": [
+            "wh_id",
+            "zone",
+            "description",
+            "overflow_zone",
+            "zone_type"
+        ],
+        "conditions": {
+            "JOIN": [
+                "t_aht_box_master ON t_zone.wh_id = t_aht_box_master.wh_id AND t_zone.zone = t_aht_box_master.zone",
+                "t_aht_employee ON t_zone.wh_id = t_aht_employee.wh_id AND t_zone.zone = t_aht_employee.zone",
+                "t_aht_hu_master ON t_zone.wh_id = t_aht_hu_master.wh_id AND t_zone.zone = t_aht_hu_master.zone",
+                "t_aht_location ON t_zone.wh_id = t_aht_location.wh_id AND t_zone.zone = t_aht_location.zone",
+                "t_aht_location_relation ON t_zone.wh_id = t_aht_location_relation.wh_id AND t_zone.zone = t_aht_location_relation.zone",
+                "t_aht_order ON t_zone.wh_id = t_aht_order.wh_id AND t_zone.zone = t_aht_order.zone",
+                "t_aht_pick_detail ON t_zone.wh_id = t_aht_pick_detail.wh_id AND t_zone.zone = t_aht_pick_detail.zone",
+                "t_aht_work_q ON t_zone.wh_id = t_aht_work_q.wh_id AND t_zone.zone = t_aht_work_q.zone",
+                "t_aht_zone ON t_zone.wh_id = t_aht_zone.wh_id AND t_zone.zone = t_aht_zone.zone",
+                "t_aht_zone_loca ON t_zone.wh_id = t_aht_zone_loca.wh_id AND t_zone.zone = t_aht_zone_loca.zone",
+                "t_box_master ON t_zone.wh_id = t_box_master.wh_id AND t_zone.zone = t_box_master.zone",
+                "t_employee ON t_zone.wh_id = t_employee.wh_id AND t_zone.zone = t_employee.zone",
+                "t_hu_master ON t_zone.wh_id = t_hu_master.wh_id AND t_zone.zone = t_hu_master.zone",
+                "t_location ON t_zone.wh_id = t_location.wh_id AND t_zone.zone = t_location.zone",
+                "t_location_relation ON t_zone.wh_id = t_location_relation.wh_id AND t_zone.zone = t_location_relation.zone",
+                "t_order ON t_zone.wh_id = t_order.wh_id AND t_zone.zone = t_order.zone",
+                "t_pick_detail ON t_zone.wh_id = t_pick_detail.wh_id AND t_zone.zone = t_pick_detail.zone",
+                "t_work_q ON t_zone.wh_id = t_work_q.wh_id AND t_zone.zone = t_work_q.zone",
+                "t_zone_loca ON t_zone.wh_id = t_zone_loca.wh_id AND t_zone.zone = t_zone_loca.zone",
+                "t_cycle_count_trigger ON t_zone.wh_id = t_cycle_count_trigger.wh_id AND t_zone.zone = t_cycle_count_trigger.zone"
+            ],
+            "WHERE": "t_zone.wh_id IS NOT NULL AND t_zone.zone IS NOT NULL"
+        },
+        "description": "Technical query for zone management in the warehouse. The 't_zone' table stores warehouse ID, zone identifier, description, overflow zone, and zone type. It joins with multiple operational tables to assign employees, locations, handling units, boxes, orders, and work queue tasks to specific zones, enabling zone-based management, reporting, and execution in WMS applications."
+    },
+    "zone_loca_summary": {
+        "table": "t_zone_loca",
+        "columns": [
+            "wh_id",
+            "zone",
+            "location_id",
+            "pick_seq"
+        ],
+        "conditions": {
+            "JOIN": [
+                "t_aht_box_master ON t_zone_loca.wh_id = t_aht_box_master.wh_id AND t_zone_loca.location_id = t_aht_box_master.location_id AND t_zone_loca.zone = t_aht_box_master.zone",
+                "t_aht_employee ON t_zone_loca.wh_id = t_aht_employee.wh_id AND t_zone_loca.zone = t_aht_employee.zone AND t_zone_loca.location_id = t_aht_employee.current_location",
+                "t_aht_hu_master ON t_zone_loca.wh_id = t_aht_hu_master.wh_id AND t_zone_loca.location_id = t_aht_hu_master.location_id AND t_zone_loca.zone = t_aht_hu_master.zone",
+                "t_aht_location ON t_zone_loca.wh_id = t_aht_location.wh_id AND t_zone_loca.location_id = t_aht_location.location_id AND t_zone_loca.zone = t_aht_location.zone",
+                "t_aht_location_relation ON t_zone_loca.wh_id = t_aht_location_relation.wh_id AND t_zone_loca.location_id = t_aht_location_relation.location_id AND t_zone_loca.zone = t_aht_location_relation.zone",
+                "t_aht_order ON t_zone_loca.wh_id = t_aht_order.wh_id AND t_zone_loca.zone = t_aht_order.zone",
+                "t_aht_pick_detail ON t_zone_loca.wh_id = t_aht_pick_detail.wh_id AND t_zone_loca.location_id = t_aht_pick_detail.pick_location AND t_zone_loca.zone = t_aht_pick_detail.zone",
+                "t_aht_work_q ON t_zone_loca.wh_id = t_aht_work_q.wh_id AND t_zone_loca.location_id = t_aht_work_q.location_id AND t_zone_loca.zone = t_aht_work_q.zone",
+                "t_aht_zone ON t_zone_loca.wh_id = t_aht_zone.wh_id AND t_zone_loca.zone = t_aht_zone.zone",
+                "t_aht_zone_loca ON t_zone_loca.wh_id = t_aht_zone_loca.wh_id AND t_zone_loca.zone = t_aht_zone_loca.zone AND t_zone_loca.location_id = t_aht_zone_loca.location_id",
+                "t_box_master ON t_zone_loca.wh_id = t_box_master.wh_id AND t_zone_loca.location_id = t_box_master.location_id AND t_zone_loca.zone = t_box_master.zone",
+                "t_employee ON t_zone_loca.wh_id = t_employee.wh_id AND t_zone_loca.zone = t_employee.zone AND t_zone_loca.location_id = t_employee.current_location",
+                "t_hu_master ON t_zone_loca.wh_id = t_hu_master.wh_id AND t_zone_loca.location_id = t_hu_master.location_id AND t_zone_loca.zone = t_hu_master.zone",
+                "t_location ON t_zone_loca.wh_id = t_location.wh_id AND t_zone_loca.location_id = t_location.location_id AND t_zone_loca.zone = t_location.zone",
+                "t_location_relation ON t_zone_loca.wh_id = t_location_relation.wh_id AND t_zone_loca.location_id = t_location_relation.location_id AND t_zone_loca.zone = t_location_relation.zone",
+                "t_order ON t_zone_loca.wh_id = t_order.wh_id AND t_zone_loca.zone = t_order.zone",
+                "t_pick_detail ON t_zone_loca.wh_id = t_pick_detail.wh_id AND t_zone_loca.location_id = t_pick_detail.pick_location AND t_zone_loca.zone = t_pick_detail.zone",
+                "t_work_q ON t_zone_loca.wh_id = t_work_q.wh_id AND t_zone_loca.location_id = t_work_q.location_id AND t_zone_loca.zone = t_work_q.zone",
+                "t_cycle_count_trigger ON t_zone_loca.wh_id = t_cycle_count_trigger.wh_id AND t_zone_loca.zone = t_cycle_count_trigger.zone AND t_zone_loca.location_id = t_cycle_count_trigger.location_id"
+            ],
+            "WHERE": "t_zone_loca.wh_id IS NOT NULL AND t_zone_loca.zone IS NOT NULL AND t_zone_loca.location_id IS NOT NULL"
+        },
+        "description": "Technical query for warehouse zone-location mapping. The 't_zone_loca' table stores warehouse ID, zone, location ID, and pick sequence. It joins with multiple operational and master tables to link boxes, employees, handling units, locations, orders, pick details, work queues, and cycle count triggers to specific zone locations, enabling detailed location-based management, reporting, and task execution in WMS environments."
+    },
+    "location_summary": {
+        "table": "t_location",
+        "columns": [
+            "wh_id",
+            "location_id",
+            "description",
+            "short_location_id",
+            "status",
+            "zone",
+            "picking_flow",
+            "capacity_uom",
+            "capacity_qty",
+            "stored_qty",
+            "type",
+            "fifo_date",
+            "cycle_count_class",
+            "last_count_date",
+            "last_physical_date",
+            "user_count",
+            "capacity_volume",
+            "time_between_maintenance",
+            "last_maintained",
+            "length",
+            "width",
+            "height",
+            "replenishment_location_id",
+            "pick_area",
+            "allow_bulk_pick",
+            "slot_rank",
+            "slot_status",
+            "item_hu_indicator",
+            "c1",
+            "c2",
+            "c3",
+            "random_cc",
+            "x_coordinate",
+            "y_coordinate",
+            "z_coordinate"
+        ],
+        "conditions": {
+            "JOIN": [
+                "t_fwd_pick ON t_location.wh_id = t_fwd_pick.wh_id AND t_location.location_id = t_fwd_pick.location_id",
+                "t_lookup ON t_location.wh_id = t_lookup.wh_id AND t_location.description = t_lookup.description",
+                "t_pick_detail ON t_location.wh_id = t_pick_detail.wh_id AND t_location.location_id = t_pick_detail.pick_location AND t_location.zone = t_pick_detail.zone AND t_location.picking_flow = t_pick_detail.picking_flow AND t_location.pick_area = t_pick_detail.pick_area",
+                "t_stored_item ON t_location.wh_id = t_stored_item.wh_id AND t_location.location_id = t_stored_item.location_id AND t_location.type = t_stored_item.type AND t_location.fifo_date = t_stored_item.fifo_date",
+                "t_tran_log ON t_location.wh_id = t_tran_log.wh_id AND t_location.location_id = t_tran_log.location_id"
+            ],
+            "WHERE": "t_location.wh_id IS NOT NULL AND t_location.location_id IS NOT NULL"
+        },
+        "description": "Technical query for warehouse location details. The 't_location' table stores warehouse ID, location ID, description, dimensions, capacity, type, zone, picking flow, cycle count info, maintenance info, coordinates, and related attributes. It joins with forward pick, pick details, stored items, transaction logs, and lookup tables for detailed operational management, reporting, and task execution in WMS systems."
+    },
+    "order_detail_summary": {
+        "table": "t_order_detail",
+        "columns": [
+            "order_detail_id",
+            "order_id",
+            "item_master_id",
+            "wh_id",
+            "order_number",
+            "line_number",
+            "item_number",
+            "bo_qty",
+            "bo_description",
+            "bo_weight",
+            "qty",
+            "afo_plan_qty",
+            "unit_pack",
+            "item_weight",
+            "item_tare_weight",
+            "haz_material",
+            "b_o_l_class",
+            "b_o_l_line1",
+            "b_o_l_line2",
+            "b_o_l_line3",
+            "b_o_l_plac_code",
+            "b_o_l_plac_desc",
+            "b_o_l_code",
+            "qty_shipped",
+            "line_type",
+            "item_description",
+            "stacking_seq",
+            "cust_part",
+            "lot_number",
+            "picking_flow",
+            "unit_weight",
+            "unit_volume",
+            "extended_weight",
+            "extended_volume",
+            "over_alloc_qty",
+            "date_expected",
+            "order_uom",
+            "host_wave_id",
+            "tran_plan_qty",
+            "unique_link"
+        ],
+        "conditions": {
+            "JOIN": [
+                "t_order ON t_order_detail.order_id = t_order.order_id AND t_order_detail.wh_id = t_order.wh_id AND t_order_detail.order_number = t_order.order_number",
+                "t_hu_master ON t_order_detail.wh_id = t_hu_master.wh_id AND t_order_detail.order_number = t_hu_master.control_number",
+                "t_pick_detail ON t_order_detail.wh_id = t_pick_detail.wh_id AND t_order_detail.order_number = t_pick_detail.order_number AND t_order_detail.line_number = t_pick_detail.line_number",
+                "t_work_q ON t_order_detail.wh_id = t_work_q.wh_id AND t_order_detail.order_number = t_work_q.pick_ref_number",
+                "t_tote_assignment ON t_order_detail.wh_id = t_tote_assignment.wh_id AND t_order_detail.order_number = t_tote_assignment.order_number"
+            ],
+            "WHERE": "t_order_detail.order_detail_id IS NOT NULL AND t_order_detail.order_number IS NOT NULL AND t_order_detail.wh_id IS NOT NULL"
+        },
+        "description": "Technical query for detailed order line items. The 't_order_detail' table stores order lines with quantities, weights, descriptions, and handling details. It joins with orders, handling units, pick details, work queues, and tote assignments using the warehouse ID and order number (treating control_number and pick_ref_number as order_number) to provide a complete view of order fulfillment, task allocation, and shipment planning in WMS environments."
+    },
+    "pick_detail_summary": {
+        "table": "t_pick_detail",
+        "columns": [
+            "pick_id",
+            "order_number",
+            "line_number",
+            "type",
+            "uom",
+            "work_q_id",
+            "work_type",
+            "status",
+            "item_number",
+            "lot_number",
+            "serial_number",
+            "unplanned_quantity",
+            "planned_quantity",
+            "picked_quantity",
+            "staged_quantity",
+            "loaded_quantity",
+            "pick_location",
+            "picking_flow",
+            "staging_location",
+            "zone",
+            "wave_id",
+            "load_id",
+            "load_sequence",
+            "stop_id",
+            "container_id",
+            "pick_category",
+            "user_assigned",
+            "bulk_pick_flag",
+            "stacking_sequence",
+            "pick_area",
+            "wh_id",
+            "cartonization_batch_id"
+        ],
+        "conditions": {
+            "JOIN": [
+                "t_order ON t_pick_detail.order_number = t_order.order_number AND t_pick_detail.wh_id = t_order.wh_id",
+                "t_order_detail ON t_pick_detail.order_number = t_order_detail.order_number AND t_pick_detail.line_number = t_order_detail.line_number AND t_pick_detail.wh_id = t_order_detail.wh_id",
+                "t_location ON t_pick_detail.wh_id = t_location.wh_id AND t_pick_detail.pick_location = t_location.location_id",
+                "t_stored_item ON t_pick_detail.wh_id = t_stored_item.wh_id AND t_pick_detail.item_number = t_stored_item.item_number",
+                "t_hu_master ON t_pick_detail.wh_id = t_hu_master.wh_id AND t_pick_detail.load_id = t_hu_master.load_id",
+                "t_pick_container ON t_pick_detail.container_id = t_pick_container.container_id OR t_pick_detail.cartonization_batch_id = t_pick_container.cartonization_batch_id",
+                "t_label ON t_pick_detail.pick_id = t_label.pick_id",
+                "t_employee ON t_pick_detail.user_assigned = t_employee.id"
+            ],
+            "WHERE": "t_pick_detail.wh_id IS NOT NULL AND t_pick_detail.order_number IS NOT NULL"
+        },
+        "description": "Technical query for warehouse pick details. The 't_pick_detail' table stores each pick line's details including order reference, line, item, lot/serial numbers, quantities at different stages (planned, picked, staged, loaded), pick/staging locations, wave/load info, containerization, and assigned user. It joins with orders, order details, locations, stored items, handling units, pick containers, labels, and employee tables to provide a complete operational view for WMS execution and reporting."
+    },
+    "stored_item_summary": {
+        "table": "t_stored_item",
+        "columns": [
+            "sequence",
+            "item_number",
+            "actual_qty",
+            "unavailable_qty",
+            "status",
+            "wh_id",
+            "location_id",
+            "fifo_date",
+            "expiration_date",
+            "reserved_for",
+            "lot_number",
+            "inspection_code",
+            "serial_number",
+            "type",
+            "put_away_location",
+            "owner_id"
+        ],
+        "conditions": {
+            "JOIN": [
+                "t_pick_detail ON t_stored_item.wh_id = t_pick_detail.wh_id AND t_stored_item.location_id = t_pick_detail.pick_location AND t_stored_item.type = t_pick_detail.pick_id",
+                "t_hu_detail ON t_stored_item.wh_id = t_hu_detail.wh_id AND t_stored_item.location_id = t_hu_detail.location_id AND t_stored_item.item_number = t_hu_detail.item_number AND t_stored_item.fifo_date = t_hu_detail.fifo_date AND t_stored_item.type = t_hu_detail.type",
+                "t_tran_log ON t_stored_item.wh_id = t_tran_log.wh_id AND t_stored_item.location_id = t_tran_log.location_id AND t_stored_item.item_number = t_tran_log.item_number",
+                "t_order_detail ON t_stored_item.wh_id = t_order_detail.wh_id AND t_stored_item.item_number = t_order_detail.item_number",
+                "t_po_detail ON t_stored_item.wh_id = t_po_detail.wh_id AND t_stored_item.item_number = t_po_detail.item_number",
+                "t_receipt ON t_stored_item.wh_id = t_receipt.wh_id AND t_stored_item.item_number = t_receipt.item_number"
+            ],
+            "WHERE": "t_stored_item.wh_id IS NOT NULL AND t_stored_item.location_id IS NOT NULL"
+        },
+        "description": "Technical query for stored inventory details. The 't_stored_item' table stores warehouse ID, location ID, item numbers, quantities, lot/serial/inspection info, type, FIFO/expiration dates, owner and put-away location. It joins with pick details, handling units, transaction logs, order details, PO details, and receipt tables for inventory tracking, operational management, and reporting in WMS systems."
+    },
+    "bom_summary": {
+        "table": "t_bom_master",
+        "columns": [
+            "kit_id",
+            "wh_id",
+            "description",
+            "location_id",
+            "status",
+            "created_date"
+        ],
+        "conditions": {
+            "JOIN": [
+                "t_bom_detail ON t_bom_master.kit_id = t_bom_detail.kit_id AND t_bom_master.wh_id = t_bom_detail.wh_id",
+                "t_bom_image ON t_bom_master.kit_id = t_bom_image.kit_id AND t_bom_master.wh_id = t_bom_image.wh_id",
+                "t_bom_instruction ON t_bom_master.kit_id = t_bom_instruction.kit_id AND t_bom_master.wh_id = t_bom_instruction.wh_id"
+            ],
+            "WHERE": "t_bom_master.kit_id IS NOT NULL AND t_bom_master.wh_id IS NOT NULL"
+        },
+        "description": "Technical query for Bill of Materials (BOM) details. The 't_bom_master' table stores master kit information including warehouse ID, location, description, status, and creation date. It joins with 't_bom_detail' for kit components and quantities, 't_bom_image' for kit images and sequences, and 't_bom_instruction' for assembly instructions and their statuses, enabling full tracking of BOM composition and assembly workflows."
+    },
+    "carrier_summary": {
+        "table": "t_carrier",
+        "columns": [
+            "carrier_id",
+            "carrier_code",
+            "carrier_name",
+            "carrier_group_id",
+            "contact_name",
+            "cdl_verify",
+            "time_allowed_early",
+            "time_allowed_late",
+            "disposition",
+            "default_trailer_type_id",
+            "default_priority",
+            "dock_schedule_method",
+            "notes",
+            "transport_mode",
+            "tender_response_time",
+            "scac_code",
+            "effective",
+            "status",
+            "freight_fwd_flag",
+            "address1",
+            "address2",
+            "address3",
+            "address4",
+            "city",
+            "county",
+            "state",
+            "zip",
+            "country",
+            "country_code",
+            "phone",
+            "extension",
+            "fax",
+            "email",
+            "taxpayer_id",
+            "network_id",
+            "alt_name1",
+            "alt_name2",
+            "language_code",
+            "num1",
+            "num2",
+            "house_type",
+            "geo_code",
+            "in_city_limit",
+            "website",
+            "ta_tender_request_name",
+            "ta_cancel_tender_name",
+            "ta_tracking_request_name",
+            "ta_pod_request_name",
+            "carrier_organization_id"
+        ],
+        "conditions": {
+            "JOIN": [],
+            "WHERE": "t_carrier.carrier_id IS NOT NULL AND t_carrier.carrier_code IS NOT NULL"
+        },
+        "description": "Technical query for carrier details. The 't_carrier' table stores carrier information including carrier codes, names, groups, contact info, transport modes, schedule and tender rules, addresses, status, and related operational attributes. It joins with carrier group, trailer type, and carrier schedule tables to provide complete operational, scheduling, and organizational context for freight and logistics management."
+    },
+    "employee_summary": {
+        "table": "t_employee",
+        "columns": [
+            "employee_id",
+            "id",
+            "name",
+            "password",
+            "emp_number",
+            "function_code",
+            "dept",
+            "supervisor",
+            "menu_level",
+            "wh_id",
+            "work_q_id",
+            "status",
+            "return_date",
+            "hu_id",
+            "zone",
+            "temp_menu_level",
+            "device",
+            "current_location",
+            "log_id",
+            "priority_threshold",
+            "hours_into_future",
+            "sp_return",
+            "locale_id",
+            "user_id",
+            "user_domain",
+            "audit_required",
+            "work_shift",
+            "pick_area"
+        ],
+        "conditions": {
+            "JOIN": [],
+            "WHERE": "t_employee.employee_id IS NOT NULL AND t_employee.id IS NOT NULL"
+        },
+        "description": "Technical query for warehouse employee details. The 't_employee' table stores employee IDs, login IDs, names, passwords, employee numbers, functions, departments, supervisors, menu levels, warehouse assignments, work queue IDs, status, shift and zone info, device and current location, and other operational attributes. It joins with work queue, location, device, supervisor, and department tables to provide complete operational, task, and reporting context in WMS/TMS systems."
+    },
+    "hu_master_summary": {
+        "table": "t_hu_master",
+        "columns": [
+            "hu_id",
+            "type",
+            "control_number",
+            "location_id",
+            "subtype",
+            "status",
+            "fifo_date",
+            "wh_id",
+            "load_position",
+            "haz_material",
+            "load_id",
+            "load_seq",
+            "ver_flag",
+            "zone",
+            "reserved_for",
+            "container_type",
+            "stop_id",
+            "parent_hu_id",
+            "user_id"
+        ],
+        "conditions": {
+            "JOIN": [
+                "t_pick_detail ON t_hu_master.control_number = t_pick_detail.order_number",
+                "t_stored_item ON t_hu_master.hu_id = t_stored_item.hu_id AND t_hu_master.type = t_stored_item.type AND t_hu_master.location_id = t_stored_item.location_id AND t_hu_master.fifo_date = t_stored_item.fifo_date",
+                "t_tran_log ON t_hu_master.control_number = t_tran_log.control_number AND t_hu_master.hu_id = t_tran_log.hu_id AND t_hu_master.wh_id = t_tran_log.wh_id",
+                "t_order ON t_hu_master.control_number = t_order.order_number AND t_hu_master.wh_id = t_order.wh_id",
+                "t_location ON t_hu_master.location_id = t_location.location_id AND t_hu_master.wh_id = t_location.wh_id"
+            ],
+            "WHERE": "t_hu_master.hu_id IS NOT NULL AND t_hu_master.control_number IS NOT NULL"
+        },
+        "description": "Technical query for handling Handling Unit (HU) master data. The 't_hu_master' table stores HU ID, type, control numbers, warehouse ID, location, status, FIFO date, load and container info, zone, and user info. It joins with pick details, stored items, transaction logs, orders, and location tables to provide comprehensive HU tracking, task execution, and inventory management in WMS systems."
+    },
+    "item_comment_summary": {
+        "table": "t_item_comment",
+        "columns": [
+            "item_comment_id",
+            "item_master_id",
+            "item_number",
+            "wh_id",
+            "activity_type",
+            "comment_seq",
+            "comment_text"
+        ],
+        "conditions": {
+            "JOIN": [
+                "t_item_master ON t_item_comment.item_number = t_item_master.item_number AND t_item_comment.wh_id = t_item_master.wh_id",
+                "t_item_uom ON t_item_comment.item_number = t_item_uom.item_number AND t_item_comment.wh_id = t_item_uom.wh_id",
+                "t_order_detail ON t_item_comment.item_number = t_order_detail.item_number AND t_item_comment.wh_id = t_order_detail.wh_id",
+                "t_hu_detail ON t_item_comment.item_number = t_hu_detail.item_number AND t_item_comment.wh_id = t_hu_detail.wh_id",
+                "t_stored_item ON t_item_comment.item_number = t_stored_item.item_number AND t_item_comment.wh_id = t_stored_item.wh_id",
+                "t_pick_detail ON t_item_comment.item_number = t_pick_detail.item_number AND t_item_comment.wh_id = t_pick_detail.wh_id"
+            ],
+            "WHERE": "t_item_comment.item_number IS NOT NULL AND t_item_comment.wh_id IS NOT NULL"
+        },
+        "description": "Technical query for item-level comments in the warehouse system. The 't_item_comment' table stores comments for items including item master ID, item number, warehouse ID, activity type, sequence, and comment text. It joins with item master and item UOM tables to get item details and measurement info, and with order details, HU details, stored items, and pick details tables for comprehensive reporting, inventory tracking, and operational analysis in WMS."
+    },
+    "item_image_summary": {
+        "table": "t_item_image",
+        "columns": [
+            "item_image_id",
+            "item_master_id",
+            "wh_id",
+            "item_number",
+            "sequence",
+            "picture_mime_type",
+            "picture_filename",
+            "picture"
+        ],
+        "conditions": {
+            "JOIN": [
+                "t_item_master ON t_item_image.item_number = t_item_master.item_number AND t_item_image.wh_id = t_item_master.wh_id",
+                "t_item_uom ON t_item_image.item_number = t_item_uom.item_number AND t_item_image.wh_id = t_item_uom.wh_id",
+                "t_order_detail ON t_item_image.item_number = t_order_detail.item_number AND t_item_image.wh_id = t_order_detail.wh_id",
+                "t_hu_detail ON t_item_image.item_number = t_hu_detail.item_number AND t_item_image.wh_id = t_hu_detail.wh_id",
+                "t_stored_item ON t_item_image.item_number = t_stored_item.item_number AND t_item_image.wh_id = t_stored_item.wh_id",
+                "t_pick_detail ON t_item_image.item_number = t_pick_detail.item_number AND t_item_image.wh_id = t_pick_detail.wh_id"
+            ],
+            "WHERE": "t_item_image.item_number IS NOT NULL AND t_item_image.wh_id IS NOT NULL"
+        },
+        "description": "Technical query for item images in the warehouse system. The 't_item_image' table stores image data including image ID, item master ID, warehouse ID, item number, sequence, MIME type, filename, and the actual image. It joins with item master and item UOM for item details, and with order details, HU details, stored items, and pick details for operational reporting, inventory tracking, and visual reference in WMS systems."
+    },
+    "item_master_summary": {
+        "table": "t_item_master",
+        "columns": [
+            "item_master_id",
+            "item_number",
+            "description",
+            "uom",
+            "inventory_type",
+            "shelf_life",
+            "alt_item_number",
+            "commodity_code",
+            "nafta_pref_criteria",
+            "nafta_producer",
+            "nafta_net_cost",
+            "price",
+            "std_hand_qty",
+            "std_qty_uom",
+            "inspection_code",
+            "serialized",
+            "lot_control",
+            "wh_id",
+            "reorder_point",
+            "reorder_qty",
+            "cycle_count_class",
+            "last_count_date",
+            "class_id",
+            "pick_location",
+            "stacking_seq",
+            "comment_flag",
+            "ver_flag",
+            "upc",
+            "unit_weight",
+            "tare_weight",
+            "haz_material",
+            "inv_cat",
+            "inv_class",
+            "unit_volume",
+            "nested_volume",
+            "xdock_profile_id",
+            "pick_put_id",
+            "suggested_disposition",
+            "length",
+            "width",
+            "height",
+            "sample_rate",
+            "compatibility_id",
+            "commodity_type_id",
+            "freight_class_id",
+            "audit_required",
+            "owner_id",
+            "msds_url",
+            "expiration_date_control",
+            "ucc_company_prefix",
+            "threshold"
+        ],
+        "conditions": {
+            "JOIN": [
+                "t_item_uom ON t_item_master.item_number = t_item_uom.item_number AND t_item_master.wh_id = t_item_uom.wh_id",
+                "t_item_image ON t_item_master.item_number = t_item_image.item_number AND t_item_master.wh_id = t_item_image.wh_id",
+                "t_item_comment ON t_item_master.item_number = t_item_comment.item_number AND t_item_master.wh_id = t_item_comment.wh_id",
+                "t_order_detail ON t_item_master.item_number = t_order_detail.item_number AND t_item_master.wh_id = t_order_detail.wh_id",
+                "t_hu_detail ON t_item_master.item_number = t_hu_detail.item_number AND t_item_master.wh_id = t_hu_detail.wh_id",
+                "t_stored_item ON t_item_master.item_number = t_stored_item.item_number AND t_item_master.wh_id = t_stored_item.wh_id",
+                "t_pick_detail ON t_item_master.item_number = t_pick_detail.item_number AND t_item_master.wh_id = t_pick_detail.wh_id"
+            ],
+            "WHERE": "t_item_master.item_number IS NOT NULL AND t_item_master.wh_id IS NOT NULL"
+        },
+        "description": "Technical query for item master details in the warehouse system. The 't_item_master' table stores core item attributes including item number, description, UOM, inventory type, shelf life, alternate numbers, commodity codes, pricing, weight, volume, cycle count info, pick locations, and hazard/material details. It joins with item UOM, item images, item comments, order details, HU details, stored items, and pick details for complete operational, inventory, and reporting context in WMS systems."
+    },
+    "item_uom_summary": {
+        "table": "t_item_uom",
+        "columns": [
+            "item_uom_id",
+            "item_master_id",
+            "item_number",
+            "wh_id",
+            "uom",
+            "conversion_factor",
+            "package_weight",
+            "units_per_layer",
+            "layers_per_uom",
+            "uom_weight",
+            "pickable",
+            "box_type",
+            "length",
+            "width",
+            "height",
+            "no_overhang_on_top",
+            "stack_code",
+            "batch",
+            "use_orientation_data",
+            "turnable",
+            "on_bottom_ok",
+            "on_side_ok",
+            "on_end_ok",
+            "bottom_only",
+            "top_only",
+            "max_in_layer",
+            "max_support_weight",
+            "stack_index",
+            "container_value",
+            "load_separately",
+            "nesting_height_increase",
+            "nested_volume",
+            "unit_volume",
+            "pattern",
+            "priority",
+            "status",
+            "uom_prompt",
+            "default_receipt_uom",
+            "default_pick_uom",
+            "class_id",
+            "pick_put_id",
+            "conveyable",
+            "std_hand_qty",
+            "min_hand_qty",
+            "max_hand_qty",
+            "default_pick_area",
+            "pick_location",
+            "display_config",
+            "vas_profile",
+            "cartonization_flag",
+            "gtin",
+            "hose_under",
+            "hose_over"
+        ],
+        "conditions": {
+            "JOIN": [
+                "t_item_master ON t_item_uom.item_number = t_item_master.item_number AND t_item_uom.wh_id = t_item_master.wh_id",
+                "t_item_image ON t_item_uom.item_number = t_item_image.item_number AND t_item_uom.wh_id = t_item_image.wh_id",
+                "t_item_comment ON t_item_uom.item_number = t_item_comment.item_number AND t_item_uom.wh_id = t_item_comment.wh_id",
+                "t_order_detail ON t_item_master.item_number = t_order_detail.item_number AND t_item_master.wh_id = t_order_detail.wh_id",
+                "t_stored_item ON t_item_uom.item_number = t_stored_item.item_number AND t_item_uom.wh_id = t_stored_item.wh_id",
+                "t_pick_detail ON t_item_uom.item_number = t_pick_detail.item_number AND t_item_uom.wh_id = t_pick_detail.wh_id"
+            ],
+            "WHERE": "t_item_uom.item_number IS NOT NULL AND t_item_uom.wh_id IS NOT NULL"
+        },
+        "description": "Technical query for item UOM (Unit of Measure) details in the warehouse system. The 't_item_uom' table stores item number, UOM, conversion factors, packaging dimensions, stacking rules, volume and weight metrics, pickability, and cartonization attributes. It joins with item master, item image, item comment, stored item, and pick detail tables for complete inventory, packaging, and operational context in WMS systems."
+    },
+    "bom_detail_summary": {
+        "table": "t_bom_detail",
+        "columns": [
+            "kit_id",
+            "wh_id",
+            "item_number",
+            "quantity"
+        ],
+        "conditions": {
+            "JOIN": [
+                "t_item_master ON t_bom_detail.item_number = t_item_master.item_number AND t_bom_detail.wh_id = t_item_master.wh_id",
+                "t_item_uom ON t_bom_detail.item_number = t_item_uom.item_number AND t_bom_detail.wh_id = t_item_uom.wh_id",
+                "t_stored_item ON t_bom_detail.item_number = t_stored_item.item_number AND t_bom_detail.wh_id = t_stored_item.wh_id",
+                "t_pick_detail ON t_bom_detail.item_number = t_pick_detail.item_number AND t_bom_detail.wh_id = t_pick_detail.wh_id"
+            ],
+            "WHERE": "t_bom_detail.kit_id IS NOT NULL AND t_bom_detail.wh_id IS NOT NULL"
+        },
+        "description": "Technical query for Bill of Materials (BOM) details. The 't_bom_detail' table stores component items for each kit along with quantities and warehouse ID. It joins with item master and item UOM tables for detailed item attributes, and with stored items and pick details for operational and picking context in the WMS system."
+    },
+    "order_summary": {
+        "table": "t_order",
+        "columns": [
+            "order_id",
+            "wh_id",
+            "order_number",
+            "store_order_number",
+            "type_id",
+            "customer_id",
+            "cust_po_number",
+            "customer_name",
+            "customer_phone",
+            "customer_email",
+            "department",
+            "load_id",
+            "load_seq",
+            "bol_number",
+            "pro_number",
+            "master_bol_number",
+            "carrier",
+            "carrier_scac",
+            "freight_terms",
+            "rush",
+            "priority",
+            "order_date",
+            "arrive_date",
+            "actual_arrival_date",
+            "date_picked",
+            "date_expected",
+            "promised_date",
+            "weight",
+            "cubic_volume",
+            "containers",
+            "backorder",
+            "pre_paid",
+            "cod_amount",
+            "insurance_amount",
+            "pip_amount",
+            "freight_cost",
+            "region",
+            "status",
+            "zone",
+            "drop_ship",
+            "lock_flag",
+            "partial_order_flag",
+            "earliest_ship_date",
+            "latest_ship_date",
+            "actual_ship_date",
+            "earliest_delivery_date",
+            "latest_delivery_date",
+            "actual_delivery_date",
+            "route",
+            "baseline_rate",
+            "planning_rate"
+        ],
+        "conditions": {
+            "JOIN": [
+                "t_order_detail ON t_order.order_number = t_order_detail.order_number AND t_order.wh_id = t_order_detail.wh_id",
+                "t_hu_master ON t_order.order_number = t_hu_master.control_number AND t_order.wh_id = t_hu_master.wh_id",
+                "t_tran_log ON t_order.order_number = t_tran_log.control_number AND t_order.wh_id = t_tran_log.wh_id",
+                "t_work_q ON t_order.order_number = t_work_q.pick_ref_number AND t_order.wh_id = t_work_q.wh_id",
+                "t_pick_detail ON t_order.order_number = t_pick_detail.order_number AND t_order.wh_id = t_pick_detail.wh_id"
+            ],
+            "WHERE": "t_order.order_number IS NOT NULL AND t_order.wh_id IS NOT NULL"
+        },
+        "description": "Central query for orders. The 't_order' table stores detailed warehouse order info. It joins to order details (t_order_detail), handling unit master (t_hu_master), transaction logs (t_tran_log), pick details (t_pick_detail), invoices (t_invoice), and returns (t_return) via order_number for complete operational, financial, and logistical reporting."
+    },
+    "order_comment_summary": {
+        "table": "t_order_comment",
+        "columns": [
+            "order_comment_id",
+            "order_id",
+            "wh_id",
+            "order_number",
+            "header_footer",
+            "comment_type",
+            "sequence",
+            "comment_date",
+            "comment_text"
+        ],
+        "conditions": {
+            "JOIN": [
+                "t_order ON t_order_comment.order_number = t_order.order_number AND t_order_comment.wh_id = t_order.wh_id",
+                "t_hu_master ON t_order.order_number = t_hu_master.control_number AND t_order.wh_id = t_hu_master.wh_id",
+                "t_tran_log ON t_order.order_number = t_tran_log.control_number AND t_order.wh_id = t_tran_log.wh_id",
+                "t_work_q ON t_order.order_number = t_work_q.pick_ref_number AND t_order.wh_id = t_work_q.wh_id",
+                "t_pick_detail ON t_order.order_number = t_pick_detail.order_number AND t_order.wh_id = t_pick_detail.wh_id"
+            ],
+            "WHERE": "t_order_comment.wh_id IS NOT NULL AND t_order_comment.order_number IS NOT NULL"
+        },
+        "description": "The 't_order_comment' table stores comments for each order, including header/footer indicator, comment type, sequence, and text. It joins to 't_order' on order_number and wh_id for retrieving full order context, useful for reporting or operational insights on order-specific comments."
+    },
+    "unknown_po_order_labels_summary": {
+        "table": "t_unknown_po_order_labels",
+        "columns": [
+            "po_number",
+            "lbl_qty",
+            "print_date"
+        ],
+        "conditions": {
+            "JOIN": [
+                "t_po_master ON t_unknown_po_order_labels.po_number = t_po_master.po_number",
+                "t_po_detail ON t_unknown_po_order_labels.po_number = t_po_detail.po_number",
+                "t_po_comment ON t_unknown_po_order_labels.po_number = t_po_comment.po_number",
+                "t_rcpt_ship_po ON t_unknown_po_order_labels.po_number = t_rcpt_ship_po.po_number",
+                "t_rcpt_ship_po_detail ON t_unknown_po_order_labels.po_number = t_rcpt_ship_po_detail.po_number",
+                "t_receipt ON t_unknown_po_order_labels.po_number = t_receipt.po_number",
+                "t_unknown_receipt ON t_unknown_po_order_labels.po_number = t_unknown_receipt.po_number"
+            ],
+            "WHERE": "t_unknown_po_order_labels.po_number IS NOT NULL"
+        },
+        "description": "The 't_unknown_po_order_labels' table stores unknown purchase order labels, including label quantity and print date. It can join with PO master, PO detail, PO comment, receipt shipment, receipt shipment details, receipts, and unknown receipts via 'po_number' for tracking label generation, PO processing, and receipt reconciliation."
+    },
+    "rds_tote_master_summary": {
+        "table": "t_rds_tote_master",
+        "columns": [
+            "wh_id",
+            "queue_id",
+            "tote_id",
+            "order_number",
+            "out_zone",
+            "status",
+            "status_date"
+        ],
+        "conditions": {
+            "JOIN": [
+                "t_order ON t_rds_tote_master.order_number = t_order.order_number",
+                "t_order_detail ON t_order.order_number = t_order_detail.order_number AND t_order.wh_id = t_order_detail.wh_id",
+                "t_order_comment ON t_rds_tote_master.order_number = t_order_comment.order_number",
+                "t_tran_log ON t_rds_tote_master.order_number = t_tran_log.control_number"
+            ],
+            "WHERE": "t_rds_tote_master.wh_id IS NOT NULL AND t_rds_tote_master.tote_id IS NOT NULL"
+        },
+        "description": "The 't_rds_tote_master' table tracks totes in the warehouse, including queue, status, and outbound zone. It joins with orders, order comments, and transaction logs using 'order_number' to monitor tote assignment, processing status, and related order information for warehouse operations."
+    },
+    "rds_tote_detail_summary": {
+        "table": "t_rds_tote_detail",
+        "columns": [
+            "wh_id",
+            "queue_id",
+            "tote_id",
+            "zone",
+            "line_number",
+            "status",
+            "status_date"
+        ],
+        "conditions": {
+            "JOIN": [],
+            "WHERE": "t_rds_tote_detail.wh_id IS NOT NULL AND t_rds_tote_detail.tote_id IS NOT NULL"
+        },
+        "description": "The 't_rds_tote_detail' table stores detailed tote information including zone, line number, status, and status date. It joins with 't_rds_tote_master' for tote metadata and with orders, order comments, and transaction logs via 'order_number' to track tote processing and related order fulfillment in warehouse operations."
+    },
+    "order_airbag_price_summary": {
+        "table": "t_order_airbag_price",
+        "columns": [
+            "item_number",
+            "price"
+        ],
+        "conditions": {
+            "JOIN": [
+                "t_order_detail ON t_order_airbag_price.item_number = t_order_detail.item_number",
+                "t_bom_detail ON t_order_airbag_price.item_number = t_bom_detail.item_number",
+                "t_stored_item ON t_order_airbag_price.item_number = t_stored_item.item_number"
+            ],
+            "WHERE": "t_order_airbag_price.item_number IS NOT NULL"
+        },
+        "description": "The 't_order_airbag_price' table stores pricing information for individual items. It joins with 't_order_detail' for order-level item information, 't_bom_detail' for kit/component breakdowns, and 't_stored_item' for inventory location and quantity details, enabling comprehensive cost analysis and inventory valuation in warehouse management and order processing systems."
+    },
+    "ml_resource_summary": {
+        "table": "t_ml_resource",
+        "columns": [
+            "resource_id",
+            "locale_id",
+            "text",
+            "description"
+        ],
+        "conditions": {
+            "JOIN": [],
+            "WHERE": "t_ml_resource.resource_id IS NOT NULL"
+        },
+        "description": "The 't_ml_resource' table stores multilingual resource strings, including the text and description for each resource ID and locale. It is used in applications for localization and internationalization, providing the appropriate language-specific text based on the locale. Currently, it does not directly join with other operational tables but can be linked via application resource IDs where needed."
+    },
+    "ml_lookup_summary": {
+        "table": "t_ml_lookup",
+        "columns": [
+            "usage",
+            "lookup_id",
+            "resource_id"
+        ],
+        "conditions": {
+            "JOIN": [
+                "t_ml_resource ON t_ml_lookup.resource_id = t_ml_resource.resource_id"
+            ],
+            "WHERE": "t_ml_lookup.lookup_id IS NOT NULL"
+        },
+        "description": "The 't_ml_lookup' table provides lookup mappings for multilingual resources. Each entry links a usage context and lookup ID to a specific resource_id in the 't_ml_resource' table, enabling the system to retrieve the appropriate localized text. This table is used in conjunction with 't_ml_resource' for translation and display purposes in the application."
+    },
+    "logsend_summary": {
+        "table": "t_logsend",
+        "columns": [
+            "log_id",
+            "log_datetime",
+            "log_level",
+            "log_message"
+        ],
+        "conditions": {
+            "JOIN": [],
+            "WHERE": "t_logsend.log_id IS NOT NULL"
+        },
+        "description": "The 't_logsend' table stores system or application logs with timestamp, log level, and detailed message. It is mainly used for monitoring, debugging, and auditing purposes. This table is independent and does not have direct foreign key relationships with operational tables like orders, warehouse, or inventory tables."
+    },
+    "hj_inventory_adjustment_summary": {
+        "table": "t_hj_inventory_adjustment",
+        "columns": [
+            "adjustment_id",
+            "work_q_id",
+            "host_group_id",
+            "transaction_code",
+            "item_number",
+            "lot_number",
+            "quantity_before",
+            "quantity_after",
+            "quantity_change",
+            "hu_id",
+            "inventory_status_before",
+            "inventory_status_after",
+            "reason_code",
+            "fifo_date",
+            "from_location_id",
+            "to_location_id",
+            "user_id",
+            "wh_id",
+            "record_create_date",
+            "owner_id",
+            "uom"
+        ],
+        "conditions": {
+            "JOIN": [
+                "t_stored_item ON t_hj_inventory_adjustment.wh_id = t_stored_item.wh_id AND t_hj_inventory_adjustment.item_number = t_stored_item.item_number AND t_hj_inventory_adjustment.lot_number = t_stored_item.lot_number AND t_hj_inventory_adjustment.fifo_date = t_stored_item.fifo_date",
+                "t_location ON t_hj_inventory_adjustment.wh_id = t_location.wh_id AND t_hj_inventory_adjustment.from_location_id = t_location.location_id",
+                "t_location AS to_location ON t_hj_inventory_adjustment.wh_id = to_location.wh_id AND t_hj_inventory_adjustment.to_location_id = to_location.location_id"
+            ],
+            "WHERE": "t_hj_inventory_adjustment.adjustment_id IS NOT NULL"
+        },
+        "description": "The 't_hj_inventory_adjustment' table records inventory adjustments in the warehouse. It includes quantities before and after adjustment, item details, locations, transaction codes, user info, and timestamps. It can be joined with stored items for detailed item info and locations for movement tracking."
+    },
+    "cycle_count_trigger_summary": {
+        "table": "t_cycle_count_trigger",
+        "columns": [
+            "trigger_id",
+            "wh_id",
+            "item_number",
+            "zone",
+            "location_id",
+            "hu_id",
+            "reason",
+            "triggered_during",
+            "trigger_date",
+            "work_q_id",
+            "work_q_status",
+            "triggered_by"
+        ],
+        "conditions": {
+            "JOIN": [
+                "t_stored_item ON t_cycle_count_trigger.wh_id = t_stored_item.wh_id AND t_cycle_count_trigger.item_number = t_stored_item.item_number AND t_cycle_count_trigger.location_id = t_stored_item.location_id AND t_cycle_count_trigger.hu_id = t_stored_item.hu_id",
+                "t_location ON t_cycle_count_trigger.wh_id = t_location.wh_id AND t_cycle_count_trigger.location_id = t_location.location_id",
+                "t_hu_detail ON t_cycle_count_trigger.hu_id = t_hu_detail.hu_id",
+                "t_hu_master ON t_cycle_count_trigger.hu_id = t_hu_master.hu_id",
+                "t_tran_log ON t_cycle_count_trigger.hu_id = t_tran_log.hu_id"
+            ],
+            "WHERE": "t_cycle_count_trigger.trigger_id IS NOT NULL"
+        },
+        "description": "The 't_cycle_count_trigger' table records triggers for cycle counts in the warehouse. It tracks which items and locations need counting, the reason for triggering, the user, timestamps, and associated work queue info. It can be joined with stored items for inventory details and location table for location attributes."
+    },
+    "cycle_count_approval_summary": {
+        "table": "t_cycle_count_approval",
+        "columns": [
+            "approval_id",
+            "work_q_id",
+            "wh_id",
+            "item_number",
+            "location_id",
+            "hu_id",
+            "approval_status",
+            "approval_date",
+            "approved_by",
+            "triggered_by",
+            "rejected_by",
+            "rejected_date"
+        ],
+        "conditions": {
+            "JOIN": [
+                "t_cycle_count_trigger ON t_cycle_count_approval.work_q_id = t_cycle_count_trigger.work_q_id AND t_cycle_count_approval.wh_id = t_cycle_count_trigger.wh_id",
+                "t_stored_item ON t_cycle_count_approval.wh_id = t_stored_item.wh_id AND t_cycle_count_approval.item_number = t_stored_item.item_number AND t_cycle_count_approval.location_id = t_stored_item.location_id",
+                "t_hu_master ON t_cycle_count_approval.hu_id = t_hu_master.hu_id",
+                "t_hu_detail ON t_cycle_count_approval.hu_id = t_hu_detail.hu_id",
+                "t_tran_log ON t_cycle_count_approval.hu_id = t_tran_log.hu_id"
+            ],
+            "WHERE": "t_cycle_count_approval.wh_id IS NOT NULL AND t_cycle_count_approval.location_id IS NOT NULL"
+        },
+        "description": "The 't_cycle_count_approval' table stores cycle count approval records, including status, approval/rejection info, and related work queue. It joins with t_cycle_count_trigger for trigger info, t_stored_item for item-level inventory details, and HU tables (t_hu_master, t_hu_detail) along with t_tran_log for transaction history and auditing."
+    },
+    "cut_hose_summary": {
+        "table": "t_cut_hose",
+        "columns": [
+            "pick_id",
+            "location_id",
+            "cut_hu_id",
+            "cut_required",
+            "pick_qty",
+            "cut_length",
+            "bo_upload",
+            "status"
+        ],
+        "conditions": {
+            "JOIN": [
+                "t_pick_detail ON t_cut_hose.pick_id = t_pick_detail.pick_id AND t_cut_hose.location_id = t_pick_detail.pick_location",
+                "t_stored_item ON t_cut_hose.cut_hu_id = t_stored_item.hu_id AND t_cut_hose.location_id = t_stored_item.location_id",
+                "t_tran_log ON t_cut_hose.cut_hu_id = t_tran_log.hu_id",
+                "t_location ON t_cut_hose.location_id = t_location.location_id"
+            ],
+            "WHERE": "t_cut_hose.location_id IS NOT NULL AND t_cut_hose.cut_hu_id IS NOT NULL"
+        },
+        "description": "The 't_cut_hose' table tracks cut hose operations, including pick details, HU info, quantity, cut length, and status. It joins with t_pick_detail for pick-level info, t_stored_item for inventory HU details, t_tran_log for transaction history, and t_location for detailed warehouse location info (zone, type, capacity, etc.)."
+    },
+    "cut_hose_test_summary": {
+        "table": "t_cut_hoseTEST",
+        "columns": [
+            "pick_id",
+            "location_id",
+            "cut_hu_id",
+            "cut_required",
+            "pick_qty",
+            "cut_length",
+            "bo_upload",
+            "status"
+        ],
+        "conditions": {
+            "JOIN": [
+                "t_location ON t_cut_hoseTEST.location_id = t_location.location_id",
+                "t_pick_detail ON t_cut_hoseTEST.pick_id = t_pick_detail.pick_id AND t_cut_hoseTEST.location_id = t_pick_detail.pick_location",
+                "t_stored_item ON t_cut_hoseTEST.cut_hu_id = t_stored_item.hu_id AND t_cut_hoseTEST.location_id = t_stored_item.location_id",
+                "t_tran_log ON t_cut_hoseTEST.cut_hu_id = t_tran_log.hu_id"
+            ],
+            "WHERE": "t_cut_hoseTEST.location_id IS NOT NULL AND t_cut_hoseTEST.cut_hu_id IS NOT NULL"
+        },
+        "description": "The 't_cut_hoseTEST' table tracks hose cutting operations including pick details, HU information, quantities, cut lengths, and status. It joins with t_location to get warehouse details, t_pick_detail for pick-level info, t_stored_item for inventory HU details, t_tran_log for transaction history, and lookup tables for additional metadata, enabling comprehensive WMS reporting and operational insights."
+    },
+    "transaction volume": {
+        "table": "t_cycle_count_trigger",
+        "columns": ["location_id", "wh_id", "trigger_id"],
+        "aggregation": "COUNT(*)"
+    },
+    "transaction": {
+        "table": "t_cycle_count_trigger",
+        "columns": ["location_id", "wh_id"]
+    },"box_centres_summary": {
+    "table": "t_box_centres",
+    "columns": [
+        "box_flag_id",
+        "centre_code",
+        "order_number",
+        "box_flag",
+        "type",
+        "start_date",
+        "end_date",
+        "manifest"
+    ],
+    "conditions": {
+        "JOIN": [
+            "t_order ON t_box_centres.order_number = t_order.order_number",
+            "t_hu_master ON t_box_centres.order_number = t_hu_master.control_number",
+            "t_tran_log ON t_box_centres.order_number = t_tran_log.control_number"
+        ],
+        "WHERE": "t_box_centres.order_number IS NOT NULL"
+    },
+    "description": "The 't_box_centres' table stores box flag info per centre for specific orders, including type, start/end dates, and manifests. It joins with t_order, t_hu_master, and t_tran_log for order and HU details, and t_location, t_pick_detail, t_stored_item, t_fwd_pick, and lookup tables for warehouse and inventory context. This enables detailed tracking of box operations and reporting in WMS systems."
+},
+
+    "staged_orders_count": {
+        "table": "t_pick_detail",
+        "columns": [
+            "order_number",
+            "staged_quantity"
+        ],
+        "conditions": {
+            "WHERE": "staged_quantity > 0"
+        },
+        "description": "Counts distinct orders that have at least one pick line with staged quantity greater than zero. Used to identify how many orders are currently staged in the picking workflow."
+    },
+
+ 
+
+  "order_status": {
+
+    "table": "t_pick_detail",
+
+    "columns": [
+
+      "pick_id",
+
+      "order_number",
+
+      "status",
+
+      "planned_quantity",
+
+      "picked_quantity",
+
+      "staged_quantity",
+
+      "loaded_quantity",
+
+      "staging_location"
+
+    ],
+ 
+    "intent_patterns": [
+
+      "order status",
+
+      "order staging status",
+
+      "orders staged",
+
+      "staged orders",
+
+      "how many orders are staged",
+
+      "count staged orders",
+
+      "number of staged orders"
+
+    ],
+ 
+    "conditions": {
+
+      "JOIN": [],
+
+      "WHERE": "t_pick_detail.pick_id IS NOT NULL AND t_pick_detail.order_number IS NOT NULL",
+ 
+      "FILTERS": {
+
+        "status": {
+
+          "field": "t_pick_detail.status",
+
+          "operators": ["=", "IN"],
+
+          "values": ["PICKED", "STAGED", "LOADED"]
+
+        }
+
+      }
+
+    },
+ 
+    "aggregation_rules": {
+
+      "count_orders": {
+
+        "trigger_phrases": [
+
+          "how many",
+
+          "count",
+
+          "number of",
+
+          "total"
+
+        ],
+
+        "aggregate_function": "COUNT(DISTINCT t_pick_detail.order_number)"
+
+      }
+
+    },
+ 
+    "description": "The t_pick_detail table stores information about warehouse orders, including current status and staging location. It is used to determine how many orders are PICKED, STAGED, or LOADED and to track their progress through the warehouse."
+
+  }
+
+}
+
+ 

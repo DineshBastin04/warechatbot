@@ -1,0 +1,3041 @@
+{
+
+
+  "putaway_class_summary": {
+    "terms": [
+      "putaway class",
+      "putaway classification",
+      "putaway type",
+      "putaway rules",
+      "class id",
+      "classification id",
+      "class description",
+      "item classification",
+      "item class",
+      "storage classification",
+      "storage class",
+      "zone classification",
+      "zone class",
+      "storage compatibility",
+      "putaway compatibility",
+      "warehouse storage class",
+      "item storage type",
+      "product classification",
+      "bin compatibility",
+      "location compatibility",
+      "WMS item class",
+      "material classification"
+    ],
+    "description": "Business terms related to This data represents the classification of items for warehouse storage, known as 'putaway class'. It helps determine where an item can be stored in the warehouse by defining compatibility with storage zones, bins, or types. It is essential for optimizing space, maintaining inventory rules, and automating putaway decisions in WMS workflows. Users may refer to it using terms like item class, storage classification, or putaway rules."
+  },
+  "putaway_class_hierarchy": {
+    "terms": [
+      "overflow class",
+      "class assignment",
+      "fallback classification"
+    ],
+    "description": "Business terms related to Defines the primary and overflow class mappings for items, enabling fallback logic when primary storage areas are full."
+  },
+  "putaway_targeting": {
+    "terms": [
+      "target put percent",
+      "putaway operations",
+      "inventory storage",
+      "warehouse management"
+    ],
+    "description": "Business terms related to Indicates the distribution or priority percentage for item placement during putaway operations within warehouse zones."
+  },
+  "putaway_special_handling": {
+    "terms": [
+      "hazard class",
+      "frozen goods classification",
+      "regulatory class",
+      "storage constraint"
+    ],
+    "description": "Business terms related to Represents special storage requirements such as hazardous, frozen, or regulatory-sensitive items to ensure compliant and safe storage."
+  },
+  "location_class_link": {
+    "terms": [
+      "class location",
+      "class id",
+      "location id",
+      "class mapping",
+      "put by class",
+      "location assignment"
+    ],
+    "description": "Business terms related to Defines the association between item classes and their valid storage locations in the warehouse for compliant putaway operations."
+  },
+  "location_fill_strategy": {
+    "terms": [
+      "fill sequence",
+      "putaway strategy",
+      "slotting validation",
+      "warehouse operations"
+    ],
+    "description": "Business terms related to Specifies the preferred sequence in which locations should be filled during putaway, replenishment, and slotting processes."
+  },
+  "location_storage_constraints": {
+    "terms": [
+      "inventory storage",
+      "storage zone enforcement",
+      "compliance location",
+      "hazardous item location mapping",
+      "temperature-controlled area"
+    ],
+    "description": "Business terms related to Supports storage rules based on compliance, safety, and environmental requirements such as hazardous materials or cold storage zones."
+  },
+  "container_basic_info": {
+    "terms": [
+      "container type",
+      "container class",
+      "container category",
+      "container description",
+      "pallet type",
+      "pallet classification",
+      "carton type",
+      "bin type",
+      "tote type",
+      "shipping container type",
+      "warehouse container",
+      "storage container",
+      "manifest container",
+      "manifest container type",
+      "HighJump container",
+      "handling unit type",
+      "HU type",
+      "container code",
+      "container ID",
+      "transport unit",
+      "unit load type",
+      "packing container type",
+      "load carrier type"
+    ],
+    "description": "Business terms related to Defines metadata about container types used in warehouse operations. These include pallets, cartons, bins, totes, and other handling units. The information supports packing, putaway, shipping, and manifesting processes. Users may refer to these using terms like container class, pallet type, handling unit type, or transport unit. This classification helps determine how products are stored, transported, and identified across WMS workflows."
+  },
+  "container_physical_dimensions": {
+    "terms": [
+      "box size",
+      "box weight",
+      "container size",
+      "container weight",
+      "container dimensions",
+      "length",
+      "width",
+      "height",
+      "container volume",
+      "volume capacity",
+      "max weight",
+      "weight limit",
+      "how much it holds",
+      "container space",
+      "full size",
+      "volume usage",
+      "weight usage"
+    ],
+    "description": "Business terms related to Shows the size and weight details of containers like boxes or pallets. It includes how big they are (length, width, height), how much they weigh, and how much they can hold. This helps warehouse teams know which containers to use for storing or shipping items."
+  },
+  "container_loading_logic": {
+    "terms": [
+      "loading strategy",
+      "container allocation",
+      "load planning",
+      "cartonization",
+      "packing unit setup",
+      "container optimization",
+      "shipment container",
+      "load bottom to top",
+      "fill bottom first",
+      "sequence"
+    ],
+    "description": "Business terms related to Defines container loading and planning rules, optimization parameters, and strategies for efficient warehouse packing and shipment prep."
+  },
+  "container_layering_constraints": {
+    "terms": [
+      "stacking constraints",
+      "mixed layering",
+      "layers",
+      "spread",
+      "alternate layers",
+      "layers last pallet",
+      "min util for layers"
+    ],
+    "description": "Business terms related to Describes the rules for layering and stacking items within containers, used in container load modeling and packing logic."
+  },
+  "container_cog_limits": {
+    "terms": [
+      "center of gravity limits",
+      "cog back limit perc",
+      "cog front limit perc",
+      "cog left limit perc",
+      "cog right limit perc"
+    ],
+    "description": "Business terms related to Defines safe limits for center of gravity shifts in loaded containers, critical for stability in stacking and transport."
+  },
+  "container_advanced_constraints": {
+    "terms": [
+      "min support required",
+      "max support height diff",
+      "min top only height diff",
+      "max leaning dist",
+      "depth loading margin",
+      "width loading margin",
+      "abs max block depth",
+      "loading margin"
+    ],
+    "description": "Business terms related to Represents structural and spatial constraints applied during container packing, to ensure safe stacking and optimized load distribution."
+  },
+  "container_diversity_rules": {
+    "terms": [
+      "priority for large pkgs",
+      "target num diff boxes",
+      "min util diff box target",
+      "keep items in one container"
+    ],
+    "description": "Business terms related to Controls packing diversity rules such as mixing item types, packaging targets, or keeping similar items in one container."
+  },
+  "container_class_info": {
+    "terms": [
+      "container class",
+      "container class definition",
+      "class description",
+      "container grouping"
+    ],
+    "description": "Business terms related to Defines container classes used to group container types for specific warehouse operations such as packing or shipping."
+  },
+  "container_cartonization_logic": {
+    "terms": [
+      "cartonization",
+      "container selection",
+      "packing configuration",
+      "container logic",
+      "packing optimization"
+    ],
+    "description": "Business terms related to Supports logic for selecting appropriate containers based on class during cartonization and packing operations."
+  },
+  "container_class_warehouse_use": {
+    "terms": [
+      "warehouse id",
+      "warehouse operations",
+      "shipping logistics",
+      "shipment container class",
+      "pick area mapping"
+    ],
+    "description": "Business terms related to Maps container classes to warehouse-specific configurations to assist in fulfillment, shipping, and pick area optimization."
+  },
+  "system_config_core": {
+    "terms": [
+      "system configuration",
+      "system parameters",
+      "warehouse settings",
+      "application control"
+    ],
+    "description": "Business terms related to Central configuration entries that transcend fixed logic, enabling default system behaviors across warehouse modules to be dynamically reimagined."
+  },
+  "system_feature_toggles": {
+    "terms": [
+      "feature switch",
+      "configuration flag",
+      "label software toggle",
+      "audit cost toggle",
+      "cartonization flag",
+      "module activation"
+    ],
+    "description": "Business terms related to Flags and switches that orchestrate feature enablement across the warehouse system, intertwining operational flexibility with modular control."
+  },
+  "system_sequence_control": {
+    "terms": [
+      "sequence counter",
+      "next value",
+      "auto release",
+      "background job setting"
+    ],
+    "description": "Business terms related to Manages sequence counters and background triggers vital for systems that operate as a labyrinth of interlocking events and job executions."
+  },
+  "active_employee": {
+    "terms": "active_employee",
+    "description": "Business terms related to Employees currently active in the warehouse"
+  },
+  "employee_warehouse": {
+    "terms": "employee_warehouse",
+    "description": "Business terms related to Employees associated with a specific warehouse"
+  },
+  "employee_on_leave": {
+    "terms": "employee_on_leave",
+    "description": "Business terms related to Employees on leave or vacation"
+  },
+  "forward_pick_location_item": {
+    "terms": [
+      "forward pick",
+      "warehouse id",
+      "location id",
+      "item number",
+      "pick face setup",
+      "picking zone"
+    ],
+    "description": "Business terms related to ['Links warehouse locations with item numbers designated for forward picking, helping define pick face zones and setup strategies.', 'The table t_fwd_pick does not represent general item storage. It specifically tracks fast-moving items that are stored in forward pick locations for quick access during order fulfillment.']"
+  },
+  "forward_pick_uom_attributes": {
+    "terms": [
+      "unit of measure",
+      "stored attribute",
+      "dynamic item attributes"
+    ],
+    "description": "Business terms related to Captures unit of measure and stored item attributes required for granular pick configuration and dynamic inventory handling."
+  },
+  "forward_pick_replenishment_rules": {
+    "terms": [
+      "minimum trigger",
+      "maximum replenishment",
+      "replenishment threshold",
+      "replenishment settings",
+      "replenishment calculation",
+      "tolerance percent",
+      "how much quantity to be replenished for the location/item?",
+      "How many items can be stored in this location?",
+      "is this <location> a forward pick/pick front location?",
+      "does this item has a forward pick_location?"
+    ],
+    "description": "Business terms related to Defines replenishment parameters for forward pick locations, ensuring timely refill based on threshold rules and tolerance levels."
+  },
+  "forward_pick_priority_logic": {
+    "terms": [
+      "default priority",
+      "calculate quantity",
+      "picking strategy",
+      "fast picking",
+      "inventory management",
+      "order fulfillment"
+    ],
+    "description": "Business terms related to Controls forward pick logic for priority and replenishment calculations, driving picker routing and order fulfillment efficiency."
+  },
+  "hold_reason_and_category": {
+    "terms": [
+      "hold reason",
+      "reason code",
+      "quality control hold",
+      "QA hold",
+      "regulatory hold",
+      "compliance hold",
+      "returns hold",
+      "customer return hold",
+      "damaged inventory",
+      "expired goods",
+      "exception handling",
+      "shipment block",
+      "quarantine reason",
+      "audit hold",
+      "supplier quality issue",
+      "awaiting inspection",
+      "non-conformance reason",
+      "inventory discrepancy",
+      "blocked due to mismatch",
+      "system flag hold reason"
+    ],
+    "description": "Business terms related to Defines and categorizes the various reasons why inventory items or storage units are placed on hold. Reasons may include quality assurance checks, regulatory compliance, returns processing, damaged or expired stock, audit flags, or system-detected discrepancies. This domain enables classification and analysis of hold patterns for operational risk monitoring, root cause analysis, and corrective action planning. It plays a critical role in ensuring inventory integrity and traceability throughout the supply chain."
+  },
+  "handling_units_status": {
+    "terms": [
+      "unavailable LP",
+      "unavailable handling units",
+      "HU not available",
+      "show LPs that are unavailable",
+      "list unavailable containers",
+      "license plates with status U",
+      "How many handling units are currently in each warehouse (wh_id)?",
+      "Can you check the current status of this handling unit?",
+      "Show the last known location and status of HU456"
+    ],
+    "description": "Business terms related to [\"Returns a list of Handling Units (LPs) across all warehouses that are marked as unavailable (status = 'U').\", 'Get the total number of handling units in each warehouse.', 'Find out the current status (e.g., stored, shipped) of a specific handling unit.', 'Display the latest location and status of a specific handling unit.']"
+  },
+  "handling_units_by_warehouse": {
+    "terms": [
+      "LPs in warehouse",
+      "handling units in warehouse",
+      "list all LPs",
+      "HU in warehouse",
+      "show containers in warehouse",
+      "license plates in warehouse",
+      "Which container types are used in warehouse 1 ?",
+      "Where is handling unit 123 located?"
+    ],
+    "description": "Business terms related to ['Returns all Handling Units (LPs) present in a specific warehouse, including details such as status, type, and location.', 'Get container types used in a specific warehouse.', 'Find the location of a specific handling unit.']"
+  },
+  "item_space": {
+    "terms": [
+      "item_space",
+      "most space",
+      "maximum volume",
+      "item volume",
+      "large item",
+      "takes up space"
+    ],
+    "description": "Business terms related to Items occupying space based on dimensions"
+  },
+  "hazardous_materials": {
+    "terms": "hazardous_materials",
+    "description": "Business terms related to Hazardous materials in a warehouse"
+  },
+  "item_weight": {
+    "terms": "item_weight",
+    "description": "Business terms related to Weight of items in a warehouse"
+  },
+  "item_master_management": {
+    "terms": [
+      "item_master_management",
+      "item_space",
+      "item_volume",
+      "most_space",
+      "item_information",
+      "item_details",
+      "hazardous_material",
+      "item_weight",
+      "warehouse_items",
+      "item_dimensions",
+      "item_description",
+      "item_number",
+      "inventory_type",
+      "shelf_life",
+      "upc_code",
+      "alternate_item"
+    ],
+    "description": "Business terms related to Manages master data for items, including dimensions, weight, hazardous material flags, and detailed attributes for warehouse operations"
+  },
+  "uom_identity_and_linkage": {
+    "terms": [
+      "item unit of measure",
+      "item master",
+      "item number",
+      "warehouse id",
+      "unit of measure",
+      "status",
+      "class id"
+    ],
+    "description": "Business terms related to Defines the relationship between warehouse, item, unit of measure, and class. Foundation for all unit-level logic and ERP mapping."
+  },
+  "uom_conversion_and_handling": {
+    "terms": [
+      "conversion factor",
+      "pick put profile",
+      "default receipt uom",
+      "uom prompt",
+      "pickable",
+      "shippable uom",
+      "std_hand_qty",
+      "min_hand_qty",
+      "max_hand_qty",
+      "inventory unit tracking"
+    ],
+    "description": "Business terms related to Supports conversion logic, picking/putaway configuration, and quantity thresholds. Key to replenishment, packing, and shipping strategies."
+  },
+  "uom_physical_attributes": {
+    "terms": [
+      "package weight",
+      "unit weight",
+      "length",
+      "width",
+      "height",
+      "box type",
+      "containerization support",
+      "packing logic"
+    ],
+    "description": "Business terms related to Defines physical characteristics of each UOM, essential for space planning, packing, and containerization logic."
+  },
+  "uom_layering_and_stacking": {
+    "terms": [
+      "units per layer",
+      "layers per uom",
+      "max in layer",
+      "stacking rules",
+      "max support weight"
+    ],
+    "description": "Business terms related to Controls how units are layered and stacked within packaging. Enables stable builds and proper weight distribution."
+  },
+  "uom_orientation_rules": {
+    "terms": [
+      "turnable",
+      "on bottom ok",
+      "on side ok",
+      "on end ok"
+    ],
+    "description": "Business terms related to Orientation constraints for warehouse stacking, picking, and containerization\u00e2\u20ac\u201dused in safety and packaging compliance."
+  },
+  "uom_cartonization_flags": {
+    "terms": [
+      "cartonization flag",
+      "warehouse operations"
+    ],
+    "description": "Business terms related to Indicates if the UOM is eligible for cartonization logic during order fulfillment and outbound container planning."
+  },
+  "random_warehouse_item": {
+    "terms": [
+      "random item",
+      "any item",
+      "give me an item",
+      "item from warehouse",
+      "random sku",
+      "random product"
+    ],
+    "description": "Business terms related to Returns a random item and its UPC from the warehouse, based on available entries in the t_item_upc table. Useful for sample selections, testing, or audits."
+  },
+  "upc_lookup": {
+    "terms": [
+      "item barcode",
+      "UPC lookup",
+      "product code",
+      "scan code",
+      "barcode id",
+      "find by UPC"
+    ],
+    "description": "Business terms related to Used to look up items using Universal Product Codes (UPC) for barcode scanning, receiving, and retail integrations."
+  },
+  "vendor_item_linkage": {
+    "terms": [
+      "item vendor",
+      "item number",
+      "vendor id",
+      "vendor mapping",
+      "supplier linkage",
+      "vendor relationship",
+      "vendor management",
+      "vendor item number"
+    ],
+    "description": "Business terms related to Maps items to their corresponding vendors, including the vendor-specific item numbers used for purchasing and identification."
+  },
+  "vendor_preference_and_pricing": {
+    "terms": [
+      "preferred vendor",
+      "vendor price",
+      "approved supplier",
+      "vendor selection",
+      "item sourcing",
+      "item procurement",
+      "procurement vendor",
+      "price"
+    ],
+    "description": "Business terms related to Captures procurement-relevant vendor data such as preferred status and vendor-specific pricing for sourcing decisions and PO generation."
+  },
+  "vendor_item_master_reference": {
+    "terms": [
+      "item master",
+      "warehouse id",
+      "supply chain",
+      "inventory sourcing",
+      "UOM",
+      "UOMs"
+    ],
+    "description": "Business terms related to Connects vendor-item relationships to the master item record and warehouse, supporting sourcing logic in supply chain operations."
+  },
+  "lp_controlled_locations": {
+    "terms": [
+      "lp controlled locations",
+      "license plate controlled locations",
+      "HU controlled locations",
+      "handling unit managed locations",
+      "H and I indicator locations"
+    ],
+    "description": "Business terms related to [\"Locations that are license plate (LP) or handling unit (HU) controlled, indicated by specific values in the item_hu_indicator field ('H' or 'I').\"]"
+  },
+  "location_status": {
+    "terms": [
+      "location status",
+      "storage status",
+      "is location empty",
+      "full location",
+      "partial storage",
+      "location availability"
+    ],
+    "description": "Business terms related to ['Provides the current status of a location (e.g., empty, full, or partially occupied) for inventory control and storage planning.']"
+  },
+  "location_management": {
+    "terms": [
+      "location_management",
+      "location tracking",
+      "returned order location",
+      "empty locations",
+      "lp controlled locations",
+      "license plate locations",
+      "full locations",
+      "warehouse locations",
+      "zone locations",
+      "location status",
+      "storage locations",
+      "active storage",
+      "picking locations",
+      "location classification"
+    ],
+    "description": "Business terms related to ['Manages physical storage and operational locations within the warehouse. Includes location status (e.g., empty, full, returned), zone mappings, and equipment or classification metadata used in putaway, picking, and replenishment processes.']"
+  },
+  "order_identity_and_status": {
+    "terms": [
+      "order ID",
+      "order number",
+      "order status",
+      "order urgency",
+      "rush order",
+      "priority order",
+      "partial order flag",
+      "shipping status",
+      "order processing status",
+      "order tracking",
+      "order fulfillment status",
+      "MTD",
+      "YTD",
+      "QTD",
+      "WTD"
+    ],
+    "description": "Business terms related to ['Core order identifiers and status flags, capturing order number, current status, urgency levels such as rush or priority, and indicators for partial shipments. Useful for tracking and managing order fulfillment progress. MTD (Month to Date) and YTD (Year to Date) metrics provide performance insights.', 'QTD refers to Quarter to Day ', 'WTD refers to Week to Date']"
+  },
+  "shipments_by_city": {
+    "terms": [
+      "shipments by city",
+      "shipping destinations",
+      "orders by city",
+      "shipment volume by city",
+      "cities with most shipments",
+      "city-wise shipments",
+      "shipment distribution",
+      "MTD",
+      "YTD",
+      "QTD",
+      "WTD"
+    ],
+    "description": "Business terms related to ['Tracks shipment volumes grouped by destination city, highlighting cities receiving the most shipments. Supports analysis of shipping patterns with Month to Date (MTD) and Year to Date (YTD) metrics.', 'QTD refers to Quarter to Day ', 'WTD refers to Week to Date']"
+  },
+  "order_dates_and_timing": {
+    "terms": [
+      "order date",
+      "order creation date",
+      "expected date",
+      "promised date",
+      "picked date",
+      "pick date",
+      "arrival date",
+      "actual arrival",
+      "actual ship date",
+      "ship date",
+      "earliest ship",
+      "latest ship",
+      "earliest delivery",
+      "latest delivery",
+      "cancel date",
+      "cancellation date",
+      "shipment timeline",
+      "order timeline",
+      "delivery schedule",
+      "MTD",
+      "YTD",
+      "QTD",
+      "WTD"
+    ],
+    "description": "Business terms related to ['Covers key dates related to order processing and shipment timeline, including order creation, promised and expected dates, pick, ship, delivery windows, and cancellation dates. Useful for tracking and managing the entire order lifecycle. Supports Month to Date (MTD) and Year to Date (YTD) performance analysis.', 'QTD refers to Quarter to Day ', 'MTD refers to Month to Date']"
+  },
+  "order_fulfillment_details": {
+    "terms": [
+      "load ID",
+      "BOL number",
+      "PRO number",
+      "master BOL",
+      "carrier",
+      "carrier SCAC",
+      "freight terms",
+      "containers",
+      "weight",
+      "cubic volume",
+      "MTD",
+      "YTD",
+      "QTD",
+      "WTD"
+    ],
+    "description": "Business terms related to ['Fulfillment-specific attributes used for shipping logistics: load IDs, bill of lading, carrier, packaging dimensions.', 'MTD refers to Month to Date', 'YTD refers to Year to Date ', 'WTD refers to Week to Date', 'QTD refers to Quarter to Day ']"
+  },
+  "orders_by_carrier": {
+    "terms": [
+      "orders by carrier",
+      "carrier shipments",
+      "shipments by carrier",
+      "orders shipped via carrier",
+      "shipping carrier",
+      "freight carrier",
+      "logistics provider",
+      "shipping partner",
+      "MTD",
+      "YTD",
+      "QTD",
+      "WTD"
+    ],
+    "description": "Business terms related to ['Tracks orders shipped by specific carriers, enabling analysis of carrier performance and shipping volume. Supports Month to Date (MTD) and Year to Date (YTD) reporting for trend insights.', 'WTD refers to Week to Date', 'QTD refers to Quarter to Day ']"
+  },
+  "pending_dispatch_orders": {
+    "terms": [
+      "pending dispatch orders",
+      "orders awaiting dispatch",
+      "orders not yet shipped",
+      "orders pending shipment",
+      "open orders",
+      "undispatched orders"
+    ],
+    "description": "Business terms related to Orders that are pending dispatch, meaning their status is not 'S' (shipped). Useful for tracking open or unshipped orders."
+  },
+  "order_party_information": {
+    "terms": [
+      "customer",
+      "customer details",
+      "bill to",
+      "billing address",
+      "ship to",
+      "shipping address",
+      "delivery address",
+      "returns address",
+      "return to",
+      "region",
+      "contact information",
+      "invoice party",
+      "shipping party",
+      "return recipient",
+      "MTD",
+      "YTD",
+      "QTD",
+      "WTD"
+    ],
+    "description": "Business terms related to ['Includes all parties and addresses associated with an order: customer details, billing, shipping, delivery, and return addresses, along with regional information. Supports item-level context through order details join. MTD and YTD metrics help analyze order trends.', 'WTD refers to Week to Date', 'QTD refers to Quarter to Day ']"
+  },
+  "orders_to_deliver": {
+    "terms": [
+      "orders to deliver",
+      "pending delivery orders",
+      "orders ready for delivery",
+      "deliverable orders",
+      "orders shipped",
+      "orders awaiting delivery",
+      "MTD",
+      "YTD",
+      "WTD",
+      "QTD"
+    ],
+    "description": "Business terms related to ['Orders that have been shipped on or before today and are pending delivery to the customer. Useful for tracking and managing deliveries.', 'YTD refers to Year to Date ', 'QTD refers to Quarter to Day ', 'MTD refers to Month to Date', 'WTD refers to Week to Date']"
+  },
+  "most_ordering_client": {
+    "terms": [
+      "top ordering client",
+      "client with most orders",
+      "highest ordering customer",
+      "most frequent buyer",
+      "biggest customer by orders",
+      "customer order volume",
+      "YTD",
+      "QTD",
+      "MTD",
+      "WTD"
+    ],
+    "description": "Business terms related to ['Identifies the client who has placed the highest number of orders. Useful for analyzing customer order volume and prioritizing top customers.', 'YTD refers to Year to Date ', 'QTD refers to Quarter to Day ', 'MTD refers to Month to Date', 'WTD refers to Week to Date']"
+  },
+  "order_control_and_instructions": {
+    "terms": [
+      "appointment",
+      "rma number",
+      "label",
+      "haz flag",
+      "zone",
+      "lock flag",
+      "hold status",
+      "routing instructions",
+      "special instructions"
+    ],
+    "description": "Business terms related to Operational control parameters including hazardous flags, held/locked status, and special handling instructions."
+  },
+  "order_financial_summary": {
+    "terms": [
+      "cash on delivery amount",
+      "COD amount",
+      "insurance cost",
+      "freight cost",
+      "shipping charges",
+      "total order value",
+      "order cost summary",
+      "financial summary",
+      "order charges"
+    ],
+    "description": "Business terms related to Financial summary of orders, covering cash on delivery (COD) amounts, insurance costs, freight/shipping charges, and the total monetary value of the order."
+  },
+  "order_management": {
+    "terms": [
+      "order status",
+      "order shipment",
+      "order priority",
+      "high priority orders",
+      "pending dispatch",
+      "open orders",
+      "orders created today",
+      "client orders",
+      "warehouse orders",
+      "order date",
+      "actual ship date",
+      "expected delivery date",
+      "actual arrival date",
+      "customer orders",
+      "shipping city",
+      "ship to city",
+      "rush orders",
+      "order weight",
+      "freight volume",
+      "freight terms",
+      "carrier information",
+      "carrier SCAC"
+    ],
+    "description": "Business terms related to Comprehensive management of customer orders including order statuses, shipping details, priority levels, and filters by warehouse or client. Tracks orders created or shipped today, and highlights high priority or rush orders."
+  },
+  "most_ordered_items": {
+    "terms": [
+      "most ordered items",
+      "top selling items",
+      "highest demand products",
+      "frequently ordered items",
+      "best sellers",
+      "popular SKUs",
+      "MTD",
+      "YTD"
+    ],
+    "description": "Business terms related to ['Items with the highest order quantities in a warehouse over a specified period.', 'MTD refers to Month to Date', 'YTD refers to Year to Date', 'QTD refers to Quarter to Day ', 'WTD refers to Week to Date']"
+  },
+  "orders_not_waved": {
+    "terms": [
+      "orders not waved",
+      "unwaved orders",
+      "pending wave orders",
+      "orders awaiting wave processing",
+      "MTD",
+      "YTD",
+      "QTD",
+      "WTD"
+    ],
+    "description": "Business terms related to ['Orders that have not yet been assigned to a wave for picking or processing, indicating they are pending wave assignment.', 'MTD refers to Month to Date', 'YTD refers to Year to Date', 'QTD refers to Quarter to Day ', 'WTD refers to Week to Date']"
+  },
+  "orders_to_ship_tomorrow": {
+    "terms": [
+      "orders to ship tomorrow",
+      "tomorrow's shipments",
+      "orders scheduled for next day shipping",
+      "pending shipments for tomorrow",
+      "MTD",
+      "YTD",
+      "QTD",
+      "WTD"
+    ],
+    "description": "Business terms related to ['Orders that are scheduled to be shipped the following day, based on the expected shipping date.', 'MTD refers to Month to Date', 'YTD refers to Year to Date', 'WTD refers to Week to Date', 'QTD refers to Quarter to Day ']"
+  },
+  "orders_warehouse": {
+    "terms": [
+      "orders in warehouse",
+      "warehouse orders",
+      "orders by warehouse",
+      "orders per warehouse",
+      "warehouse-specific orders",
+      "YTD",
+      "QTD",
+      "MTD",
+      "WTD"
+    ],
+    "description": "Business terms related to ['Orders that are assigned to or processed in a specific warehouse, filtered by warehouse ID.', 'YTD refers to Year to Date ', 'QTD refers to Quarter to Day ', 'MTD refers to Month to Date', 'WTD refers to Week to Date']"
+  },
+  "backorders": {
+    "terms": [
+      "backorders",
+      "backordered items",
+      "orders on backorder",
+      "items awaiting restock",
+      "BO quantity",
+      "pending stock fulfillment",
+      "delayed order items",
+      "YTD",
+      "MTD",
+      "QTD",
+      "WTD"
+    ],
+    "description": "Business terms related to ['Orders containing items that are on backorder, indicated by a backordered quantity greater than zero. Useful for tracking fulfillment delays and stock shortages.', 'YTD refers to Year to Date ', 'QTD refers to Quarter to Day ', 'MTD refers to Month to Date', 'WTD refers to Week to Date']"
+  },
+  "waved_orders": {
+    "terms": [
+      "waved orders",
+      "orders in wave",
+      "orders assigned to wave",
+      "batched orders",
+      "host wave ID",
+      "wave-processed orders"
+    ],
+    "description": "Business terms related to ['Orders that have been assigned to a wave for processing, grouping them for batch picking or fulfillment. This indicates they are queued for warehouse execution steps.']"
+  },
+  "multiple_item_orders": {
+    "terms": [
+      "multiple item orders",
+      "multi-line orders",
+      "orders with more than one item",
+      "bulk item orders",
+      "orders containing multiple SKUs"
+    ],
+    "description": "Business terms related to ['Orders that contain more than one unique item. Useful for identifying multi-line or bulk purchase orders.']"
+  },
+  "single_item_orders": {
+    "terms": [
+      "single item orders",
+      "one item orders",
+      "single-line orders",
+      "orders with one SKU",
+      "simple orders"
+    ],
+    "description": "Business terms related to ['Orders that contain exactly one item. Useful for identifying simple or quick-ship orders.']"
+  },
+  "items_not_in_stock": {
+    "terms": [
+      "items not in stock",
+      "out of stock items",
+      "stock unavailable",
+      "zero inventory items",
+      "backordered due to no stock",
+      "unavailable order items"
+    ],
+    "description": "Business terms related to ['Identifies order items that are currently not in stock in the corresponding warehouse. Useful for analyzing order fulfillment risks or backorder conditions.']"
+  },
+  "unfulfilled_orders": {
+    "terms": [
+      "unfulfilled orders",
+      "orders with held items",
+      "orders pending fulfillment",
+      "orders not shipped",
+      "incomplete orders",
+      "orders blocked due to hold"
+    ],
+    "description": "Business terms related to ['Orders that cannot be fulfilled because one or more items are currently on hold. This helps identify fulfillment blocks caused by quality, compliance, or other restrictions.']"
+  },
+  "alternate_carrier_options": {
+    "terms": [
+      "alternate carrier",
+      "carrier integration"
+    ],
+    "description": "Business terms related to Lists fallback carrier options and associated freight costs, used during rate shopping, dynamic routing, or carrier optimization scenarios."
+  },
+  "shipment_delivery_details": {
+    "terms": [
+      "delivery status",
+      "delivery date",
+      "delivery time",
+      "delivery signedby",
+      "delivery location",
+      "delivery description",
+      "logistics tracking"
+    ],
+    "description": "Business terms related to Captures final mile delivery details including status, timestamp, and recipient confirmation. Enables proof of delivery and exception handling in logistics workflows."
+  },
+  "returned_order": {
+    "terms": [
+      "returned_order",
+      "MTD",
+      "YTD",
+      "QTD",
+      "WTD"
+    ],
+    "description": "Business terms related to ['Locations storing items from returned orders', 'MTD refers to Month to Date', 'YTD refers to Year to Date ', 'QTD refers to Quarter to Day ', 'WTD refers to Week to Date']"
+  },
+  "item_quantity_location": {
+    "terms": [
+      "item quantity location",
+      "inventory by location",
+      "stock quantity",
+      "item stock",
+      "available quantity",
+      "item quantity",
+      "location stock",
+      "warehouse quantity",
+      "MTD",
+      "YTD",
+      "QTD",
+      "WTD"
+    ],
+    "description": "Business terms related to ['Shows the quantity of an item available at specific warehouse locations.', 'MTD refers to Month to Date.', 'YTD refers to Year to Date.', 'QTD refers to Quarter to Date.', 'WTD refers to Week to Date.']"
+  },
+  "pending_putaway": {
+    "terms": [
+      "pending putaway",
+      "items to put away",
+      "putaway pending",
+      "items waiting for putaway",
+      "putaway queue",
+      "stock to be stored",
+      "putaway status",
+      "MTD",
+      "YTD",
+      "QTD",
+      "WTD"
+    ],
+    "description": "Business terms related to ['Lists items that are received but not yet put away in storage locations.', \"These items have a positive quantity and are not in statuses 'A' or 'H'.\", 'MTD refers to Month to Date.', 'YTD refers to Year to Date.', 'QTD refers to Quarter to Date.', 'WTD refers to Week to Date.']"
+  },
+  "old_items": {
+    "terms": [
+      "old_items",
+      "MTD",
+      "QTD",
+      "YTD",
+      "WTD"
+    ],
+    "description": "Business terms related to ['Items stored for over a year', 'MTD refers to Month to Date', 'YTD refers to Year to Date', 'QTD refers to Quarter to Day ', 'WTD refers to Week to Date']"
+  },
+  "random_item": {
+    "terms": "random_item",
+    "description": "Business terms related to ['Randomly selected item in the warehouse', 'MTD refers to Month to Date', 'YTD refers to Year to Date ']"
+  },
+  "highest_quantity_item": {
+    "terms": "highest_quantity_item",
+    "description": "Business terms related to "
+  },
+  "item_location": {
+    "terms": [
+      "item location",
+      "where is item stored",
+      "item storage location",
+      "warehouse location",
+      "stock location",
+      "inventory location",
+      "location of item",
+      "item warehouse location",
+      "MTD",
+      "YTD"
+    ],
+    "description": "Business terms related to ['Shows the warehouse and specific locations where an item is stored along with the quantity available.', 'Useful for finding the exact place of stock within the warehouse.', 'YTD refers to Year to Date.']"
+  },
+  "slow_moving_items": {
+    "terms": [
+      "slow moving items",
+      "low turnover items",
+      "slow sales items",
+      "low shipment activity",
+      "inactive inventory",
+      "slow moving stock",
+      "slow moving SKU",
+      "MTD",
+      "YTD"
+    ],
+    "description": "Business terms related to Items with low shipment activity over the past three months, indicating slow turnover or reduced demand. Useful for inventory management and stock optimization. MTD (Month to Date) and YTD (Year to Date) metrics support trend analysis over different periods."
+  },
+  "active_skus": {
+    "terms": [
+      "active skus",
+      "available inventory",
+      "stock on hand",
+      "positive stock",
+      "MTD",
+      "YTD",
+      "month to date active SKUs",
+      "year to date active SKUs",
+      "in-stock items",
+      "non-zero inventory",
+      "stored item",
+      "inventory by SKU",
+      "current inventory level"
+    ],
+    "description": "Business terms related to This domain represents all SKUs (stock keeping units) currently considered 'active' in the warehouse or inventory system. A SKU is marked active if it has a positive stock quantity (`actual_qty > 0`) and is classified under a valid storage type. Additional filters such as 'status = ACTIVE' can help isolate SKUs that are available for order fulfillment or operations. The terms MTD (Month to Date) and YTD (Year to Date) refer to inventory activity or SKU counts within the current month or year, commonly used for performance tracking, supply planning, and operational reporting."
+  },
+  "perishable_items": {
+    "terms": [
+      "perishable items",
+      "items with expiration date",
+      "fifo tracking",
+      "expiration date",
+      "shelf life",
+      "use by date",
+      "best before",
+      "expiry tracking",
+      "short shelf life products",
+      "FEFO handling",
+      "FIFO compliance",
+      "batch expiration",
+      "date-sensitive inventory",
+      "temperature-controlled products",
+      "cold chain inventory",
+      "MTD",
+      "YTD"
+    ],
+    "description": "Business terms related to Represents all perishable inventory items that include an expiration date, typically used for shelf-life-sensitive goods such as food, pharmaceuticals, or temperature-controlled products. This domain helps track expiration timelines, enforce FIFO/FEFO policies, and minimize waste through timely actions. MTD (Month to Date) and YTD (Year to Date) metrics support trend analysis and compliance monitoring over defined periods."
+  },
+  "items_on_hold": {
+    "terms": [
+      "items on hold",
+      "inventory hold",
+      "held stock",
+      "stock blocked",
+      "status H",
+      "restricted items",
+      "items under review",
+      "quarantined items",
+      "non-releasable stock",
+      "pending QA release",
+      "blocked for shipment",
+      "awaiting approval",
+      "system hold",
+      "manual hold",
+      "MTD",
+      "YTD"
+    ],
+    "description": "Business terms related to Represents all inventory items currently in a hold status (denoted by status code 'H'), meaning they are temporarily restricted from movement, allocation, or shipping. These holds may be due to quality checks, regulatory issues, manual flags, or system validations. This domain is useful for monitoring blocked inventory, root cause analysis, and release readiness. MTD (Month to Date) and YTD (Year to Date) help track hold trends over time for operational and compliance reporting."
+  },
+  "out_of_stock_items": {
+    "terms": [
+      "out of stock items",
+      "zero inventory",
+      "no available stock",
+      "stockout",
+      "unavailable items",
+      "backordered items",
+      "depleted stock",
+      "inventory shortage",
+      "items with no quantity",
+      "blocked or consumed inventory",
+      "actual minus unavailable less than or equal to zero",
+      "inventory gap",
+      "out of stock report",
+      "stock replenishment trigger",
+      "MTD",
+      "YTD",
+      "QTD",
+      "WTD"
+    ],
+    "description": "Business terms related to ['This domain identifies all inventory items that are currently out of stock or unavailable for allocation, based on the condition that the available quantity (actual quantity minus unavailable quantity) is less than or equal to zero. This includes items with depleted stock, items reserved or blocked, and those pending replenishment. It supports inventory monitoring, replenishment planning, and service level analysis. MTD (Month to Date) and YTD (Year to Date) can help track stockout trends over time.', 'QTD refers to Quarter to Day ', 'WTD refers to Week to Date']"
+  },
+  "unavailable_lp": {
+    "terms": "unavailable_lp",
+    "description": "Business terms related to Unavailable license plates in warehouses"
+  },
+  "all_items_warehouse": {
+    "terms": "all_items_warehouse",
+    "description": "Business terms related to All items stored in a specific warehouse"
+  },
+  "item_controlled": {
+    "terms": [
+      "item controlled",
+      "controlled items",
+      "items in controlled locations",
+      "restricted locations items",
+      "item control",
+      "controlled inventory"
+    ],
+    "description": "Business terms related to Lists items stored in item-controlled or restricted warehouse locations, ensuring proper inventory handling and security."
+  },
+  "new_items": {
+    "terms": [
+      "new items",
+      "recently added items",
+      "items received today",
+      "today's inbound items"
+    ],
+    "description": "Business terms related to Items newly added to the warehouse based on today's FIFO date."
+  },
+  "reserved_items": {
+    "terms": [
+      "reserved items",
+      "items on hold for order",
+      "allocated inventory",
+      "stock reserved for customers"
+    ],
+    "description": "Business terms related to Items currently reserved for specific customers or orders."
+  },
+  "good_quantity_items": {
+    "terms": "good_quantity_items",
+    "description": "Business terms related to Items with good quantities in stock"
+  },
+  "stored_item_management": {
+    "terms": [
+      "stored_item_management",
+      "item_quantity",
+      "item_location",
+      "putaway_pending",
+      "oldest_item",
+      "long_stored_item",
+      "stock_quantity",
+      "find_item",
+      "items_left",
+      "warehouse_items",
+      "out_of_stock",
+      "on_hold_items",
+      "new_item",
+      "inventory_stock",
+      "item_status",
+      "fifo_date",
+      "stored_items",
+      "MTD",
+      "YTD",
+      "QTD",
+      "MTD"
+    ],
+    "description": "Business terms related to ['Manages current inventory of items stored in warehouse locations, including quantities, locations, statuses, and receipt timing', 'MTD refers to Month to Date', 'YTD refers to Year to Date ', 'QTD refers to Quarter to Day ', 'WTD refers to Week to Date']"
+  },
+  "transaction_identity_and_timing": {
+    "terms": [
+      "transaction id",
+      "transaction type",
+      "start date",
+      "end date",
+      "start time",
+      "end time",
+      "elapsed time",
+      "who performed",
+      "completed transaction",
+      "MTD",
+      "YTD",
+      "QTD",
+      "WTD"
+    ],
+    "description": "Business terms related to ['Tracks core transaction identity, timing, and responsible employees. Used to determine transaction state (in progress or completed) and elapsed time for performance tracking.', 'MTD refers to Month to Date', 'YTD refers to Year to Date ', 'QTD refers to Quarter to Day ', 'WTD refers to Week to Date']"
+  },
+  "transaction_inventory_movement": {
+    "terms": [
+      "item",
+      "lot number",
+      "uom",
+      "transaction quantity",
+      "source location",
+      "destination location",
+      "source HU",
+      "destination HU",
+      "inventory movement",
+      "handling unit",
+      "warehouse move",
+      "parent handling unit"
+    ],
+    "description": "Business terms related to Captures inventory-related changes in each transaction \u00e2\u20ac\u201d items, quantities, lots, and source/destination movement across locations and handling units."
+  },
+  "transaction_type_core": {
+    "terms": [
+      "transaction type",
+      "transaction code",
+      "inventory action",
+      "warehouse transaction"
+    ],
+    "description": "Business terms related to Defines standard transaction types for warehouse operations. Each type maps to an action like receiving, shipping, adjustment, or movement, supporting consistent classification across the inventory lifecycle."
+  },
+  "transaction_type_system_integration": {
+    "terms": [
+      "system id",
+      "advantage link",
+      "send to adv link",
+      "system integration",
+      "operation configuration"
+    ],
+    "description": "Business terms related to Enables system-level identification and integration, including whether the transaction is routed to external systems like Advantage Link. Supports seamless data exchange and external process coordination."
+  },
+  "active_warehouse": {
+    "terms": "active_warehouse",
+    "description": "Business terms related to Warehouses currently operational"
+  },
+  "warehouses_canada": {
+    "terms": "warehouses_canada",
+    "description": "Business terms related to Warehouses located in Canada"
+  },
+  "warehouse_address": {
+    "terms": "warehouse_address",
+    "description": "Business terms related to Address details for a specific warehouse"
+  },
+  "fully_assigned_warehouse": {
+    "terms": "fully_assigned_warehouse",
+    "description": "Business terms related to Warehouses with all tasks assigned"
+  },
+  "warehouse_master_data": {
+    "terms": [
+      "warehouses",
+      "warehouse information",
+      "list warehouses",
+      "warehouse details",
+      "distribution centers",
+      "warehouse list"
+    ],
+    "description": "Business terms related to Stores master data for each warehouse including identification, address, and regional attributes. Serves as a central reference for linking all warehouse-related activities."
+  },
+  "active_warehouses": {
+    "terms": [
+      "active warehouses",
+      "how many warehouses are active",
+      "current warehouses",
+      "operational warehouses"
+    ],
+    "description": "Business terms related to Filters and counts all currently active or operational warehouses."
+  },
+  "warehouses_by_country": {
+    "terms": [
+      "warehouses in Canada",
+      "warehouse country",
+      "country specific warehouses"
+    ],
+    "description": "Business terms related to Lists all warehouses located in a specific country like Canada based on country_name."
+  },
+  "warehouse_address_lookup": {
+    "terms": [
+      "warehouse address",
+      "WHERE is warehouse",
+      "location of warehouse",
+      "address of warehouse",
+      "Orbitor warehouse"
+    ],
+    "description": "Business terms related to Retrieves full address and location details for a specific warehouse by name (e.g., Orbitor)."
+  },
+  "warehouse_count": {
+    "terms": [
+      "how many warehouses",
+      "warehouse count",
+      "total number of warehouses"
+    ],
+    "description": "Business terms related to Counts the total number of distinct warehouses defined in the system."
+  },
+  "top_order_fulfillment_warehouse": {
+    "terms": [
+      "warehouse fulfills the most orders",
+      "most active warehouse",
+      "warehouse with highest order volume"
+    ],
+    "description": "Business terms related to Identifies the warehouse responsible for fulfilling the highest number of orders, based on order data."
+  },
+  "pending_work": {
+    "terms": "pending_work",
+    "description": "Business terms related to Work tasks that are pending or unassigned"
+  },
+  "cycle_count_tasks": {
+    "terms": "cycle_count_tasks",
+    "description": "Business terms related to Open cycle count tasks"
+  },
+  "unassigned_tasks": {
+    "terms": "unassigned_tasks",
+    "description": "Business terms related to Tasks that are unassigned"
+  },
+  "cycle_count_today": {
+    "terms": "cycle_count_today",
+    "description": "Business terms related to Cycle count tasks performed today"
+  },
+  "batch_pick": {
+    "terms": "batch_pick",
+    "description": "Business terms related to Work type for batch pick tasks"
+  },
+  "employees_assigned": {
+    "terms": "employees_assigned",
+    "description": "Business terms related to Employees assigned to tasks today"
+  },
+  "work_queue_management": {
+    "terms": [
+      "work_queue_management",
+      "pending_works",
+      "pick_tasks",
+      "active_tasks",
+      "cycle_count_tasks",
+      "open_tasks",
+      "unassigned_tasks",
+      "warehouse_tasks",
+      "task_status",
+      "task_type"
+    ],
+    "description": "Business terms related to Manages real-time task queue for warehouse operations, including picking, putaway, replenishment, and cycle counting"
+  },
+  "work_queue_core_assignment": {
+    "terms": [
+      "work queue assignment",
+      "work queue id",
+      "user assigned",
+      "assignment status"
+    ],
+    "description": "Business terms related to Tracks individual task assignments in the warehouse by linking work queue IDs to users and their current statuses. Helps ensure operational visibility and task accountability."
+  },
+  "work_queue_labor_tracking": {
+    "terms": [
+      "labor management",
+      "task assignment",
+      "warehouse operations",
+      "worker tracking"
+    ],
+    "description": "Business terms related to Supports real-time labor tracking and workforce management by monitoring who is assigned to what task. Enables workload balancing, exception handling, and productivity analysis across the warehouse floor."
+  },
+  "warehouse_zones": {
+    "terms": [
+      "zones",
+      "zone count",
+      "warehouse zones",
+      "different zones",
+      "zones in warehouse",
+      "warehouse area types"
+    ],
+    "description": "Business terms related to Defines logical and operational zones within each warehouse for purposes like picking, replenishment, and putaway. Supports zone-based task routing, worker guidance, and inventory flow optimization."
+  },
+  "zone_count_by_warehouse": {
+    "terms": [
+      "how many zones",
+      "count zones in warehouse",
+      "zones present in warehouse",
+      "zone total by warehouse",
+      "warehouse 1 zone count"
+    ],
+    "description": "Business terms related to Returns the number of distinct zones defined in a specific warehouse (e.g., warehouse 1), based on the zone names."
+  },
+  "empty_locations": {
+    "terms": "empty_locations",
+    "description": "Business terms related to Locations that are empty"
+  },
+  "empty_zone_locations": {
+    "terms": [
+      "empty locations",
+      "vacant locations",
+      "locations without inventory",
+      "available bins",
+      "free warehouse space",
+      "unoccupied locations"
+    ],
+    "description": "Business terms related to Identifies all warehouse locations mapped to zones that are currently empty or unoccupied. Used for optimizing space allocation and task planning. Typically determined via joins with t_location or inventory tables."
+  },
+  "zone_location_mapping": {
+    "terms": [
+      "zone mapping",
+      "location to zone",
+      "zone location assignment",
+      "warehouse zoning",
+      "pick sequence",
+      "warehouse pick path"
+    ],
+    "description": "Business terms related to Maps each physical warehouse location to a functional zone and assigns a picking sequence to optimize zone-based picking, travel paths, and workload distribution."
+  },
+  "freequently_picked_items": {
+    "terms": [
+      "top items",
+      "top products",
+      "top SKUs",
+      "top stock items",
+      "top movers",
+      "top picks",
+      "pick list leaders",
+      "pick champions",
+      "warehouse top picks",
+      "rank 1 items",
+      "most picked",
+      "frequently picked",
+      "pick frequency ranking",
+      "highest pick count",
+      "most selected items",
+      "most retrieved items",
+      "highest pick rate",
+      "often picked items",
+      "regularly picked items",
+      "repeated picks",
+      "best selling",
+      "hot selling items",
+      "fast movers",
+      "fast moving stock",
+      "high demand items",
+      "high turnover items",
+      "most requested",
+      "most ordered",
+      "most dispatched",
+      "most shipped",
+      "stock leaders",
+      "inventory bestsellers",
+      "high movement stock",
+      "fastest stock rotation",
+      "most circulated stock",
+      "frequent stock movement",
+      "popular stock items",
+      "most handled items",
+      "fast stock movers",
+      "most issued items",
+      "most fulfilled items",
+      "most picked for orders",
+      "most processed items",
+      "highest ordered quantity",
+      "most packed items",
+      "high frequency orders",
+      "frequent order items",
+      "high dispatch volume",
+      "popular order picks",
+      "high turnover products"
+    ],
+    "description": "Business terms related to for the frequently picked items from pick detail"
+  },
+  "vendor_master_data": {
+    "terms": [
+      "vendor",
+      "vendor id",
+      "vendor code",
+      "vendor name",
+      "supplier",
+      "supplier master",
+      "vendor master",
+      "vendor record",
+      "vendor profile"
+    ],
+    "description": "Terms related to the unique identification and definition of vendors or suppliers in the warehouse system, as stored in the t_vendor table. This includes system-level and business-level identifiers used across procurement, inventory, and financial integrations."
+  },
+  "inspection_and_quality_control": {
+    "terms": [
+      "inspection flag",
+      "inspection required",
+      "quality inspection",
+      "vendor inspection rules",
+      "vqm profile",
+      "quality management",
+      "vendor quality profile",
+      "inspection control",
+      "vendor quality compliance",
+      "inspection bypass"
+    ],
+    "description": "Terms describing how and when incoming shipments from a vendor should be inspected based on flags or profiles, and how vendor-specific quality rules are applied during receiving and inbound processes."
+  },
+  "ownership_and_stock_control": {
+    "terms": [
+      "ownership control",
+      "vendor-owned stock",
+      "warehouse-owned stock",
+      "ownership flag",
+      "ownership rules",
+      "consignment stock",
+      "vendor inventory control",
+      "stock ownership model"
+    ],
+    "description": "Terms defining whether ownership of received inventory resides with the vendor or the warehouse. This impacts inventory valuation, liability, and consumption tracking."
+  },
+  "audit_and_compliance": {
+    "terms": [
+      "audit percent",
+      "audit rules",
+      "vendor audit policy",
+      "random audit sampling",
+      "receipt audit",
+      "audit control",
+      "vendor audit settings",
+      "audit compliance"
+    ],
+    "description": "Terms related to the percentage of incoming shipments that are subject to audit checks for quality or process compliance. These settings help ensure regulatory adherence and performance monitoring."
+  },
+  "integration_and_mapping": {
+    "terms": [
+      "ERP vendor code",
+      "vendor integration",
+      "vendor code mapping",
+      "external vendor ID",
+      "vendor master sync",
+      "procurement integration",
+      "vendor mapping",
+      "system integration"
+    ],
+    "description": "Terms focusing on how vendor records in the warehouse system relate to external systems such as ERP, procurement platforms, and financial systems through identifiers like vendor_code."
+  },
+  "item_comment_log": {
+    "terms": [
+      "item comment",
+      "item-level note",
+      "item remark",
+      "item comment history",
+      "activity comment",
+      "warehouse item comment",
+      "free-form comment",
+      "transactional note",
+      "receiving note",
+      "inventory observation",
+      "inspection comment",
+      "exception comment",
+      "operational comment",
+      "item traceability",
+      "comment sequence",
+      "handling instruction",
+      "cycle count note",
+      "replenishment comment",
+      "audit remark"
+    ],
+    "description": "Business terms related to capturing and managing item-specific comments across different warehouse activities such as receiving, inspection, replenishment, or cycle counting. The t_item_comment table stores free-form remarks linked to items and operational processes, enhancing traceability, communication, and audit compliance across warehouse functions."
+  },
+  "comment_identity": {
+    "terms": [
+      "item comment",
+      "comment sequence",
+      "comment id",
+      "transactional comment",
+      "activity comment"
+    ],
+    "description": "Terms related to how comments are uniquely identified and stored for specific items and activities within a warehouse."
+  },
+  "operational_context": {
+    "terms": [
+      "activity type",
+      "receiving comment",
+      "picking comment",
+      "cycle count note",
+      "replenishment comment",
+      "inventory comment"
+    ],
+    "description": "Terms defining the context or activity under which a comment is recorded, supporting operational relevance."
+  },
+  "comment_purpose_and_use": {
+    "terms": [
+      "free-form comment",
+      "handling instruction",
+      "exception note",
+      "inspection remark",
+      "damage report",
+      "operational note",
+      "audit trail comment"
+    ],
+    "description": "Terms describing the purpose and usage of item comments for communication, traceability, and compliance."
+  },
+  "handling_unit_detail": {
+    "terms": [
+      "handling unit detail",
+      "HU detail",
+      "HU item detail",
+      "handling unit content",
+      "item-level HU tracking",
+      "HU item association",
+      "HU quantity",
+      "actual quantity",
+      "planned quantity",
+      "loaded quantity",
+      "received quantity",
+      "HU status",
+      "HU location",
+      "FIFO date",
+      "expiration date",
+      "lot number",
+      "serial number",
+      "inspection code",
+      "order line reference",
+      "HU traceability",
+      "picking flow",
+      "HU ownership",
+      "storage type",
+      "freight class",
+      "commodity type",
+      "HU audit tracking",
+      "HU operator"
+    ],
+    "description": "Business terms related to the detailed contents of handling units (HUs) in warehouse operations, as captured in the t_hu_detail table. This includes item-level associations, operational quantities, inventory status, traceability fields (e.g., lot, serial, FIFO), and links to quality, ownership, and classification attributes. The table supports receiving, putaway, picking, shipping, and quality processes by ensuring that each HU and its contents are accurately tracked and compliant with operational rules."
+  },
+  "quantity_tracking": {
+    "terms": [
+      "actual quantity",
+      "planned quantity",
+      "loaded quantity",
+      "received quantity",
+      "quantity variance",
+      "HU quantity tracking"
+    ],
+    "description": "Terms that define the various operational quantities recorded against items in a handling unit. They help monitor execution versus planning during warehouse activities like receiving, loading, and picking."
+  },
+  "traceability_and_compliance": {
+    "terms": [
+      "lot number",
+      "serial number",
+      "expiration date",
+      "FIFO date",
+      "inspection code",
+      "HU compliance",
+      "lot traceability",
+      "serial traceability"
+    ],
+    "description": "Terms related to traceability and regulatory compliance, including expiry management, lot control, and quality inspection indicators."
+  },
+  "handling_and_storage": {
+    "terms": [
+      "storage type",
+      "HU storage type",
+      "pallet",
+      "carton",
+      "bin",
+      "HU location",
+      "HU tracking"
+    ],
+    "description": "Terms describing the physical storage characteristics of the handling unit, such as the type of container or its current location."
+  },
+  "ownership_and_classification": {
+    "terms": [
+      "owner id",
+      "commodity type",
+      "freight class",
+      "stock ownership",
+      "commodity classification"
+    ],
+    "description": "Terms used for tracking who owns the stock and how it's classified for logistics, financial, or customs processing."
+  },
+  "operational_attributes": {
+    "terms": [
+      "HU status",
+      "picking flow",
+      "employee ID",
+      "order line reference",
+      "HU operator",
+      "HU workflow"
+    ],
+    "description": "Terms that support workflow execution, personnel assignment, and operational filtering for tasks like picking and receiving."
+  },
+  "pick_task_uom_detail": {
+    "terms": [
+      "pick task UOM",
+      "pick task detail",
+      "UOM picking instruction",
+      "unit-level picking",
+      "planned vs actual pick",
+      "cartonization batch",
+      "pick quantity",
+      "picking UOM",
+      "pick instruction",
+      "pick pattern",
+      "lot-controlled pick",
+      "line number",
+      "pick task breakdown",
+      "execution pick data",
+      "pick quantity by UOM",
+      "pick reconciliation",
+      "warehouse picking instruction",
+      "UOM-level tracking",
+      "picking exception handling"
+    ],
+    "description": "Business terms related to managing picking tasks at the unit-of-measure (UOM) level. The t_pick_task_uom table stores detailed pick instructions including the pick quantity, UOM (e.g., EA, CS), and whether the data represents a planned or actual pick. It also supports cartonization grouping via batch IDs, enabling precise tracking of how items are picked and packed for outbound fulfillment. This granularity ensures operational accuracy, auditability, and alignment between planning and execution in warehouse operations."
+  },
+  "picking_instruction": {
+    "terms": [
+      "pick task",
+      "pick task UOM",
+      "pick quantity",
+      "picking unit",
+      "UOM picking",
+      "line number",
+      "pick detail"
+    ],
+    "description": "Terms related to the specific instructions for picking items in particular units of measure (UOMs), including sequence, quantity, and pick execution status."
+  },
+  
+  "execution_tracking": {
+    "terms": [
+      "planned pick",
+      "actual pick",
+      "planned vs actual",
+      "execution pick data",
+      "pick reconciliation",
+      "pick accuracy",
+      "picking performance"
+    ],
+    "description": "Terms describing whether pick data is planned or actual, and supporting audit, reconciliation, and tracking of picking performance."
+  },
+  "cartonization_and_batching": {
+    "terms": [
+      "cartonization batch",
+      "batch ID",
+      "cartonization grouping",
+      "pick batching"
+    ],
+    "description": "Terms for organizing pick tasks into groups for cartonization, shipment, or operational waves."
+  },
+  "item_and_uom_reference": {
+    "terms": [
+      "item number",
+      "unit of measure",
+      "UOM",
+      "EA",
+      "CS",
+      "item picking unit"
+    ],
+    "description": "Terms related to the items and units of measure being picked in warehouse operations."
+  },
+  "lot_and_quality_tracking": {
+    "terms": [
+      "lot number",
+      "lot-controlled pick",
+      "quality pick tracking"
+    ],
+    "description": "Terms that support traceability and compliance when picking lot-controlled or regulated items."
+  },
+  "warehouse_message_log": {
+    "terms": [
+      "warehouse message",
+      "system message",
+      "employee message",
+      "intra-warehouse communication",
+      "message log",
+      "priority alert",
+      "internal alert",
+      "read status",
+      "response required",
+      "employee notification",
+      "warehouse notification",
+      "exception message",
+      "department message",
+      "unread message",
+      "message tracking",
+      "task alert",
+      "message acknowledgment",
+      "system communication",
+      "message response",
+      "warehouse communication audit"
+    ],
+    "description": "Business terms related to internal system or warehouse-generated messages used for operational communication, alerts, and acknowledgments. The t_message table logs messages sent between employees, departments, or system processes within the warehouse. It supports priority tracking, read status, and responses to ensure timely action, traceability, and compliance in handling operational exceptions, task instructions, or system alerts."
+  },
+  "printer_configuration": {
+    "terms": [
+      "printer setup",
+      "printer id",
+      "printer name",
+      "warehouse printer",
+      "pick area printer",
+      "label template",
+      "label printer",
+      "report printer",
+      "network printer",
+      "active printers",
+      "batch label printer",
+      "commander printer",
+      "printer mapping",
+      "printer status",
+      "warehouse print device"
+    ],
+    "description": "Business terms related to configuration and management of printers in the warehouse for label and report generation. This includes the mapping of printers to warehouses and pick areas, printer types (label/report/network), and template assignments for label printing during warehouse operations."
+  },
+  "printing_templates_and_files": {
+    "terms": [
+      "label template",
+      "batch label template",
+      "name_label",
+      "name_label_batch",
+      "label configuration",
+      "report template",
+      "label file",
+      "name_file",
+      "label_report"
+    ],
+    "description": "Terms associated with the templates or file names used for label or report printing. These configurations define how labels are formatted and what gets printed on each document during warehouse activities."
+  },
+  "network_and_device_configuration": {
+    "terms": [
+      "network printer",
+      "local printer",
+      "printer type",
+      "commander printer",
+      "printer classification",
+      "network name",
+      "printer path",
+      "printer server",
+      "device endpoint"
+    ],
+    "description": "Terms describing the physical or network-level attributes of printers used in the warehouse. This includes local or networked printer types, paths to printer servers, and external identifiers used by middleware or print services."
+  },
+  "warehouse_and_pick_area_mapping": {
+    "terms": [
+      "pick area printer",
+      "warehouse printer mapping",
+      "print area assignment",
+      "pick zone printer",
+      "warehouse id",
+      "wh_id",
+      "printer area mapping",
+      "printer per warehouse"
+    ],
+    "description": "Terms representing how printers are mapped to specific pick areas, zones, or warehouses to enable automatic routing of print jobs during picking, packing, and other warehouse operations."
+  },
+  "print_job_processing_and_behavior": {
+    "terms": [
+      "printer folder",
+      "printer file path",
+      "print job folder",
+      "folder",
+      "separator",
+      "print job configuration",
+      "print job trigger",
+      "print routing logic"
+    ],
+    "description": "Terms related to how the system interacts with the printer file system, including output folders and separators used in formatting or job separation for automated printing processes."
+  },
+  "printer_status_and_lifecycle": {
+    "terms": [
+      "active printer",
+      "inactive printer",
+      "printer status",
+      "status flag",
+      "printer availability",
+      "enabled printer",
+      "disabled printer"
+    ],
+    "description": "Terms that define the lifecycle or availability state of a printer in the warehouse system. These statuses control whether a printer is considered eligible for use in operations or excluded from job routing."
+  },
+  "warehouse_specific_controls": {
+    "terms": [
+      "warehouse control",
+      "wh_id",
+      "site control",
+      "warehouse configuration",
+      "warehouse override",
+      "warehouse parameter",
+      "warehouse-specific flag",
+      "per-warehouse setting"
+    ],
+    "description": "Terms referring to configuration settings applied at the warehouse level, allowing system behavior to be tailored for specific facilities. These controls reside in the t_whse_control table and are linked via wh_id."
+  },
+  "control_parameters_and_flags": {
+    "terms": [
+      "control type",
+      "control parameter",
+      "application control",
+      "control setting",
+      "control_value_text",
+      "control_value_num",
+      "feature flag",
+      "configuration toggle",
+      "warehouse rule",
+      "process behavior setting"
+    ],
+    "description": "Terms describing the values and types of operational controls used to influence application behavior. These can be either textual or numeric and are interpreted by the WMS at runtime to guide workflows."
+  },
+  "description_and_metadata": {
+    "terms": [
+      "control description",
+      "configuration purpose",
+      "control label",
+      "setting explanation",
+      "parameter metadata",
+      "control documentation"
+    ],
+    "description": "Terms used to describe the human-readable metadata associated with each warehouse control, found in the description field. These entries help users understand the purpose or logic behind a given control type."
+  },
+  "numeric_and_textual_values": {
+    "terms": [
+      "control text",
+      "text-based setting",
+      "string parameter",
+      "numeric control",
+      "float value",
+      "control value num",
+      "threshold setting",
+      "textual configuration"
+    ],
+    "description": "Terms related to the actual stored values of control types, including both numeric (control_value_num) and text (control_value_text) formats, depending on the type of setting required."
+  },
+  "application_and_process_integration": {
+    "terms": [
+      "application control",
+      "system configuration",
+      "WMS logic control",
+      "application-level override",
+      "default behavior",
+      "feature toggle",
+      "system runtime behavior",
+      "application tuning"
+    ],
+    "description": "Terms related to how the t_whse_control settings influence application-level behavior, such as determining default staging locations, enabling features, or modifying operational workflows."
+  },
+  "comparison_with_global_controls": {
+    "terms": [
+      "local control override",
+      "warehouse-level control",
+      "per-warehouse vs global",
+      "global vs local config",
+      "override global control",
+      "warehouse control variant"
+    ],
+    "description": "Terms that reflect the relationship between global control settings (like those in t_control) and localized, warehouse-specific overrides in t_whse_control. These enable differentiation by site."
+  },
+  "system_master_data": {
+    "terms": [
+      "system",
+      "system id",
+      "system name",
+      "site master",
+      "site profile",
+      "warehouse system",
+      "system record",
+      "operational unit",
+      "enterprise site"
+    ],
+    "description": "Terms referring to master data that uniquely identifies and describes an operational system or site (such as a warehouse) within the enterprise. This data resides in the t_system table and includes site names, IDs, and go-live dates."
+  },
+  
+  "system_location_and_address": {
+    "terms": [
+      "system address",
+      "site location",
+      "address1",
+      "address2",
+      "address3",
+      "city",
+      "state",
+      "zip",
+      "country",
+      "system region"
+    ],
+    "description": "Terms related to the physical address and geographical location of systems or warehouses as recorded in the t_system table. These are essential for routing, compliance, and reporting."
+  },
+  "system_operational_status": {
+    "terms": [
+      "go-live date",
+      "operational date",
+      "launch date",
+      "site activation",
+      "system enabled",
+      "system start date"
+    ],
+    "description": "Terms indicating when a system or site became operational, used for timeline tracking, reporting accuracy, and system history management."
+  },
+  "system_contact_information": {
+    "terms": [
+      "system contact",
+      "contact phone",
+      "fax number",
+      "system email",
+      "contact information",
+      "site communication details",
+      "system communication channel"
+    ],
+    "description": "Terms describing contact-related fields in the t_system table used for communication with specific sites or systems. These include phone, fax, and email addresses."
+  },
+  "transaction_and_system_integration": {
+    "terms": [
+      "transaction system link",
+      "system id reference",
+      "fk_transaction_system",
+      "system context",
+      "system mapping",
+      "system-site integration",
+      "system-level transaction"
+    ],
+    "description": "Terms used to describe how the t_system table is referenced by transactional or operational tables to link records to specific systems or sites."
+  },
+  "system_validation_and_control": {
+    "terms": [
+      "system ID check",
+      "valid system code",
+      "system constraints",
+      "system_id validation",
+      "predefined system code",
+      "system identifier rules"
+    ],
+    "description": "Terms related to enforcing data integrity in the t_system table, including constraints that ensure valid system identifiers and prevent incorrect data entry."
+  },
+  "label_management": {
+    "terms": [
+      "label",
+      "label id",
+      "label status",
+      "label record",
+      "label tracking",
+      "printed label",
+      "label lifecycle",
+      "label generation",
+      "label cancellation",
+      "reprint label",
+      "pick label",
+      "label data"
+    ],
+    "description": "Terms related to managing individual labels generated for warehouse picking operations. These labels are tracked by status, associated pick tasks, and print sequence. The data helps ensure correct printing, usage, and lifecycle tracking of each label."
+  },
+  "pick_label_linkage": {
+    "terms": [
+      "pick id",
+      "label pick link",
+      "pick task label",
+      "pick-label mapping",
+      "label pick operation",
+      "label pick association",
+      "label for pick"
+    ],
+    "description": "Terms describing how labels are tied to specific pick tasks. This linkage ensures that the right labels are generated and tracked per picking operation."
+  },
+  "label_status_tracking": {
+    "terms": [
+      "label status",
+      "label printed",
+      "label reprinted",
+      "label picked",
+      "label cancelled",
+      "not printed",
+      "label lifecycle",
+      "label state"
+    ],
+    "description": "Terms referring to the current state or status of a label during its lifecycle in the warehouse picking process. Statuses help determine if a label is ready, used, reprinted, or voided."
+  },
+  "label_printing_control": {
+    "terms": [
+      "print sequence",
+      "label batch",
+      "batch id",
+      "label print batch",
+      "label order",
+      "print label sequence",
+      "batch print control"
+    ],
+    "description": "Terms related to label printing behavior, such as print order within a batch or grouping of labels for coordinated printing. Used to manage the flow and batch processing of label outputs in warehouse operations."
+  },
+  "label_audit_and_traceability": {
+    "terms": [
+      "label audit",
+      "label tracking",
+      "label traceability",
+      "label history",
+      "label usage log",
+      "label action status",
+      "label event tracking"
+    ],
+    "description": "Terms referring to the ability to trace label actions and status changes for auditing and error tracking, ensuring warehouse processes are transparent and errors like duplicate printing or missing labels are avoided."
+  },
+  "menu_configuration": {
+    "terms": [
+      "menu",
+      "menu id",
+      "menu configuration",
+      "menu item",
+      "menu structure",
+      "menu mapping",
+      "menu level",
+      "menu definition",
+      "dynamic menu"
+    ],
+    "description": "Terms related to defining and configuring menu structures in the system UI. This includes setting up hierarchical menu items with associated processes, names, levels, and sequences for display."
+  },
+  "process_linking_and_execution": {
+    "terms": [
+      "process",
+      "linked process",
+      "menu action",
+      "backend process",
+      "process mapping",
+      "action trigger",
+      "function link"
+    ],
+    "description": "Terms referring to how menu items are associated with backend processes or system functions. This linkage ensures that selecting a menu item results in executing the correct underlying business logic."
+  },
+  "ui_display_configuration": {
+    "terms": [
+      "sequence",
+      "display sequence",
+      "display order",
+      "text",
+      "display text",
+      "menu display",
+      "user interface menu",
+      "visible label"
+    ],
+    "description": "Terms used to configure how menu items appear in the UI, including display text and order. These attributes define user-facing labels and the order of appearance to create a coherent user experience."
+  },
+  "carrier_menu_extension": {
+    "terms": [
+      "carrier menu",
+      "carrier options",
+      "carrier function menu",
+      "carrier-linked menu",
+      "carrier extension",
+      "shipping menu config"
+    ],
+    "description": "Terms describing the logical extension of the carrier master data into the menu system. Menu items can be used to group or expose carrier-related functions in K.Motion Ship or Warehouse Advantage interfaces."
+  },
+  "adapter_and_integration_ui": {
+    "terms": [
+      "advantage link menu",
+      "warehouse adapter menu",
+      "k.motion ship UI",
+      "flagship interface",
+      "adapter-based menu",
+      "integration menu config"
+    ],
+    "description": "Terms related to how the menu structure supports integrations between Warehouse Advantage, Flagship, and K.Motion Ship. Menus help drive dynamic configuration of adapter UIs without requiring code changes."
+  },
+  "country_master_data": {
+    "terms": [
+      "country",
+      "country id",
+      "country name",
+      "country abbreviation",
+      "country code",
+      "country master",
+      "country list",
+      "country reference",
+      "country identifier"
+    ],
+    "description": "Terms related to the master list of countries maintained in the system, providing standardized country identifiers, full names, and abbreviations used across transactional and master data tables for consistent country referencing."
+  },
+  "shipping_and_logistics_country_reference": {
+    "terms": [
+      "shipping country",
+      "country for shipping",
+      "country reference in shipping",
+      "shipping destination country",
+      "shipping origin country",
+      "shipping document country"
+    ],
+    "description": "Terms describing the use of country data for shipping and logistics purposes, including documentation, address validation, and destination or origin country designation to ensure accuracy in transportation and customs processes."
+  },
+  "address_and_location_country_reference": {
+    "terms": [
+      "customer country",
+      "vendor country",
+      "address country",
+      "country in address",
+      "location country",
+      "site country",
+      "warehouse country"
+    ],
+    "description": "Terms related to associating country data with physical addresses of customers, vendors, warehouses, and operational sites, providing validation and standardization of location information across the system."
+  },
+  "region_master_data": {
+    "terms": [
+      "region",
+      "region id",
+      "region name",
+      "region abbreviation",
+      "region master",
+      "region reference",
+      "geographical region",
+      "region identifier",
+      "region code",
+      "area"
+    ],
+    "description": "Terms related to the master list of regions maintained in the system, providing standardized region identifiers, names, and abbreviations linked to countries, ensuring consistent regional referencing across transactional and master data processes."
+  },
+  "order_import_region_mapping": {
+    "terms": [
+      "import region",
+      "order region",
+      "region mapping",
+      "region validation",
+      "region reference in orders",
+      "order import region code"
+    ],
+    "description": "Terms describing the use of region master data during order import processes to validate, map, and standardize region information from external sources to system-recognized regional entities."
+  },
+  "address_and_location_region_reference": {
+    "terms": [
+      "address region",
+      "customer region",
+      "vendor region",
+      "warehouse region",
+      "location region",
+      "region for address validation"
+    ],
+    "description": "Terms related to associating region data with physical addresses for customers, vendors, warehouses, and operational sites, supporting address validation and geographic segmentation within the system."
+  },
+  
+  "locale_date_format_configuration": {
+    "terms": [
+      "locale date format",
+      "date format",
+      "date display format",
+      "regional date format",
+      "localized date format",
+      "locale-specific date format",
+      "date formatting string",
+      "date format pattern",
+      "locale_id date format",
+      "UI date format"
+    ],
+    "description": "Terms related to the configuration of date display formats per locale, specifying how dates are rendered in user interfaces and reports according to regional or language-specific conventions. These formats support localization and internationalization to ensure users view dates in a familiar and expected way."
+  },
+  "localization_and_internationalization": {
+    "terms": [
+      "localization",
+      "internationalization",
+      "locale-specific settings",
+      "regionalization",
+      "locale configuration",
+      "multilingual date format",
+      "regional UI customization"
+    ],
+    "description": "Terms emphasizing the role of locale date formats in broader localization and internationalization efforts, ensuring software adapts to diverse regional preferences and language settings."
+  },
+  "pick_area_configuration": {
+    "terms": [
+      "pick area",
+      "picking zone",
+      "warehouse pick zone",
+      "pick_area",
+      "zone configuration",
+      "warehouse picking area",
+      "picking location",
+      "pick area identifier"
+    ],
+    "description": "Terms related to defining discrete picking zones within a warehouse to optimize material flow, labor allocation, and task execution during order picking."
+  },
+  "warehouse_and_container_references": {
+    "terms": [
+      "warehouse id",
+      "wh_id",
+      "warehouse reference",
+      "pick area warehouse linkage",
+      "container class mapping",
+      "container configuration reference"
+    ],
+    "description": "Terms focusing on the relationships between pick areas, warehouses, and container classifications, supporting logical links to warehouse master data and container configuration for consistent operational context."
+  },
+  "operational_parameters_and_workload": {
+    "terms": [
+      "target pick percent",
+      "workload balancing",
+      "picking workload target",
+      "target workload percentage",
+      "work_type",
+      "picking work type",
+      "container_class",
+      "container classification",
+      "task assignment by pick area"
+    ],
+    "description": "Terms describing operational settings used to balance workload, assign work types, and define container classes within specific pick areas to drive efficient warehouse operations."
+  },"t_full_floor_denial": {
+  "terms": [
+    "fulfillment failure",
+    "failed order processing",
+    "order not fulfilled",
+    "fulfillment exception",
+    "incomplete order",
+    "warehouse order failure",
+    "denied fulfillment attempt",
+    "fulfillment block",
+    "unprocessed order",
+    "failed floor fulfillment",
+    "floor-level denial",
+    "warehouse rejection",
+    "warehouse-level cancellation",
+    "capacity-based denial",
+    "operational failure",
+    "warehouse fulfillment tracking",
+    "warehouse constraints",
+    "warehouse order audit",
+    "warehouse order monitoring",
+    "warehouse throughput issue",
+    "system-level rejection",
+    "stockout denial",
+    "inventory exception",
+    "system error failure",
+    "error-based denial",
+    "rule-based cancellation",
+    "business rule rejection",
+    "denial due to exceptions",
+    "auto-rejected orders",
+    "process interruption record",
+    "denial history",
+    "denial audit trail",
+    "order denial log",
+    "denial record tracking",
+    "historical denial data",
+    "warehouse denial timeline",
+    "order cancellation audit",
+    "timestamped denial record",
+    "traceability of denials",
+    "audit for unfulfilled orders",
+    "warehouse KPI input",
+    "fulfillment failure analysis",
+    "root cause tracking",
+    "denial trend analysis",
+    "denial rate reporting",
+    "operational reporting",
+    "denial reporting metrics",
+    "cancellation reporting",
+    "warehouse exception metrics",
+    "denied order analytics",
+    "customer-facing denial",
+    "order communication failure",
+    "escalation due to denial",
+    "customer notification failure",
+    "downstream order escalation",
+    "denied order customer handling",
+    "service impact order",
+    "missed customer promise",
+    "unfulfilled customer request",
+    "customer-impacting cancellation",
+    "denial system feed",
+    "downstream process trigger",
+    "reprocessing queue input",
+    "failed order reprocessing",
+    "escalation queue entry",
+    "interface denial record",
+    "denied order sync",
+    "cancellation system log",
+    "ERP denial record",
+    "OMS failure entry"
+  ],
+  "description": "Business terms related to tracking full order denials or cancellations at the warehouse level, used for audit, reporting, and performance analysis when orders cannot be fulfilled due to operational constraints such as stockouts, capacity limitations, or system issues."
+}
+,
+  "employee_productivity_standards": {
+    "terms": [
+      "employee productivity standards",
+      "employee performance benchmarks",
+      "labor productivity",
+      "fixed productivity standard",
+      "dynamic productivity standard",
+      "employee efficiency metrics",
+      "transaction type productivity",
+      "employee performance target",
+      "labor management standards",
+      "productivity measurement",
+      "employee labor planning",
+      "performance benchmarking",
+      "transaction productivity",
+      "fixed_std",
+      "dynamic_std",
+      "productivity standards by transaction",
+      "employee labor standards"
+    ],
+    "description": "Business terms related to storing employee-specific productivity standards and performance benchmarks by transaction type to support labor management, performance evaluation, and labor planning."
+  },
+  "units_of_measure": {
+    "terms": [
+      "unit of measure",
+      "UOM code",
+      "measurement unit",
+      "quantity unit",
+      "standardized unit",
+      "max quantity",
+      "UOM validation",
+      "inventory unit",
+      "procurement unit",
+      "shipping unit",
+      "picking unit",
+      "packing unit",
+      "UOM master data",
+      "ERP compatible unit",
+      "unit constraints",
+      "UOM reference",
+      "item unit of measure",
+      "order unit",
+      "receipt unit",
+      "UOM lookup"
+    ],
+    "description": "Business terms related to defining and managing standardized units of measure used across warehouse and enterprise systems to ensure consistent measurement, quantity validation, and integration with procurement, inventory, and shipping processes."
+  },
+  "kship_shipment_header": {
+    "terms": [
+      "shipment header",
+      "outbound shipment",
+      "shipment number",
+      "warehouse id",
+      "order number",
+      "carrier code",
+      "carrier name",
+      "transport mode",
+      "freight charge",
+      "shipment label",
+      "tracking number",
+      "employee id",
+      "shipment date",
+      "shipment time",
+      "shipment audit",
+      "carrier integration",
+      "freight management",
+      "shipment tracking",
+      "shipment compliance",
+      "shipment creation"
+    ],
+    "description": "Business terms related to managing outbound shipment header information that links orders to carriers, supports freight cost tracking, label generation, shipment tracing, and audit compliance in the warehouse and logistics environment."
+  },
+  "invoice_line_detail": {
+    "terms": [
+      "invoice line",
+      "invoice detail",
+      "line item",
+      "company id",
+      "warehouse id",
+      "invoice number",
+      "line number",
+      "item number",
+      "quantity ordered",
+      "quantity invoiced",
+      "backorder quantity",
+      "unit price",
+      "billing detail",
+      "sales reconciliation",
+      "financial posting",
+      "revenue tracking",
+      "order fulfillment",
+      "invoice accuracy",
+      "invoice reconciliation",
+      "ERP integration",
+      "billing analytics"
+    ],
+    "description": "Business terms related to detailed line-level invoice data capturing item quantities, prices, and billing information to support accurate invoicing, financial posting, revenue tracking, and order reconciliation processes."
+  },
+  "t_invoice": {
+    "terms": [
+      "invoice number",
+      "customer invoice",
+      "invoice total",
+      "order invoice",
+      "invoice amount",
+      "billing record",
+      "invoice transaction",
+      "invoiced quantity",
+      "order quantity vs invoice quantity",
+      "invoice charges",
+      "freight charges",
+      "tax amount",
+      "discount total",
+      "shipping invoice",
+      "backorder invoice quantity",
+      "customer billing",
+      "payment terms",
+      "term code",
+      "sales invoice",
+      "return invoice",
+      "order to cash",
+      "order-based invoice",
+      "invoicing by warehouse",
+      "company invoice",
+      "carrier invoicing",
+      "shipping method invoice",
+      "invoice line total",
+      "financial invoice record",
+      "accounts receivable transaction",
+      "internal transaction number",
+      "customer reference",
+      "customer order reference",
+      "branch invoice",
+      "invoice by company",
+      "marketplace invoice",
+      "mp order invoice",
+      "warehouse-level billing",
+      "financial reconciliation",
+      "invoice audit",
+      "invoice reporting",
+      "invoice-based analytics",
+      "invoicing performance",
+      "invoice data tracking",
+      "shipment invoicing",
+      "total lines invoiced",
+      "number of boxes shipped",
+      "shipment weight total",
+      "other charges",
+      "invoice data warehouse",
+      "invoice integration",
+      "historical invoice",
+      "customer invoice lookup",
+      "billing reference",
+      "invoice lookup",
+      "invoice fulfillment tracking",
+      "invoice delay impact",
+      "order-to-invoice match",
+      "billing discrepancy",
+      "order reconciliation",
+      "invoice creation date",
+      "invoice creation time",
+      "invoice per order",
+      "billing per warehouse",
+      "invoice per customer",
+      "salesperson invoice tracking",
+      "carrier-based billing",
+      "shipping method billing",
+      "invoice process audit",
+      "invoice issue resolution",
+      "invoice performance tracking",
+      "financial compliance record",
+      "customer dispute reference"
+    ],
+    "description": "Business terms related to the generation, tracking, and reporting of customer invoices for fulfilled orders, capturing key financial, shipping, and customer details that support the order-to-cash process, financial reconciliation, customer service, and audit compliance."
+  },
+  
+  "wave_order_detail": {
+    "terms": [
+      "wave detail",
+      "wave order",
+      "order sequence",
+      "wave assignment",
+      "wave picking",
+      "load sequence",
+      "order load",
+      "wave processing",
+      "order prioritization",
+      "wave master",
+      "warehouse wave",
+      "wave management",
+      "order tracking",
+      "wave sequencing",
+      "order processing order",
+      "wave order mapping",
+      "wave picking sequence"
+    ],
+    "description": "Terms related to the detailed tracking and sequencing of orders within a wave in warehouse wave picking operations..."
+  },
+  "wave_master_data": {
+    "terms": [
+      "wave id",
+      "wave master",
+      "wave status",
+      "wave sequence",
+      "warehouse wave",
+      "wave scheduling",
+      "wave staging location",
+      "wave door location",
+      "shipment date window",
+      "cartonization flag",
+      "wave processing",
+      "wave batch",
+      "wave planning",
+      "wave management",
+      "wave control"
+    ],
+    "description": "Terms related to the high-level configuration and management of waves in the warehouse system..."
+  },
+  "kit_unpick_identification": {
+    "terms": [
+      "pick id",
+      "unpick record id",
+      "kit unpick identifier",
+      "unpick transaction id"
+    ],
+    "description": "Terms related to the unique identification of each unpick record within the kit picking process in the warehouse."
+  },
+  "temporal_information": {
+    "terms": [
+      "create date",
+      "transaction date",
+      "unpick timestamp",
+      "pick action date",
+      "unpick date time"
+    ],
+    "description": "Terms related to the date and time details associated with the creation and transaction of kit unpick actions."
+  },
+  "warehouse_context": {
+    "terms": [
+      "warehouse id",
+      "warehouse identifier",
+      "warehouse location",
+      "warehouse reference"
+    ],
+    "description": "Terms defining the warehouse context where the kit unpick action took place."
+  },
+  "order_reference": {
+    "terms": [
+      "order number",
+      "order id",
+      "order reference",
+      "sales order number",
+      "customer order"
+    ],
+    "description": "Terms related to the identification of the order associated with the unpick action."
+  },
+  "order_line_details": {
+    "terms": [
+      "line number",
+      "order line",
+      "order item line",
+      "line identifier"
+    ],
+    "description": "Terms defining the specific line within an order related to the unpicked kit item."
+  },
+  "item_information": {
+    "terms": [
+      "item number",
+      "product code",
+      "SKU",
+      "item identifier",
+      "product number"
+    ],
+    "description": "Terms relating to the item being unpicked from the kit during the picking process."
+  },
+  "quantity_metrics": {
+    "terms": [
+      "order quantity",
+      "planned quantity",
+      "picked quantity",
+      "handling unit quantity",
+      "unpick quantity",
+      "quantity planned",
+      "quantity picked",
+      "quantity unpicked"
+    ],
+    "description": "Terms related to various quantity measurements tracked during the kit pick and unpick process..."
+  },
+  "handling_unit_details": {
+    "terms": [
+      "handling unit id",
+      "HU id",
+      "handling unit quantity",
+      "handling unit reference",
+      "HU quantity"
+    ],
+    "description": "Terms associated with the handling unit involved in the kit picking and unpicking process."
+  },
+  "location_and_container": {
+    "terms": [
+      "location id",
+      "warehouse location",
+      "storage location",
+      "container id",
+      "container reference",
+      "pick container"
+    ],
+    "description": "Terms defining the physical location and container related to the pick and unpick actions in the warehouse."
+  },
+  "user_and_operation": {
+    "terms": [
+      "user id",
+      "operator id",
+      "pick operator",
+      "unpick user",
+      "action user"
+    ],
+    "description": "Terms related to the user or operator who performed the unpick action."
+  },
+  "kit_status_tracking": {
+    "terms": [
+      "kit status",
+      "unpick status",
+      "pick completion status",
+      "short pick status",
+      "kit pick state"
+    ],
+    "description": "Terms describing the status of the kit pick or unpick process, such as completed or short pick."
+  },
+  "customer_identification": {
+    "terms": [
+      "customer id",
+      "customer identifier",
+      "customer_code",
+      "customer reference",
+      "customer profile id"
+    ],
+    "description": "Terms related to the unique identification of individual customers in the system."
+  },
+  "customer_personal_information": {
+    "terms": [
+      "customer name",
+      "contact name",
+      "customer full name",
+      "customer entity"
+    ],
+    "description": "Terms describing the name or designation of the customer."
+  },
+  "customer_address": {
+    "terms": [
+      "address line 1",
+      "address line 2",
+      "address line 3",
+      "customer address",
+      "billing address",
+      "shipping address",
+      "street address",
+      "customer location"
+    ],
+    "description": "Terms related to the physical address of the customer including multiple address lines."
+  },
+  "customer_geographical_info": {
+    "terms": [
+      "city",
+      "state",
+      "region",
+      "postal code",
+      "ZIP code",
+      "customer city",
+      "customer state",
+      "customer postal code"
+    ],
+    "description": "Terms associated with geographical location attributes of the customer."
+  },
+  "customer_country_info": {
+    "terms": [
+      "country code",
+      "country name",
+      "customer country",
+      "nationality",
+      "ISO country code"
+    ],
+    "description": "Terms describing the country identification of the customer."
+  },
+  "customer_contact_details": {
+    "terms": [
+      "phone number",
+      "email address",
+      "customer phone",
+      "customer email",
+      "contact info"
+    ],
+    "description": "Terms related to contact information for communicating with the customer."
+  },
+  "customer_segmentation": {
+    "terms": [
+      "customer category",
+      "customer priority",
+      "customer segment",
+      "customer classification",
+      "customer tier"
+    ],
+    "description": "Terms describing customer classification used for segmentation, prioritization, or loyalty programs."
+  },
+  "shipping_and_delivery_preferences": {
+    "terms": [
+      "shipping method",
+      "preferred shipping",
+      "delivery route",
+      "customer ship method",
+      "customer route",
+      "delivery preference"
+    ],
+    "description": "Terms related to customer preferences for shipping and delivery."
+  },
+  "warehouse_association": {
+    "terms": [
+      "warehouse id",
+      "fulfillment center",
+      "warehouse association",
+      "warehouse linkage",
+      "wh_id"
+    ],
+    "description": "Terms indicating association of customers with specific warehouses for fulfillment or operational context."
+  },
+  "additional_attributes": {
+    "terms": [
+      "customer_BOL",
+      "customer_frank_edward",
+      "consolidate",
+      "direct_ship"
+    ],
+    "description": "Additional optional attributes capturing specific operational or business flags related to the customer."
+  },
+  "manifest_station_configuration": {
+    "terms": [
+      "manifest station setup",
+      "manifest station configuration",
+      "station-to-printer mapping",
+      "manifest station ID",
+      "shipping station setup",
+      "station label configuration",
+      "station printer mapping",
+      "station reference table"
+    ],
+    "description": "Terms related to the configuration of manifest stations within warehouses, including the assignment of printer IDs for shipping operations."
+  },
+  "warehouse_mapping": {
+    "terms": [
+      "warehouse ID",
+      "wh_id",
+      "warehouse-station link",
+      "warehouse to manifest station mapping",
+      "station location reference"
+    ],
+    "description": "Terms describing the connection between a manifest station and the warehouse it belongs to."
+  },
+  "printer_assignment": {
+    "terms": [
+      "packing label printer",
+      "shipping label printer",
+      "invoice printer",
+      "return label printer",
+      "printer ID mapping",
+      "label printer setup",
+      "document printer configuration",
+      "printer assignment per station"
+    ],
+    "description": "Terms representing the assignment of printers for various document types including packing labels, shipping labels, invoices, and returns."
+  },
+  "shipping_workflow_support": {
+    "terms": [
+      "shipping documentation",
+      "label routing",
+      "manifesting workflow",
+      "packing workflow support",
+      "station label routing",
+      "printer reference for shipping",
+      "order fulfillment printing"
+    ],
+    "description": "Terms describing how the table supports shipping and packing workflows by directing documents to the correct printers."
+  },
+  
+  "operational_reference_data": {
+    "terms": [
+      "static station data",
+      "reference table for printing",
+      "station master data",
+      "warehouse print configuration",
+      "non-transactional configuration"
+    ],
+    "description": "Terms identifying the table as part of reference or configuration data rather than transactional data for shipping or order processing."
+  },
+  "error_and_risk_mitigation": {
+    "terms": [
+      "printer misconfiguration risk",
+      "label printing failure",
+      "invoice routing error",
+      "manifesting process error",
+      "order delay due to misrouting"
+    ],
+    "description": "Terms related to the risks and errors that may occur if data in the manifest station table is missing or incorrect."
+  },
+  "robot_event_tracking": {
+    "terms": [
+      "robot event log",
+      "robot status update",
+      "robot event tracking",
+      "event_type logging",
+      "robot alert",
+      "robotic activity record",
+      "robot status change",
+      "real-time robot event"
+    ],
+    "description": "Terms related to the tracking and recording of individual events or updates from robots during warehouse operations."
+  },
+  "robot_job_management": {
+    "terms": [
+      "robot job ID",
+      "job assignment",
+      "robotic task tracking",
+      "robot job correlation",
+      "job_date logging",
+      "robot task reference",
+      "robot task lifecycle",
+      "robot job history"
+    ],
+    "description": "Terms associated with how robots relate to assigned jobs, including tracking job identifiers and their execution dates."
+  },
+  "order_and_handling_unit": {
+    "terms": [
+      "order_number traceability",
+      "handling unit ID",
+      "HU tracking",
+      "robot order link",
+      "robotic activity per order",
+      "HU-level robot traceability",
+      "robot and order linkage",
+      "HU-based diagnostics"
+    ],
+    "description": "Terms dealing with how robot events are tied to specific orders and handling units, ensuring traceability of physical operations."
+  },
+  "robot_performance_and_diagnostics": {
+    "terms": [
+      "robot efficiency",
+      "robot performance analysis",
+      "robot diagnostics",
+      "robot anomaly detection",
+      "robot failure log",
+      "robot issue tracking",
+      "robot troubleshooting",
+      "robot behavior analytics",
+      "robot operation KPIs"
+    ],
+    "description": "Terms used for analyzing robot performance, identifying inefficiencies, diagnosing failures, and improving overall robotic operations."
+  },
+  "audit_and_monitoring": {
+    "terms": [
+      "robot activity audit",
+      "robot operation monitoring",
+      "robot event audit trail",
+      "log-based monitoring",
+      "robot data audit",
+      "robot trace log",
+      "robotic activity validation"
+    ],
+    "description": "Terms related to auditing robot activities and using log data for compliance, monitoring, and visibility."
+  },
+  "log_structure_and_identity": {
+    "terms": [
+      "unique_id",
+      "log_id correlation",
+      "robot log record ID",
+      "event log primary key",
+      "log entry identification",
+      "robotic log structure"
+    ],
+    "description": "Terms related to how individual log entries are uniquely identified and structured for relational integrity and analysis."
+  },
+  "robot_identity": {
+    "terms": [
+      "robot ID",
+      "robot name",
+      "robot identifier",
+      "reporting robot",
+      "robot instance tracking"
+    ],
+    "description": "Terms associated with identifying which robot generated a specific event or report."
+  },
+  "robot_job_queue_management": {
+    "terms": [
+      "robot job queue",
+      "robot task queue",
+      "robot job entry",
+      "robot job dispatching",
+      "queued robot tasks",
+      "robot job tracking",
+      "robot job ID",
+      "robot task ID",
+      "queued job processing"
+    ],
+    "description": "Terms related to the queuing, identification, and dispatching of robot jobs for warehouse automation workflows."
+  },
+  "message_handling_and_integration": {
+    "terms": [
+      "message type",
+      "robot message type",
+      "LOCUS_NEW message",
+      "WMS-to-robot communication",
+      "robot integration interface",
+      "robot instruction message"
+    ],
+    "description": "Terms describing the messaging mechanism used between the warehouse management system and robotic systems for task coordination."
+  },
+  "warehouse_and_work_queue_context": {
+    "terms": [
+      "warehouse ID",
+      "wh_id reference",
+      "work queue ID",
+      "work_q_id link",
+      "order number linkage",
+      "order-level task assignment"
+    ],
+    "description": "Terms that define the context of a robot job within the warehouse and the originating work queue or order."
+  },
+  "job_status_and_lifecycle": {
+    "terms": [
+      "robot job status",
+      "job processing lifecycle",
+      "job status codes",
+      "status tracking",
+      "job inserted timestamp",
+      "processing start time",
+      "processing end time",
+      "pending robot job",
+      "completed robot task",
+      "error in robot job"
+    ],
+    "description": "Terms related to the status and timestamps that define each stage of a robot job's lifecycle, from insertion to completion or failure."
+  },
+  "error_and_output_logging": {
+    "terms": [
+      "robot job output data",
+      "execution results",
+      "robot error message",
+      "job failure details",
+      "robotic task output",
+      "robot execution logs"
+    ],
+    "description": "Terms related to capturing the result of robot job execution and logging any errors or issues that occurred."
+  },
+  "robot_and_item_identification": {
+    "terms": [
+      "robot assigned",
+      "robot identifier",
+      "item number",
+      "handled item",
+      "robot-item relationship"
+    ],
+    "description": "Terms used for identifying the robot involved in the job and the item being handled during task execution."
+  },
+  "location_and_cart_tracking": {
+    "terms": [
+      "warehouse location",
+      "location ID",
+      "job location mapping",
+      "cart ID",
+      "cart tracking",
+      "location assignment"
+    ],
+    "description": "Terms related to the physical warehouse context of the robot job, including the assigned storage location and cart used during movement."
+  },
+  "exception_handling_and_audit": {
+    "terms": [
+      "robot job exception",
+      "task failure tracking",
+      "robot job diagnostics",
+      "audit trail for robot tasks",
+      "robotic operation monitoring"
+    ],
+    "description": "Terms related to identifying and analyzing job failures or exceptions, and supporting audits of robot operations in the warehouse."
+  }
+}
+
+
+
+
+
+
+
+
+
+ 
+  

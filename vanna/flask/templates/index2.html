@@ -1,0 +1,406 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Configuration Manager</title>
+    <style>
+        /* General Styles */
+        body {
+            font-family: Arial, sans-serif;
+            background-color: #f9f9f9;
+            margin: 0;
+            padding: 0;
+        }
+
+        h1 {
+            text-align: center;
+            color: #333;
+            margin-top: 20px;
+        }
+
+        .container {
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 20px;
+            background-color: #fff;
+            box-shadow: 0 0 10px rgba(0, 0, 0, 0.1);
+            border-radius: 8px;
+        }
+
+        /* Tab Styles */
+        .tab {
+            display: flex;
+            border-bottom: 2px solid #007bff;
+            margin-bottom: 20px;
+        }
+
+        .tab button {
+            background-color: #007bff;
+            color: white;
+            border: none;
+            cursor: pointer;
+            padding: 10px 20px;
+            font-size: 16px;
+            transition: background-color 0.3s ease;
+            border-radius: 5px 5px 0 0;
+            margin-right: 5px;
+        }
+
+        .tab button:hover, .tab button.active {
+            background-color: #0056b3;
+        }
+
+        .tabcontent {
+            display: none;
+            padding: 20px;
+            border: 1px solid #ddd;
+            border-radius: 0 0 5px 5px;
+            background-color: #f9f9f9;
+        }
+
+        /* Alert Styles */
+        .alert {
+            padding: 10px;
+            margin-bottom: 15px;
+            border-radius: 5px;
+            font-size: 14px;
+        }
+
+        .alert-success {
+            background-color: #d4edda;
+            color: #155724;
+            border: 1px solid #c3e6cb;
+        }
+
+        .alert-error {
+            background-color: #f8d7da;
+            color: #721c24;
+            border: 1px solid #f5c6cb;
+        }
+
+        /* Form Styles */
+        form {
+            display: flex;
+            flex-direction: column;
+        }
+
+        label {
+            font-weight: bold;
+            margin-bottom: 5px;
+            color: #333;
+        }
+
+        select, input[type="text"], input[type="password"] {
+            padding: 10px;
+            margin-bottom: 15px;
+            border: 1px solid #ddd;
+            border-radius: 5px;
+            font-size: 14px;
+        }
+
+        button {
+            background-color: #007bff;
+            color: white;
+            border: none;
+            padding: 10px 20px;
+            font-size: 16px;
+            border-radius: 5px;
+            cursor: pointer;
+            transition: background-color 0.3s ease;
+        }
+
+        button:hover {
+            background-color: #0056b3;
+        }
+
+
+        .action-buttons {
+            display: flex;
+            gap: 10px; /* Spacing between buttons */
+        }
+        
+        .action-btn {
+            width: 375px; /* Set a fixed width for both buttons */
+            padding: 10px; /* Adjust padding */
+            text-align: center;
+            font-size: 16px;
+            border: none;
+            border-radius: 5px;
+            cursor: pointer;
+        }
+        
+        .update-btn {
+            background-color: #007bff; /* Blue */
+            color: white;
+        }
+        
+        .delete-btn {
+            background-color: #dc3545; /* Red */
+            color: white;
+        }
+
+
+
+
+
+
+
+
+
+
+
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>Configuration Manager</h1>
+        <div class="tab">
+            <button class="tablinks" onclick="openTab(event, 'llmConfig')">LLM Configuration</button>
+            <button class="tablinks" onclick="openTab(event, 'dbConfig')">Warehouse DB Configuration</button>
+            <button class="tablinks" onclick="openTab(event, 'trainingData')">Training Data</button>
+        </div>
+
+        <!-- LLM Configuration Tab -->
+        <div id="llmConfig" class="tabcontent">
+            <h2>LLM Configuration</h2>
+            
+            {% with messages = get_flashed_messages(with_categories=true) %}
+            {% if messages %}
+                {% for category, message in messages %}
+                    <div class="alert alert-{{ category }}">{{ message }}</div>
+                {% endfor %}
+            {% endif %}
+            {% endwith %}
+
+            <form id="llmConfigForm" method="POST" action="/save-llm-config">
+                <input type="hidden" id="config_id" name="config_id">
+            
+                <label for="model_name">Select Model:</label>
+                <select id="model_name" name="model_name" onchange="toggleApiKey()">
+                    {% for model in available_models %}
+                        <option value="{{ model }}">{{ model }}</option>
+                    {% endfor %}
+                </select>
+            
+                <div id="apiKeyField" style="display: none;">
+                    <label for="api_key">API Key:</label>
+                    <input type="password" id="api_key" name="api_key" placeholder="Enter API key">
+                </div>
+            
+                <!-- Buttons -->
+                <div class="action-buttons">
+                    <button type="submit" class="action-btn update-btn">Save Configuration</button>
+                    <button type="button" class="action-btn test-btn" onclick="testConnection()">Test Connection</button>
+                </div>
+                <p id="test-result"></p>
+            
+                <!-- Connection Status Message -->
+                <div id="ollamaStatus" style="margin-top: 10px; font-weight: bold;"></div>
+            </form>
+    
+            
+            {% if last_config %}
+                <table>
+                    <tr>
+                        <td class="action-buttons">
+                            <button class="action-btn update-btn" onclick="editConfig('{{ last_config.id }}', '{{ last_config.model_name }}', '{{ last_config.api_key or '' }}')">Update</button>
+                            <form method="POST" action="/delete-llm-config" style="display:inline;">
+                                <input type="hidden" name="config_id" value="{{ last_config.id }}">
+                                <button type="submit" class="action-btn delete-btn">Delete</button>
+                            </form>
+                        </td>
+                    </tr>
+                </table>
+            {% else %}
+                <p>No configurations saved yet.</p>
+            {% endif %}
+        </div>
+
+        <!-- Warehouse DB Configuration Tab -->
+        <div id="dbConfig" class="tabcontent">
+            <h2>MSSQL DB Configuration</h2>
+        
+            {% with messages = get_flashed_messages(with_categories=true) %}
+                {% if messages %}
+                    {% for category, message in messages %}
+                        <div class="alert alert-{{ category }}">{{ message }}</div>
+                    {% endfor %}
+                {% endif %}
+            {% endwith %}
+        
+            <form method="POST" action="{{ '/update-config' if is_config_complete else '/warehouse-config' }}" onsubmit="updateHiddenFields()">
+                <input type="hidden" name="action" value="{{ 'update' if is_config_complete else 'save' }}">
+        
+                <label for="server_name">Server Name:</label>
+                <input type="text" id="server_name" name="server_name" value="{{ config.server_name if config else '' }}" required>
+        
+                <label for="db_name">Database Name:</label>
+                <input type="text" id="db_name" name="db_name" value="{{ config.db_name if config else '' }}" required>
+        
+                <label for="username">Username:</label>
+                <input type="text" id="username" name="username" value="{{ config.username if config else '' }}" required>
+        
+                <label for="password">Password:</label>
+                <input type="password" id="password" name="password" value="{{ config.password if config else '' }}" required>
+        
+                <div class="button-group">
+                    {% if is_config_complete %}
+                        <button type="submit1" class="update-btn">Update Configuration</button>
+                    {% else %}
+                        <button type="submit1" class="save-btn">Save  Configuration  </button>
+                    {% endif %}
+                    <button type="button" onclick="testConnection2()" class="test-connection-btn">Test Connection</button>
+                </div>
+            </form>
+        
+            {% if is_config_complete %}
+                <form method="POST" action="/delete-config" onsubmit="return confirmDelete()">
+                    <button type="submit1" class="delete-btn">Delete Configuration</button>
+                </form>
+            {% endif %}
+        </div>
+
+        <!-- Training Data Tab -->
+        <div id="trainingData" class="tabcontent">
+            <h2>Training Data</h2>
+            <p>This tab is for managing training data. Functionality will be added soon!</p>
+        </div>
+    </div>
+
+    <script>
+        function openTab(evt, tabName) {
+            var tabcontent = document.getElementsByClassName("tabcontent");
+            for (var i = 0; i < tabcontent.length; i++) {
+                tabcontent[i].style.display = "none";
+            }
+            var tablinks = document.getElementsByClassName("tablinks");
+            for (var i = 0; i < tablinks.length; i++) {
+                tablinks[i].className = tablinks[i].className.replace(" active", "");
+            }
+            document.getElementById(tabName).style.display = "block";
+            evt.currentTarget.className += " active";
+        }
+
+        var localModels = {{ local_models | tojson }};
+
+        function toggleApiKey() {
+            var selectedModel = document.getElementById("model_name").value;
+            var apiKeyField = document.getElementById("apiKeyField");
+
+            // Show API key field only if model is NOT in localModels
+            if (localModels.includes(selectedModel)) {
+                apiKeyField.style.display = "none";
+            } else {
+                apiKeyField.style.display = "block";
+            }
+        }
+
+        function editConfig(id, modelName, apiKey) {
+            document.getElementById("config_id").value = id;
+            document.getElementById("model_name").value = modelName;
+            
+            if (apiKey) {
+                document.getElementById("api_key").value = apiKey;
+                document.getElementById("apiKeyField").style.display = "block";
+            } else {
+                document.getElementById("api_key").value = "";
+                document.getElementById("apiKeyField").style.display = "none";
+            }
+            
+            toggleApiKey();
+        }
+
+        // Open the default tab on page load
+        document.getElementsByClassName("tablinks")[0].click();
+
+
+
+        function testConnection() {
+            var modelName = document.getElementById("model_name").value;
+            var apiKey = document.getElementById("api_key").value;
+        
+            fetch("/test-llm-connection", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ model_name: modelName, api_key: apiKey })
+            })
+            .then(response => response.json())
+            .then(data => {
+                document.getElementById("test-result").innerText = data.message;
+            })
+            .catch(error => console.error("Error:", error));
+        }
+
+
+        function updateHiddenFields() {
+            document.getElementById("hidden_server_name").value = document.getElementById("server_name").value;
+            document.getElementById("hidden_db_name").value = document.getElementById("db_name").value;
+            document.getElementById("hidden_username").value = document.getElementById("username").value;
+            document.getElementById("hidden_password").value = document.getElementById("password").value;
+        }
+
+        function validateForm(event) {
+            let server = document.getElementById("server_name").value;
+            let db = document.getElementById("db_name").value;
+            let user = document.getElementById("username").value;
+            let pass = document.getElementById("password").value;
+
+            if (!server || !db || !user || !pass) {
+                alert("All fields are required!");
+                event.preventDefault(); // Stop form submission
+                return false;
+            }
+            return true;
+        }
+
+        document.querySelectorAll("form").forEach(form => {
+            form.addEventListener("submit1", validateForm);
+        });
+
+        function confirmDelete() {
+            return confirm("Are you sure you want to delete the configuration?") ? true : false;
+        }
+
+        function testConnection2() {
+            const server = document.getElementById("server_name").value;
+            const db = document.getElementById("db_name").value;
+            const user = document.getElementById("username").value;
+            const pass = document.getElementById("password").value;
+
+            if (!server || !db || !user || !pass) {
+                alert("All fields are required to test the connection!");
+                return;
+            }
+
+            fetch('/test-warehouse-connection', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({
+                    server_name: server,
+                    db_name: db,
+                    username: user,
+                    password: pass
+                })
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.success) {
+                    alert("Connection successful!");
+                } else {
+                    alert("Connection failed: " + data.message);
+                }
+            })
+            .catch(error => {
+                console.error('Error:', error);
+                alert("Connection failed: " + error.message);
+            });
+        }
+
+
+
+    </script>
+</body>
+</html>
