@@ -1,0 +1,635 @@
+<!doctype html>
+<html lang="en" translate>
+  <head>
+    <meta charset="UTF-8" />
+    <link rel="icon" type="image/svg+xml" href="/vanna.svg" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <link href="https://fonts.googleapis.com/css2?family=Roboto+Slab:wght@350&display=swap" rel="stylesheet">
+    <script src="https://cdn.plot.ly/plotly-3.0.1.js" type="text/javascript"></script>
+    <title>Tychons AI</title>
+    <script type="module" crossorigin src="/assets/index.js"></script>
+    <link rel="stylesheet" href="/assets/index.css">
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/toastify-js/src/toastify.min.css">
+    <script src="https://cdn.jsdelivr.net/npm/toastify-js"></script>
+
+
+   
+
+    <style>
+
+       
+
+    .asset-sidebar{
+        position: fixed;
+        top: 50px;
+    }
+
+.tychons-wi{
+  color: #000;
+  font-style: italic;
+  font-size: 30px;
+}
+#application-sidebar img{
+width: 200px;
+}
+
+       .version{
+     display: none;
+    }
+
+
+    .signout-btn{
+    border: 1px solid #7B83EB;
+    color: #7B83EB;
+    }
+ 
+    .signout-btn:hover{
+    background: #7B83EB;
+    color: #fff;
+    }
+
+      .text-center ~ li {
+    display: none;
+    }
+    .tychons.footer{
+    font-size: 14px;}
+
+    .copyright {
+    position: absolute;
+    margin-top: 140%;
+    padding: 15px 0px;
+    border-top: 1px solid #cbcbcb;
+}
+
+    .new-button {
+    margin-left: 0 !important;
+    }
+
+
+    #application-sidebar{
+    width:290px;
+    background: #cbcbcb33;
+    }
+    
+       #predictionButton, .new-button {
+      margin-bottom: 25px;
+      padding: 7px 50px;
+      font-size: 15px;
+      cursor: pointer;
+      border-radius: 5px;
+      font-weight: 500;
+      color: #7B83EB;
+      background: none;
+      border: 1px solid #7B83EB;
+      }
+      #predictionButton:hover, .new-button:hover{
+      background-color: #7B83EB;
+      color: #fff;
+      }
+
+     #anomalyButton{
+            padding: 7px 15px;
+            font-size: 15px;
+            cursor: pointer;
+            border-radius: 5px;
+            font-weight: 500;
+            color: #7B83EB;
+            background: none;
+            border: 1px solid #7B83EB;
+            margin-bottom: 25px;
+      }
+
+      #anomalyButton:hover{
+      background-color: #7B83EB;
+      color: #fff;
+      }
+
+        .buttons-home, .buttons-home1{
+        text-align: center;
+        border-top: 1px solid #fff;
+        padding: 15px 0px;
+        left: 0;
+        width: 100%;
+        }
+    /* Modal backdrop */
+    .modal {
+        position: fixed;
+        top: 0;
+        left: 0;
+        width: 100%;
+        height: 100%;
+        background: rgba(0, 0, 0, 0.5);
+        display: flex;
+        justify-content: center;
+        align-items: center;
+        z-index: 1000;
+    }
+
+    /* Modal content */
+    .modal-content {
+        background: #ffffff;
+        width: 90%;
+        max-width: 800px;
+        max-height: 80vh;
+        border-radius: 8px;
+        box-shadow: 0 4px 15px rgba(0, 0, 0, 0.2);
+        position: relative;
+        overflow: hidden;
+    }
+
+    /* Container for sidebar and content */
+    .container {
+        display: flex;
+        height: 100%;
+    }
+
+    /* Sidebar */
+    .sidebar {
+        width: 220px;
+        background: #2c3e50;
+        color: white;
+        padding: 20px;
+        overflow-y: auto;
+        height: auto;
+    }
+
+    .sidebar h3 {
+        margin: 0 0 20px;
+        font-size: 1.2em;
+        text-transform: uppercase;
+        letter-spacing: 1px;
+    }
+
+    .prediction-btn {
+        display: block;
+        width: 100%;
+        padding: 10px;
+        margin-bottom: 10px;
+        background: #3498db;
+        color: white;
+        border: none;
+        border-radius: 4px;
+        cursor: pointer;
+        font-size: 1em;
+        transition: background 0.3s;
+        text-align: left;
+    }
+
+    .prediction-btn:hover {
+        background: #2980b9;
+    }
+
+    /* Main content area */
+    .content {
+        flex-grow: 1;
+        padding: 20px;
+        overflow-y: auto;
+        background: #ffffff;
+    }
+
+    .content h2 {
+        margin-top: 0;
+        color: #2c3e50;
+        font-size: 1.5em;
+        display: flex;
+        align-items: center;
+        gap: 10px;
+    }
+
+    #workspaceIdDisplay {
+        font-size: 0.9em;
+        color: #7f8c8d;
+        font-weight: normal;
+        background: #ecf0f1;
+        padding: 4px 8px;
+        border-radius: 4px;
+    }
+
+    /* Table styling */
+    #result table {
+        width: 100%;
+        border-collapse: collapse;
+        margin-top: 10px;
+    }
+
+    #result th, #result td {
+        border: 1px solid #ddd;
+        padding: 8px;
+        text-align: left;
+    }
+
+    #result th {
+        background: #f2f2f2;
+        color: #2c3e50;
+        font-weight: bold;
+    }
+
+    #result .error {
+        color: #e74c3c;
+        font-weight: bold;
+    }
+
+    #result .loading {
+        color: #7f8c8d;
+        font-style: italic;
+    }
+
+    /* Close button */
+    .close-btn {
+        position: absolute;
+        top: 10px;
+        right: 10px;
+        background: #e74c3c;
+        color: white;
+        border: none;
+        border-radius: 50%;
+        width: 30px;
+        height: 30px;
+        font-size: 16px;
+        cursor: pointer;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        transition: background 0.3s;
+    }
+
+    .close-btn:hover {
+        background: #c0392b;
+    }
+
+    .close-btn:focus {
+        outline: none;
+    }
+
+   
+
+    /* Responsive design */
+    @media (max-width: 600px) {
+        .modal-content {
+            width: 95%;
+            max-height: 90vh;
+        }
+        .sidebar {
+            width: 150px;
+        }
+        .content {
+            padding: 15px;
+        }
+        .content h2 {
+            flex-direction: column;
+            align-items: flex-start;
+        }
+    }
+
+    li.list-btns {
+    list-style: none;
+    display: flex;
+}
+
+    .question-bg{
+        background: #f5f5f5;
+        padding: 10px;
+        border-radius: 10px;
+    }
+
+    .answer-bg {
+        background: #EEF0FD;
+        border-radius: 10px;
+        padding: 10px;
+    }
+
+    footer{
+    width: 90%;
+    }
+
+           .asset-ul{
+        padding: 70px;
+        }
+
+     @media only screen and (min-width: 768px) and (max-width: 1023px){
+     #application-sidebar {
+            background: #fff;
+       }
+       
+           .asset-ul{
+        padding: 23px;
+        }
+     }
+
+     .review-feedback{
+     width: auto;
+     max-width: 890px;
+     margin: 0px auto;}
+
+
+     .feedback-emoji {
+        transition: all 0.2s ease;
+        margin-right: 20px;
+    }
+
+    .feedback-emoji.selected {
+        background-color: #dbeafe;
+        # box-shadow: 0 0 0 4px #3b82f6, 0 10px 15px rgba(59,130,246,0.4);
+        transform: scale(1.1);
+    }
+
+    .feedback-emoji-main-container{
+    margin: 20px 0px;}
+
+
+    </style>
+  </head>
+  <body class="bg-white dark:bg-slate-900">
+    <div id="app"></div>
+
+    <div id="vanna-language-selector" style="position:absolute;top:6px;right:5px;z-index:9999;background:#e9e9e9;padding:10px;border-radius:8px;">
+  <label>🎤 Voice:</label>
+  <select id="voice-language-select">
+    <option value="en-US">🇺🇸 English</option>
+    <option value="es-ES">🇪🇸 Español</option>
+    <option value="fr-FR">🇫🇷 Français</option>
+    <option value="hi-IN">🇮🇳 हिन्दी</option>
+    <option value="es-MX">🇲🇽 Español (México)</option>
+    <option value="pt-PT">🇵🇹 Português</option>
+    <option value="ar-SA">🇸🇦 العربية</option>
+    <option value="ja-JP">🇯🇵 日本語</option>
+  </select>
+   
+ 
+  <label style="margin-left:15px; display:none;">⏱️ Auto-stop:</label>
+  <select id="voice-silence-select">
+    <option value="1500">1.5 sec silence</option>
+    <option value="2000">2 sec silence</option>
+    <option value="3000">3 sec silence</option>
+    <option value="5000">5 sec silence</option>
+  </select>
+</div>
+
+<script>
+
+//tanslate
+(function() {
+    const select = document.getElementById('voice-language-select');
+    const silenceSelect = document.getElementById('voice-silence-select');
+   
+    select.value = localStorage.getItem('vanna-voice-lang') || 'en-US';
+    silenceSelect.value = localStorage.getItem('vanna-voice-silence') || '2000';
+   
+    select.onchange = () => localStorage.setItem('vanna-voice-lang', select.value);
+    silenceSelect.onchange = () => localStorage.setItem('vanna-voice-silence', silenceSelect.value);
+   
+    const Original = window.webkitSpeechRecognition || window.SpeechRecognition;
+   
+    if (Original) {
+        const OriginalProto = Original.prototype;
+        const originalStart = OriginalProto.start;
+       
+        OriginalProto.start = function() {
+            // Set language before starting
+            this.lang = select.value;
+            this.continuous = true;
+            this.interimResults = true;
+           
+            let silenceTimer;
+            const silenceDuration = parseInt(silenceSelect.value);
+           
+            // Reset timer when speech is detected
+            const resetTimer = () => {
+                clearTimeout(silenceTimer);
+                silenceTimer = setTimeout(() => {
+                    try { this.stop(); } catch(e) {}
+                }, silenceDuration);
+            };
+           
+            // Listen for speech results
+            this.addEventListener('result', resetTimer);
+            this.addEventListener('start', resetTimer);
+           
+            // Clean up on end
+            this.addEventListener('end', () => {
+                clearTimeout(silenceTimer);
+            }, { once: true });
+           
+            return originalStart.call(this);
+        };
+    }
+    })();
+
+    //redirect to new page
+    function redirectToPrediction() {
+        const workspace_id = getWorkspaceIdFromUrl();
+        console.log("Redirecting with workspace_id:", workspace_id);
+        window.open(`/prediction-page?workspace_id=${encodeURIComponent(workspace_id)}`, '_blank');
+    }
+    //redirect to new page
+    function redirectToAnomaly() {
+        const workspace_id = getWorkspaceIdFromUrl();
+        console.log("Redirecting with workspace_id:", workspace_id);
+        window.open(`/anomaly-page?workspace_id=${encodeURIComponent(workspace_id)}`, '_blank');
+    }
+
+     // Function to get workspace_id from URL
+    function getWorkspaceIdFromUrl() {
+        const params = new URLSearchParams(window.location.search);
+        return params.get("workspace_id") || "unknown";
+    }
+
+    // Function to format prediction type for display
+    function formatPredictionType(type) {
+        return type
+            .split("_")
+            .map(word => word.charAt(0).toUpperCase() + word.slice(1))
+            .join(" ");
+    }
+
+    // Function to open the popup (modal)
+    async function openPopup() {
+        const workspace_id = getWorkspaceIdFromUrl();
+        const modal = document.getElementById("predictionModal");
+        const workspaceIdDisplay = document.getElementById("workspaceIdDisplay");
+        const predictionButtons = document.getElementById("predictionButtons");
+
+        if (!modal || !workspaceIdDisplay || !predictionButtons) {
+            console.error("Modal, workspace ID display, or prediction buttons element not found.");
+            return;
+        }
+
+        // Set workspace ID display
+        const displayId = workspace_id.length > 8 ? `${workspace_id.slice(0, 6)}...` : workspace_id;
+        workspaceIdDisplay.textContent = `Workspace: ${displayId}`;
+
+        // Show loading state for buttons
+        predictionButtons.innerHTML = '<p class="loading">Loading predictions...</p>';
+
+        try {
+            // Fetch prediction configurations
+            const response = await fetch(`/api/v0/get_prediction_configs?workspace_id=${encodeURIComponent(workspace_id)}`);
+            const data = await response.json();
+
+            if (data.type === "error") {
+                predictionButtons.innerHTML = `<p class="error">Error: ${data.error}</p>`;
+                return;
+            }
+
+            const predictions = data.predictions || [];
+            predictionButtons.innerHTML = ""; // Clear loading state
+
+            if (predictions.length === 0) {
+                predictionButtons.innerHTML = "<p>No predictions available.</p>";
+            } else {
+                // Add buttons for enabled predictions
+                predictions.forEach(prediction => {
+                    if (prediction.enabled) {
+                        const button = document.createElement("button");
+                        button.className = "prediction-btn";
+                        button.textContent = formatPredictionType(prediction.type);
+                        button.onclick = () => fetchPrediction(prediction.type);
+                        predictionButtons.appendChild(button);
+                    }
+                });
+            }
+        } catch (error) {
+            predictionButtons.innerHTML = `<p class="error">Failed to load predictions: ${error.message}</p>`;
+        }
+
+        // Show the modal
+        modal.style.display = "flex";
+    }
+
+    // Function to close the popup (modal)
+    function closePopup() {
+        const modal = document.getElementById("predictionModal");
+        if (modal) {
+            modal.style.display = "none";
+        }
+    }
+
+    // Function to fetch prediction data and display in a table
+    async function fetchPrediction(prediction_type) {
+        const workspace_id = getWorkspaceIdFromUrl();
+        const resultDiv = document.getElementById("result");
+        resultDiv.innerHTML = '<p class="loading">Loading...</p>';
+
+        try {
+            const response = await fetch(`/api/v0/run_prediction?workspace_id=${encodeURIComponent(workspace_id)}&prediction_type=${encodeURIComponent(prediction_type)}`);
+            const data = await response.json();
+
+            if (data.type === "error" || data.type === "sql_error") {
+                resultDiv.innerHTML = `<p class="error">Error: ${data.error}</p>`;
+                return;
+            }
+
+            if (data.df && data.df.length > 0) {
+                const table = document.createElement("table");
+                const thead = document.createElement("thead");
+                const tbody = document.createElement("tbody");
+
+                // Create table headers
+                const headers = Object.keys(data.df[0]);
+                const headerRow = document.createElement("tr");
+                headers.forEach(header => {
+                    const th = document.createElement("th");
+                    th.textContent = header.replace("_", " ").toUpperCase();
+                    headerRow.appendChild(th);
+                });
+                thead.appendChild(headerRow);
+
+                // Create table rows
+                data.df.forEach(row => {
+                    const tr = document.createElement("tr");
+                    headers.forEach(header => {
+                        const td = document.createElement("td");
+                        td.textContent = row[header] ?? "NULL";
+                        tr.appendChild(td);
+                    });
+                    tbody.appendChild(tr);
+                });
+
+                table.appendChild(thead);
+                table.appendChild(tbody);
+                resultDiv.innerHTML = "";
+                resultDiv.appendChild(table);
+            } else {
+                resultDiv.innerHTML = "<p>No data available.</p>";
+            }
+        } catch (error) {
+            resultDiv.innerHTML = `<p class="error">Failed to fetch prediction: ${error.message}</p>`;
+        }
+    }
+
+    // Optional: Close modal when clicking outside the modal content
+    document.addEventListener("click", function (event) {
+        const modal = document.getElementById("predictionModal");
+        const modalContent = document.querySelector(".modal-content");
+        if (modal && event.target === modal && modal.style.display === "flex") {
+            closePopup();
+        }
+    });
+
+
+
+    function hideTargetButtons() {
+        document.querySelectorAll('button').forEach(btn => {
+            const text = (btn.innerText || btn.textContent || '').trim();
+            if (['Edit Question', 'New Question', 'Add New Question'].includes(text)) {
+                const li = btn.closest('li');
+                if (li) li.style.display = 'none';
+            }
+        });
+    }
+
+    // Run now
+    hideTargetButtons();
+
+    // Watch for future additions (e.g., Svelte re-renders)
+    const observer = new MutationObserver(hideTargetButtons);
+    observer.observe(document.body, { childList: true, subtree: true });
+
+
+
+</script>
+
+
+<script>
+  window.showToast = function (message, type = "success") {
+    Toastify({
+      text: message,
+      duration: 3000,
+      gravity: "top",
+      position: "center",
+      close: true,
+      stopOnFocus: true,
+      style: {
+        background:
+          type === "success"
+            ? "#22c55e"   // green
+            : "#ef4444",  // red
+      },
+    }).showToast();
+  };
+</script>
+
+
+<script>
+  // Override default alert behavior globally
+  window.alert = function (message) {
+    const text = String(message || "");
+
+    // Heuristic mapping
+    if (
+      text.toLowerCase().includes("thank") ||
+      text.toLowerCase().includes("saved")
+    ) {
+      showToast(text, "success");
+    } else {
+      showToast(text, "error");
+    }
+  };
+</script>
+
+
+
+
+    
+  </body>
+</html>
