@@ -803,11 +803,33 @@ class VannaBase(ABC):
             '  For "every other <weekday>" (a fortnight cadence cron alone cannot express):\n'
             '  set "day_of_week" to that weekday and set "fortnight_anchor": true so the\n'
             '  caller can gate alternating weeks at runtime.\n'
-            '- "conditional": the request is watching for a threshold/event, not a time\n'
-            '  ("email me when stock drops below 10", "notify me if an order fails").\n'
-            '  This app cannot watch for conditions yet — set\n'
-            '  {"condition_text": "<the condition, verbatim>"} and do NOT invent a\n'
-            '  polling schedule for it.\n\n'
+            '- "conditional": the request is watching for a threshold/event/state, not a\n'
+            '  fixed time. Set {"condition_text": "<the condition, verbatim>",\n'
+            '  "seconds": <int, only if a check frequency was actually stated, e.g. "check\n'
+            '  every hour" -> 3600; omit entirely if no frequency was mentioned>}.\n'
+            '  ALSO set the top-level "question" field to a rephrasing of the condition as\n'
+            '  a question asking which records CURRENTLY satisfy it — this must return a\n'
+            '  row per matching record (never a count; COUNT(*) always returns exactly one\n'
+            '  row regardless of the true count, which breaks "non-empty result = true").\n'
+            '  Generalize the rephrasing to whatever shape the condition takes, do not\n'
+            '  assume it is a numeric threshold:\n'
+            '    - threshold ("X below/above N") -> "which records have X below/above N"\n'
+            '    - status/event ("if an order fails") -> "which orders currently have a\n'
+            '      failed status"\n'
+            '    - negation ("if no drivers are available") -> phrase so a non-empty\n'
+            '      result IS the alerting case, e.g. "is there a lack of available\n'
+            '      drivers" / "which warehouses currently have zero available drivers"\n'
+            '  Preserve any scope/filter mentioned (a specific warehouse, a specific\n'
+            '  queue, etc.) in the rephrased question. Do NOT decline or say this isn\'t\n'
+            '  supported — conditional watching is supported for any condition shape.\n'
+            '  The rephrased question\'s query MUST select a stable per-record identifier\n'
+            '  (a primary key, order ID, item code, device ID, etc.) as its FIRST column —\n'
+            '  the same value for the same real-world record on every future check, never\n'
+            '  a live timestamp, an elapsed duration, or anything else derived from "now".\n'
+            '  This lets the caller tell which specific records are NEWLY matching on each\n'
+            '  check (a condition can gain new matching records continuously — e.g. more\n'
+            '  items becoming "shipped" over time — and each such new record must still be\n'
+            '  reported even though the condition overall was already true).\n\n'
             "If the text isn't a schedulable request at all, set \"ok\": false and put a short\n"
             "human-readable reason in \"error\"; leave \"schedule\" null."
         )
@@ -1992,7 +2014,15 @@ class VannaBase(ABC):
                     f"Qualify EVERY secondary-database table with its three-part name: {secondary_db_name}.dbo.<table_name> "
                     "('dbo' is the default schema — use the schema documentation actually specifies if it differs). "
                     "Join it to primary-database tables normally, using the documented key columns — exactly as you "
-                    "would join any other table. Never qualify a primary-database table with any prefix.\n\n"
+                    "would join any other table. Never qualify a primary-database table with any prefix.\n"
+                    "The two databases may have different default collations even though they share an instance. "
+                    "If a JOIN or WHERE condition compares a string/varchar column from one database against a "
+                    "string/varchar column from the other, add COLLATE SQL_Latin1_General_CP1_CI_AS to at least one "
+                    "side of that specific comparison (e.g. ON a.col = b.col COLLATE SQL_Latin1_General_CP1_CI_AS) "
+                    "to avoid a collation-conflict error — purely numeric join keys don't need this. Do NOT use "
+                    "LOWER()/UPPER() to try to work around a collation conflict — those functions preserve the "
+                    "input's original collation and will NOT fix the error; only an explicit COLLATE clause "
+                    "changes which collation a comparison uses.\n\n"
                 )
             else:
                 prompt += (
@@ -2024,7 +2054,9 @@ class VannaBase(ABC):
                     "string/varchar column from the OPENQUERY(...) result against a primary-database column, add "
                     "COLLATE SQL_Latin1_General_CP1_CI_AS to that side of the comparison (e.g. "
                     "ON I.col = T.col COLLATE SQL_Latin1_General_CP1_CI_AS) to avoid a collation-conflict error — "
-                    "purely numeric join keys don't need this.\n\n"
+                    "purely numeric join keys don't need this. Do NOT use LOWER()/UPPER() to try to work around a "
+                    "collation conflict — those functions preserve the input's original collation and will NOT "
+                    "fix the error; only an explicit COLLATE clause changes which collation a comparison uses.\n\n"
                 )
 
         # ────────────────────────────────────────────────
@@ -2063,7 +2095,13 @@ class VannaBase(ABC):
             "1. Every table and column MUST appear in documentation, examples or mappings.\n"
             "2. No cross-table column transfer.\n"
             "3. No invented joins unless explicitly present in an example.\n"
-            "4. Case-insensitive string compares: use LOWER() on both sides.\n"
+            "4. Case-insensitive string compares: use LOWER() on both sides — EXCEPT when the two "
+            "sides come from different databases in a cross-database query (see the Cross-Database "
+            "Query section above if present). LOWER() does NOT resolve a collation conflict between "
+            "databases — it preserves each side's original collation and the comparison will still "
+            "fail. For a cross-database comparison, use COLLATE SQL_Latin1_General_CP1_CI_AS on at "
+            "least one side instead (this is already case-insensitive, so LOWER() is unnecessary "
+            "there).\n"
             "5. If validation fails at any point → return exactly:\n"
             "   Insufficient data for query.\n"
             "6. Output format: ONLY the code block — nothing else.\n\n"

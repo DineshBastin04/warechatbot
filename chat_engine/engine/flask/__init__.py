@@ -278,26 +278,106 @@ def _log_unpick(level: str, message: str, order_number: str = None, item_number:
     else:
         logger.info(message)
 
- # Add this configuration at the top of the file after imports
-USER_MANAGEMENT_CONNECTION_STRING = (
-    "DRIVER={ODBC Driver 17 for SQL Server};"
-    f"SERVER={os.getenv('FEEDBACK_DB_SERVER', '192.168.1.74,7274')};"
-    f"DATABASE={os.getenv('FEEDBACK_DB_NAME', 'tychons_wi')};"
-    f"UID={os.getenv('FEEDBACK_DB_USER', 'user')};"
-    f"PWD={os.getenv('FEEDBACK_DB_PASSWORD', '')};"
-    "Trusted_Connection=yes;"
-)
-
-
-
-
+# Feedback DB connection — every field must come from the environment; no
+# hardcoded server/database/username fallbacks (a misconfigured deployment
+# should fail loudly, not silently connect to some other real box).
 USER_FEEDBACK_CONNECTION_STRING = (
     "DRIVER={ODBC Driver 17 for SQL Server};"
-    f"SERVER={os.getenv('FEEDBACK_DB_SERVER', '192.168.1.74,7274')};"
-    f"DATABASE={os.getenv('FEEDBACK_DB_NAME', 'tychons_wi')};"
-    f"UID={os.getenv('FEEDBACK_DB_USER', 'user')};"
+    f"SERVER={os.getenv('FEEDBACK_DB_SERVER', '')};"
+    f"DATABASE={os.getenv('FEEDBACK_DB_NAME', '')};"
+    f"UID={os.getenv('FEEDBACK_DB_USER', '')};"
     f"PWD={os.getenv('FEEDBACK_DB_PASSWORD', '')};"
 )
+
+
+def _ensure_feedback_schema(user_mgmt_config):
+    """
+    Best-effort, idempotent auto-provisioning for the feedback/user-activity
+    database on a fresh deployment — creates the database (if missing) and the
+    'users'/'user_feedback' tables (if missing) so a new environment doesn't
+    need manual DBA setup before feedback/activity logging works. Never raises:
+    on any failure (unconfigured, unreachable, or the SQL login lacking
+    CREATE DATABASE rights) this logs a clear warning and lets startup
+    continue, the same "never raises" contract _sync_linked_server uses —
+    every write against this DB already degrades gracefully (file-fallback
+    logging) if the schema still isn't there.
+    """
+    server = user_mgmt_config.get('server')
+    port = user_mgmt_config.get('port')
+    database = user_mgmt_config.get('database')
+    username = user_mgmt_config.get('username')
+    password = user_mgmt_config.get('password')
+
+    if not (server and database and username):
+        logger.info("Feedback DB not configured — skipping schema auto-provisioning.", extra={"admin": True})
+        return
+
+    server_part = f"{server},{port}" if port else server
+
+    try:
+        # CREATE DATABASE cannot run inside a transaction, and the target
+        # database may not exist yet — connect to master first, autocommit on.
+        master_conn_str = (
+            "DRIVER={ODBC Driver 17 for SQL Server};"
+            f"SERVER={server_part};DATABASE=master;UID={username};PWD={password};"
+        )
+        with pyodbc.connect(master_conn_str, timeout=15, autocommit=True) as conn:
+            cursor = conn.cursor()
+            cursor.execute(f"IF DB_ID(N'{database}') IS NULL CREATE DATABASE [{database}]")
+        logger.info(f"Feedback DB '{database}' confirmed/created.", extra={"admin": True})
+
+        db_conn_str = (
+            "DRIVER={ODBC Driver 17 for SQL Server};"
+            f"SERVER={server_part};DATABASE={database};UID={username};PWD={password};"
+        )
+        with pyodbc.connect(db_conn_str, timeout=15, autocommit=True) as conn:
+            cursor = conn.cursor()
+            cursor.execute("""
+                IF OBJECT_ID('dbo.users', 'U') IS NULL
+                BEGIN
+                    CREATE TABLE dbo.users (
+                        question_id         VARCHAR(100)   NOT NULL PRIMARY KEY,
+                        question             NVARCHAR(4000) NULL,
+                        sql_query            NVARCHAR(4000) NULL,
+                        summary              NVARCHAR(4000) NULL,
+                        plot_data            NVARCHAR(4000) NULL,
+                        workspace_name       NVARCHAR(255)  NULL,
+                        workspace_id         NVARCHAR(100)  NULL,
+                        timestamp            DATETIME       NULL,
+                        user_role            NVARCHAR(100)  NULL,
+                        user_id              NVARCHAR(100)  NULL,
+                        detected_language    NVARCHAR(20)   NULL,
+                        token_count          INT            NULL,
+                        input_tokens         INT            NULL,
+                        output_tokens        INT            NULL,
+                        cached_input_tokens  INT            NULL,
+                        cost_usd             FLOAT          NULL,
+                        model_name           NVARCHAR(100)  NULL
+                    )
+                END
+            """)
+            cursor.execute("""
+                IF OBJECT_ID('dbo.user_feedback', 'U') IS NULL
+                BEGIN
+                    CREATE TABLE dbo.user_feedback (
+                        id            INT IDENTITY(1,1) PRIMARY KEY,
+                        workspace_id  NVARCHAR(100)  NULL,
+                        question_id   NVARCHAR(100)  NULL,
+                        question      NVARCHAR(4000) NULL,
+                        sql           NVARCHAR(4000) NULL,
+                        rating        INT            NULL,
+                        comment       NVARCHAR(2000) NULL,
+                        created_at    DATETIME       NULL,
+                        email_sent    BIT            NOT NULL DEFAULT 0
+                    )
+                END
+            """)
+        logger.info("Feedback DB tables 'users'/'user_feedback' confirmed/created.", extra={"admin": True})
+    except Exception as e:
+        logger.warning(
+            f"Feedback DB schema auto-provisioning skipped (best-effort): {e}",
+            extra={"admin": True},
+        )
 
 
 TRANSLATE_API_KEY = os.getenv("GOOGLE_TRANSLATE_API_KEY")
@@ -333,8 +413,9 @@ adapter.on_turn_error = on_error
 # Global conversation references
 conversation_references = {}
 
-#incoming webhook for actual demo
-INCOMING_WEBHOOK_URL="https://tychonsolution.webhook.office.com/webhookb2/7b239272-a2c9-487f-8bfb-b9e9dd38ac2c@df39b915-b72f-429a-8164-4983c27bb320/IncomingWebhook/3359896e687a4439bb16318969ba78c1/2252290e-4347-4e52-8966-7c8fb757ae90/V2k6PJOa5-c4Ja9-faqcuNfqh6n9Xn_0ZamAKjDyR525w1"
+#incoming webhook for actual demo — must be set via env; no hardcoded fallback
+# (the URL previously hardcoded here is a live secret and must be rotated in Teams)
+INCOMING_WEBHOOK_URL = os.getenv("TEAMS_INCOMING_WEBHOOK_URL", "")
 vn = None
 
 
@@ -513,14 +594,18 @@ class MemoryCache(Cache):
         self.user_caches: Dict[str, Dict[str, Dict[str, Any]]] = {}
         # last_ids: { user_id: { workspace_id: last_id } }
         self.last_ids: Dict[str, Dict[str, Optional[str]]] = {}
+        # Every field falls back through the FEEDBACK_DB_* env vars, then to an
+        # empty string — never a hardcoded real server/database/username. A
+        # deployment with nothing configured must fail loudly, not silently
+        # connect to some other real box.
         self.user_mgmt_config = {
-            'server': os.environ.get('USER_MGMT_SERVER', '192.168.1.74'),
-            'port': os.environ.get('USER_MGMT_PORT', '7274'),
-            'database': os.environ.get('USER_MGMT_DATABASE', 'tychons_wi'),
-            'username': os.environ.get('USER_MGMT_USERNAME', 'user'),
+            'server': os.environ.get('USER_MGMT_SERVER', os.environ.get('FEEDBACK_DB_SERVER', '')),
+            'port': os.environ.get('USER_MGMT_PORT', os.environ.get('FEEDBACK_DB_PORT', '')),
+            'database': os.environ.get('USER_MGMT_DATABASE', os.environ.get('FEEDBACK_DB_NAME', '')),
+            'username': os.environ.get('USER_MGMT_USERNAME', os.environ.get('FEEDBACK_DB_USER', '')),
             'password': os.environ.get('USER_MGMT_PASSWORD', os.environ.get('FEEDBACK_DB_PASSWORD', ''))
         }
-        
+
         import threading
         from collections import defaultdict
 
@@ -677,7 +762,7 @@ class MemoryCache(Cache):
         cfg = self.user_mgmt_config
         conn_str = (
             f"DRIVER={{ODBC Driver 17 for SQL Server}};"
-            f"SERVER={cfg['server']},{cfg['port']};"
+            f"SERVER={cfg['server']}{',' + cfg['port'] if cfg['port'] else ''};"
             f"DATABASE={cfg['database']};"
             f"UID={cfg['username']};"
             f"PWD={cfg['password']};"
@@ -4867,13 +4952,18 @@ class VannaFlaskApp(VannaFlaskAPI):
         openai_ef = embedding_functions.OpenAIEmbeddingFunction(api_key=os.getenv("OPENAI_API_KEY"),model_name="text-embedding-3-large")
         self.sop_collection = self.client.get_or_create_collection(name="SOP_documents", embedding_function=openai_ef) #sop agents
 
+        # Every field falls back through the FEEDBACK_DB_* env vars, then to an
+        # empty string — never a hardcoded real server/database/username. A
+        # deployment with nothing configured must fail loudly, not silently
+        # connect to some other real box.
         self.user_mgmt_config = {
-            'server': os.environ.get('USER_MGMT_SERVER', '192.168.1.74'),  # Default fallback
-            'port': os.environ.get('USER_MGMT_PORT', '7274'),
-            'database': os.environ.get('USER_MGMT_DATABASE', 'tychons_wi'),
-            'username': os.environ.get('USER_MGMT_USERNAME', 'user'),  # Default fallback
-            'password': os.environ.get('USER_MGMT_PASSWORD', os.environ.get('FEEDBACK_DB_PASSWORD', ''))  # Default fallback
+            'server': os.environ.get('USER_MGMT_SERVER', os.environ.get('FEEDBACK_DB_SERVER', '')),
+            'port': os.environ.get('USER_MGMT_PORT', os.environ.get('FEEDBACK_DB_PORT', '')),
+            'database': os.environ.get('USER_MGMT_DATABASE', os.environ.get('FEEDBACK_DB_NAME', '')),
+            'username': os.environ.get('USER_MGMT_USERNAME', os.environ.get('FEEDBACK_DB_USER', '')),
+            'password': os.environ.get('USER_MGMT_PASSWORD', os.environ.get('FEEDBACK_DB_PASSWORD', ''))
         }
+        _ensure_feedback_schema(self.user_mgmt_config)
         self.config["logo"] = logo
         self.config["title"] = title
         self.config["subtitle"] = subtitle
@@ -5661,7 +5751,10 @@ class VannaFlaskApp(VannaFlaskAPI):
                     # seconds so "send this now" reliably still fires.
                     run_at = now + timedelta(seconds=5)
                 return DateTrigger(run_date=run_at, timezone=tz)
-            if schedule_type == "interval":
+            if schedule_type in ("interval", "conditional"):
+                # A conditional agent polls on a plain interval too — the only
+                # difference is how the result is interpreted at fire time
+                # (see _run_scheduled_question), not how it's scheduled.
                 return IntervalTrigger(seconds=int(schedule["seconds"]), timezone=tz)
             if schedule_type == "cron":
                 cron_fields = {
@@ -5678,6 +5771,8 @@ class VannaFlaskApp(VannaFlaskAPI):
                 return f"once, at {schedule.get('run_at')} ({tz})"
             if schedule_type == "interval":
                 return f"every {schedule.get('seconds')} second(s)"
+            if schedule_type == "conditional":
+                return f"checking every {schedule.get('seconds')}s whether: {schedule.get('condition_text', '')}"
             if schedule_type == "cron":
                 parts = [
                     f"{k}={v}" for k, v in schedule.items()
@@ -5685,6 +5780,16 @@ class VannaFlaskApp(VannaFlaskAPI):
                 ]
                 return f"on a schedule ({', '.join(parts)}) ({tz})"
             return "on an unrecognized schedule"
+
+        def _condition_row_key(row):
+            """Stable identity for one row of a conditional agent's match query, used
+            to diff which specific records are newly matching across polls (not just
+            whether the condition is non-empty overall — see extract_schedule_request's
+            conditional prompt block, which requires the first selected column to be a
+            stable per-record identifier). Returns None for an empty/falsy row."""
+            if not row:
+                return None
+            return str(next(iter(row.values())))
 
         def _get_schedule_records(workspace_id):
             """Returns (workspace_metadata_dict, records_list) or (None, None) if the workspace doesn't exist."""
@@ -5792,22 +5897,67 @@ class VannaFlaskApp(VannaFlaskAPI):
                     return _fail("error", f"Query failed: {run_exc}")
                 rows = df.to_dict(orient="records") if df is not None and len(df) else []
 
-                if record.get("channel") == "email" and record.get("email_recipients"):
-                    try:
-                        _send_email(
-                            record["email_recipients"],
-                            f"[Scheduled] {record['display_question']}",
-                            f"{len(rows)} row(s) for: {record['display_question']}",
-                            rows,
-                            f"{schedule_id}_{_dt.now():%Y%m%d_%H%M%S}.csv",
-                        )
-                    except Exception as email_exc:
-                        logger.exception(f"Scheduled question {schedule_id} email delivery failed: {email_exc}")
+                def _deliver(rows):
+                    if record.get("channel") == "email" and record.get("email_recipients"):
+                        try:
+                            _send_email(
+                                record["email_recipients"],
+                                f"[Scheduled] {record['display_question']}",
+                                f"{len(rows)} row(s) for: {record['display_question']}",
+                                rows,
+                                f"{schedule_id}_{_dt.now():%Y%m%d_%H%M%S}.csv",
+                            )
+                        except Exception as email_exc:
+                            logger.exception(f"Scheduled question {schedule_id} email delivery failed: {email_exc}")
+                    else:
+                        record.setdefault("chat_inbox", []).append({
+                            "text": f"Scheduled result for \"{record['display_question']}\": {len(rows)} row(s).",
+                            "created_at": time.time(),
+                        })
+
+                def _deliver_condition_matches(new_rows, total_matching):
+                    subject = f"[Alert] {record['display_question']}"
+                    body = (
+                        f"{len(new_rows)} new record(s) now match: {record['display_question']} "
+                        f"({total_matching} matching in total)."
+                    )
+                    if record.get("channel") == "email" and record.get("email_recipients"):
+                        try:
+                            _send_email(
+                                record["email_recipients"],
+                                subject,
+                                body,
+                                new_rows,
+                                f"{schedule_id}_{_dt.now():%Y%m%d_%H%M%S}.csv",
+                            )
+                        except Exception as email_exc:
+                            logger.exception(f"Scheduled question {schedule_id} email delivery failed: {email_exc}")
+                    else:
+                        record.setdefault("chat_inbox", []).append({
+                            "text": body,
+                            "created_at": time.time(),
+                        })
+
+                if schedule.get("type") == "conditional":
+                    # Diff which SPECIFIC records currently match against what matched
+                    # on the previous poll — an aggregate true/false isn't enough,
+                    # since a condition can keep gaining new matching records forever
+                    # (e.g. more items becoming "shipped" over time) without the
+                    # aggregate ever going back to false in between.
+                    key_to_row = {}
+                    for row in rows:
+                        key = _condition_row_key(row)
+                        if key is not None:
+                            key_to_row.setdefault(key, row)
+                    current_keys = set(key_to_row)
+                    previous_keys = set(record.get("matched_keys") or [])
+                    new_keys = current_keys - previous_keys
+                    record["matched_keys"] = sorted(current_keys)
+                    record["last_condition_state"] = bool(current_keys)  # /list display cache only
+                    if new_keys:
+                        _deliver_condition_matches([key_to_row[k] for k in sorted(new_keys)], len(current_keys))
                 else:
-                    record.setdefault("chat_inbox", []).append({
-                        "text": f"Scheduled result for \"{record['display_question']}\": {len(rows)} row(s).",
-                        "created_at": time.time(),
-                    })
+                    _deliver(rows)
 
                 record["last_status"] = "ok"
                 record["last_sql"] = sql
@@ -5818,6 +5968,9 @@ class VannaFlaskApp(VannaFlaskAPI):
                     # DateTrigger fires exactly once and auto-removes itself from the
                     # scheduler — disable the persisted record to match.
                     record["enabled"] = False
+                # Conditional agents never auto-disable — they keep monitoring
+                # indefinitely (re-arming each time the condition returns to false)
+                # until the user explicitly /stops them.
 
                 _save_schedule_records(workspace_id, metadata, records)
             except Exception as e:
@@ -8423,11 +8576,15 @@ class VannaFlaskApp(VannaFlaskAPI):
                     return jsonify({"type": "text", "text": "You have no scheduled agents in this workspace."})
                 def _status_suffix(r):
                     status = r.get("last_status")
+                    condition_suffix = ""
+                    if r.get("schedule", {}).get("type") == "conditional":
+                        keys = r.get("matched_keys")
+                        condition_suffix = " — currently: not yet checked" if keys is None else f" — currently: {len(keys)} matching"
                     if status == "ok":
-                        return f" — last run OK ({r.get('run_count', 0)}x)"
+                        return f" — last run OK ({r.get('run_count', 0)}x){condition_suffix}"
                     if status in ("error", "rejected"):
-                        return f" — last run FAILED: {r.get('last_error') or 'unknown error'}"
-                    return " — not yet run"
+                        return f" — last run FAILED: {r.get('last_error') or 'unknown error'}{condition_suffix}"
+                    return f" — not yet run{condition_suffix}"
 
                 lines = [
                     f"{r['schedule_id']} — {r.get('display_question', '')} — "
@@ -8481,14 +8638,11 @@ class VannaFlaskApp(VannaFlaskAPI):
                 })
 
             schedule = extraction["schedule"]
-            if schedule.get("type") == "conditional":
-                return jsonify({
-                    "type": "text",
-                    "text": "I can run this on a schedule, but I can't yet watch for a condition like that. "
-                            "Want it on a regular interval instead (e.g. hourly)?",
-                })
+            is_conditional = schedule.get("type") == "conditional"
+            if is_conditional and not schedule.get("seconds"):
+                schedule["seconds"] = 1800  # no check frequency stated — default to every 30 min
 
-            question_en = extraction.get("question") or prior_question
+            question_en = extraction.get("question") or (schedule.get("condition_text") if is_conditional else None) or prior_question
             if not question_en:
                 return jsonify({
                     "type": "error",
@@ -8572,11 +8726,52 @@ class VannaFlaskApp(VannaFlaskAPI):
                     "error": f"That schedule fires more than once within {MIN_SCHEDULE_INTERVAL_SECONDS // 60} "
                              f"minutes — please choose a longer interval.",
                 }), 400
-            if schedule.get("type") == "interval" and int(schedule.get("seconds", 0)) < MIN_SCHEDULE_INTERVAL_SECONDS:
+            if schedule.get("type") in ("interval", "conditional") and int(schedule.get("seconds", 0)) < MIN_SCHEDULE_INTERVAL_SECONDS:
                 return jsonify({
                     "type": "error",
-                    "error": f"Please choose an interval of at least {MIN_SCHEDULE_INTERVAL_SECONDS // 60} minutes.",
+                    "error": f"Please choose a check interval of at least {MIN_SCHEDULE_INTERVAL_SECONDS // 60} minutes.",
                 }), 400
+
+            # Conditional agents run indefinitely, so — unlike every other type,
+            # which defers all SQL generation to the first fire — run the full
+            # chain once here: catches a broken condition immediately instead of
+            # only at the first poll, and lets the confirmation echo show the
+            # condition's current state. This is a real query, but never delivers
+            # a notification for it — the user asked to hear about *future*
+            # transitions, not be re-told what the echo already shows them.
+            initial_condition_state = None
+            initial_matched_keys = None
+            condition_preview_error = None
+            condition_row_count = 0
+            if is_conditional:
+                sql, *_rest = vn.generate_sql(question=question_en, workspace=metadata.get("name") or str(workspace_id))
+                if (not vn.is_sql_valid(sql)) or not sql.strip().lower().startswith("select"):
+                    condition_preview_error = "Generated SQL was not a valid SELECT statement."
+                else:
+                    ok2, err2 = vn.validate_openquery_literals(sql)
+                    ok3, err3 = (True, "") if not ok2 else vn.validate_db_scope(sql)
+                    if not ok2:
+                        condition_preview_error = err2
+                    elif not ok3:
+                        condition_preview_error = err3
+                    else:
+                        try:
+                            df = vn.run_sql(sql)
+                            condition_row_count = len(df) if df is not None else 0
+                            initial_condition_state = condition_row_count > 0
+                            # Seed the baseline match set from this creation-time check —
+                            # these already-matching records must NOT be reported as "new"
+                            # the moment the first real poll runs (the echo below already
+                            # tells the user what currently matches).
+                            preview_rows = df.to_dict(orient="records") if df is not None and len(df) else []
+                            initial_matched_keys = sorted({
+                                key for key in (_condition_row_key(r) for r in preview_rows)
+                                if key is not None
+                            })
+                        except Exception as check_exc:
+                            condition_preview_error = f"Condition check failed: {check_exc}"
+                if condition_preview_error:
+                    return jsonify({"type": "error", "error": f"Couldn't set up that condition: {condition_preview_error}"}), 400
 
             schedule_id = uuid.uuid4().hex[:8]
             record = {
@@ -8585,7 +8780,7 @@ class VannaFlaskApp(VannaFlaskAPI):
                 "workspace_id": str(workspace_id),
                 "workspace_name": metadata.get("name") or str(workspace_id),
                 "question_en": question_en,
-                "display_question": question_en,
+                "display_question": schedule.get("condition_text") if is_conditional else question_en,
                 "channel": channel,
                 "email_recipients": email_recipients,
                 "schedule": schedule,
@@ -8598,6 +8793,8 @@ class VannaFlaskApp(VannaFlaskAPI):
                 "last_sql": None,
                 "run_count": 0,
                 "chat_inbox": [],
+                "last_condition_state": initial_condition_state,
+                "matched_keys": initial_matched_keys,
             }
             records.append(record)
             _save_schedule_records(workspace_id, metadata, records)
@@ -8614,6 +8811,17 @@ class VannaFlaskApp(VannaFlaskAPI):
             )
 
             note = ("Note: " + "; ".join(extraction["ambiguous"]) + "\n") if extraction.get("ambiguous") else ""
+            if is_conditional:
+                echo = (
+                    f"{note}Watching: {schedule.get('condition_text', question_en)}, "
+                    f"checked every {schedule['seconds']}s.\n"
+                    f"Currently: {condition_row_count} record(s) match.\n"
+                    f"You'll be notified by {channel} whenever a NEW record starts matching — "
+                    f"not the {condition_row_count} that already match now.\n"
+                    f"Reply `/stop {schedule_id}` to cancel."
+                )
+                return jsonify({"type": "text", "text": echo})
+
             fire_list = " · ".join(f.strftime("%a %d %b %H:%M") for f in fires)
             echo = (
                 f"{note}Scheduled: {question_en}, {_describe_schedule(schedule)}, by {channel}.\n"
@@ -10019,7 +10227,7 @@ class VannaFlaskApp(VannaFlaskAPI):
             logger.info(f"[BILLING] Monthly summary for start {start_dt} end {end_dt}", extra={"admin": True})
             conn_str = (
                 f"DRIVER={{ODBC Driver 17 for SQL Server}};"
-                f"SERVER={self.user_mgmt_config['server']},{self.user_mgmt_config['port']};"
+                f"SERVER={self.user_mgmt_config['server']}{',' + self.user_mgmt_config['port'] if self.user_mgmt_config['port'] else ''};"
                 f"DATABASE={self.user_mgmt_config['database']};"
                 f"UID={self.user_mgmt_config['username']};"
                 f"PWD={self.user_mgmt_config['password']};"
@@ -11806,7 +12014,7 @@ class VannaFlaskApp(VannaFlaskAPI):
             try:
                 conn_str = (
                     f"DRIVER={{ODBC Driver 17 for SQL Server}};"
-                    f"SERVER={self.user_mgmt_config['server']},{self.user_mgmt_config['port']};"
+                    f"SERVER={self.user_mgmt_config['server']}{',' + self.user_mgmt_config['port'] if self.user_mgmt_config['port'] else ''};"
                     f"DATABASE={self.user_mgmt_config['database']};"
                     f"UID={self.user_mgmt_config['username']};"
                     f"PWD={self.user_mgmt_config['password']};"
@@ -11995,7 +12203,7 @@ class VannaFlaskApp(VannaFlaskAPI):
         try:
             conn_str = (
                 f"DRIVER={{ODBC Driver 17 for SQL Server}};"
-                f"SERVER={self.user_mgmt_config['server']},{self.user_mgmt_config['port']};"
+                f"SERVER={self.user_mgmt_config['server']}{',' + self.user_mgmt_config['port'] if self.user_mgmt_config['port'] else ''};"
                 f"DATABASE={self.user_mgmt_config['database']};"
                 f"UID={self.user_mgmt_config['username']};"
                 f"PWD={self.user_mgmt_config['password']};"
@@ -12135,7 +12343,8 @@ def process_request(user_message, vn):
         # Step 3: Validate SQL
         if not vn.is_sql_valid(extracted_sql):
             payload = {"text": "Invalid SQL generated."}
-            requests.post(INCOMING_WEBHOOK_URL, json=payload)
+            if INCOMING_WEBHOOK_URL:
+                requests.post(INCOMING_WEBHOOK_URL, json=payload)
             return
 
         # Step 4: Execute the Query
@@ -12211,13 +12420,15 @@ def process_request(user_message, vn):
 
         # Post final response to incoming webhook
         payload = {"text": response_text}
-        requests.post(INCOMING_WEBHOOK_URL, json=payload)
+        if INCOMING_WEBHOOK_URL:
+            requests.post(INCOMING_WEBHOOK_URL, json=payload)
 
 
     except Exception as e:
         error_text = f"Error: {str(e)}"
         payload = {"text": error_text}
-        requests.post(INCOMING_WEBHOOK_URL, json=payload)
+        if INCOMING_WEBHOOK_URL:
+            requests.post(INCOMING_WEBHOOK_URL, json=payload)
 
 
 
