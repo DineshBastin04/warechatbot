@@ -730,6 +730,13 @@ class VannaBase(ABC):
               "timezone": "<IANA tz string>",
               "fortnight_anchor": bool,   # true only for "every other <weekday>"
           } | None,
+          "also_run_now": bool,  # true only when the request explicitly asks for
+                                  # an immediate delivery IN ADDITION to the
+                                  # recurring/future "schedule" above (e.g. "send
+                                  # this now and every Monday") — caller should
+                                  # queue a second, one-off "date"-type run in
+                                  # this case, since "schedule" itself never
+                                  # encodes both a "now" run and a recurrence.
           "ambiguous": [str],   # things the model had to guess at (am/pm, an
                                  # implicit timezone, day-of-month vs anniversary,
                                  # etc.) — surfaced back to the user before the
@@ -773,6 +780,7 @@ class VannaBase(ABC):
             '    "timezone": "<IANA timezone, e.g. Asia/Kolkata>",\n'
             '    "fortnight_anchor": true or false\n'
             '  },\n'
+            '  "also_run_now": true or false,\n'
             '  "ambiguous": ["<short note on anything you had to guess>", ...],\n'
             '  "error": null\n'
             "}\n\n"
@@ -830,6 +838,17 @@ class VannaBase(ABC):
             '  check (a condition can gain new matching records continuously — e.g. more\n'
             '  items becoming "shipped" over time — and each such new record must still be\n'
             '  reported even though the condition overall was already true).\n\n'
+            '"also_run_now" field:\n'
+            '  Set true ONLY when the request explicitly asks for an IMMEDIATE delivery IN\n'
+            '  ADDITION to a separately-described recurring/future schedule — the request names\n'
+            '  BOTH "now" (or equivalent) AND a recurrence/future time in the same message, e.g.\n'
+            '  "send this now and every Monday", "email this now, then repeat weekly", "send it\n'
+            '  right away and also every 2 hours going forward". In these cases "schedule" MUST\n'
+            '  describe only the recurring/future part (never invent a "date" schedule to capture\n'
+            '  the "now" part — that is what "also_run_now" is for). Set false for every other\n'
+            '  case, including a bare immediate-only request with no recurrence stated at all\n'
+            '  (that case is already fully covered by the "date"-defaults-to-now rule above —\n'
+            '  "also_run_now" only applies when a recurrence is ALSO explicitly present).\n\n'
             "If the text isn't a schedulable request at all, set \"ok\": false and put a short\n"
             "human-readable reason in \"error\"; leave \"schedule\" null."
         )
@@ -855,7 +874,7 @@ class VannaBase(ABC):
         if parsed is None:
             return {
                 "ok": False, "question": None, "channel": "chat", "email_address": None,
-                "email_labels": [], "schedule": None, "ambiguous": [],
+                "email_labels": [], "schedule": None, "also_run_now": False, "ambiguous": [],
                 "error": "Could not understand that as a scheduling request — please rephrase.",
             }
 
@@ -882,6 +901,7 @@ class VannaBase(ABC):
             "email_address": parsed.get("email_address") or None,
             "email_labels": email_labels,
             "schedule": schedule,
+            "also_run_now": bool(parsed.get("also_run_now")),
             "ambiguous": parsed.get("ambiguous") or [],
             "error": parsed.get("error") or None,
         }

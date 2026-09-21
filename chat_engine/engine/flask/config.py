@@ -2292,6 +2292,150 @@ function previewSqlQuery() {
                 });
         }
 
+        function showScheduledAgents(workspaceId) {
+            const contentArea = document.getElementById('contentArea');
+            contentArea.innerHTML = `
+                <h4>Scheduled Agents</h4>
+                <p style="color:#666;font-size:0.9em;max-width:640px;">
+                    Every scheduled/conditional agent created via <code>/</code> in this workspace, across all
+                    users — not just your own. Stop halts future runs immediately; Resume re-arms a stopped
+                    recurring agent (one-time agents can't be resumed — create a new one instead).
+                </p>
+                <button class="test" onclick="loadScheduledAgents('${workspaceId}')">Refresh</button>
+                <p id="scheduled-agents-result"></p>
+                <div id="scheduledAgentsList" style="margin-top:12px;"></div>
+            `;
+            contentArea.style.display = 'block';
+            loadScheduledAgents(workspaceId);
+        }
+
+        function loadScheduledAgents(workspaceId) {
+            const listEl = document.getElementById('scheduledAgentsList');
+            if (listEl) listEl.innerHTML = '<p style="color:#888;">Loading...</p>';
+
+            fetch(`/api/v0/scheduled_agents?workspace_id=${workspaceId}`)
+                .then(res => res.json())
+                .then(data => {
+                    if (!listEl) return;
+                    if (data.type === "error") {
+                        listEl.innerHTML = `<p style="color:#e74c3c;">${data.error}</p>`;
+                        return;
+                    }
+                    const agents = data.agents || [];
+                    if (!agents.length) {
+                        listEl.innerHTML = '<p style="color:#888;">No scheduled agents in this workspace yet.</p>';
+                        return;
+                    }
+                    const typeLabels = { cron: 'Recurring', interval: 'Interval', date: 'One-time', conditional: 'Conditional' };
+                    const fmtCreated = (ts) => ts ? new Date(ts * 1000).toLocaleString() : '—';
+                    listEl.innerHTML = `
+                        <p style="color:#888;font-size:0.85em;margin:0 0 6px;">${agents.length} agent(s) total.</p>
+                        <table style="width:100%; border-collapse:collapse; font-size:0.9em;">
+                            <thead>
+                                <tr style="text-align:left; border-bottom:2px solid #ddd;">
+                                    <th style="padding:6px;">Created</th>
+                                    <th style="padding:6px;">Owner</th>
+                                    <th style="padding:6px;">Type</th>
+                                    <th style="padding:6px;">Question</th>
+                                    <th style="padding:6px;">Schedule</th>
+                                    <th style="padding:6px;">Channel</th>
+                                    <th style="padding:6px;">Status</th>
+                                    <th style="padding:6px;">Runs</th>
+                                    <th style="padding:6px;"></th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                ${agents.map(a => `
+                                    <tr style="border-bottom:1px solid #eee;">
+                                        <td style="padding:6px; white-space:nowrap; color:#666;">${fmtCreated(a.created_at)}</td>
+                                        <td style="padding:6px;">${a.owner_username || ''}</td>
+                                        <td style="padding:6px; white-space:nowrap;">${typeLabels[a.schedule_type] || a.schedule_type || ''}</td>
+                                        <td style="padding:6px; max-width:260px;">${(a.display_question || '').replace(/</g, '&lt;')}</td>
+                                        <td style="padding:6px;">${a.description || ''}</td>
+                                        <td style="padding:6px;">${a.channel || ''}</td>
+                                        <td style="padding:6px;">
+                                            <span style="color:${a.enabled ? '#2e7d32' : '#e74c3c'};">
+                                                ${a.enabled ? 'enabled' : 'stopped'}
+                                            </span>${(a.status_suffix || '').replace(/</g, '&lt;')}
+                                        </td>
+                                        <td style="padding:6px;">${a.run_count || 0}</td>
+                                        <td style="padding:6px; white-space:nowrap;">
+                                            ${a.enabled
+                                                ? `<button class="test" onclick="stopScheduledAgentUI('${workspaceId}', '${a.schedule_id}')">Stop</button>`
+                                                : (a.schedule_type !== 'date'
+                                                    ? `<button class="test" onclick="resumeScheduledAgentUI('${workspaceId}', '${a.schedule_id}')">Resume</button>`
+                                                    : '')}
+                                            <button class="test" style="color:#e74c3c;" onclick="deleteScheduledAgentUI('${workspaceId}', '${a.schedule_id}')">Delete</button>
+                                        </td>
+                                    </tr>
+                                `).join('')}
+                            </tbody>
+                        </table>
+                    `;
+                })
+                .catch(err => {
+                    if (listEl) listEl.innerHTML = `<p style="color:#e74c3c;">Failed to load: ${err}</p>`;
+                });
+        }
+
+        function stopScheduledAgentUI(workspaceId, scheduleId) {
+            fetch('/api/v0/scheduled_agents/stop', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ workspace_id: workspaceId, schedule_id: scheduleId }),
+            })
+                .then(res => res.json())
+                .then(data => {
+                    const resultEl = document.getElementById('scheduled-agents-result');
+                    if (data.type === "error") {
+                        if (resultEl) { resultEl.textContent = data.error; resultEl.style.color = "#e74c3c"; }
+                        return;
+                    }
+                    if (resultEl) { resultEl.textContent = ""; }
+                    loadScheduledAgents(workspaceId);
+                })
+                .catch(err => console.error("Failed to stop scheduled agent:", err));
+        }
+
+        function resumeScheduledAgentUI(workspaceId, scheduleId) {
+            fetch('/api/v0/scheduled_agents/resume', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ workspace_id: workspaceId, schedule_id: scheduleId }),
+            })
+                .then(res => res.json())
+                .then(data => {
+                    const resultEl = document.getElementById('scheduled-agents-result');
+                    if (data.type === "error") {
+                        if (resultEl) { resultEl.textContent = data.error; resultEl.style.color = "#e74c3c"; }
+                        return;
+                    }
+                    if (resultEl) { resultEl.textContent = ""; }
+                    loadScheduledAgents(workspaceId);
+                })
+                .catch(err => console.error("Failed to resume scheduled agent:", err));
+        }
+
+        function deleteScheduledAgentUI(workspaceId, scheduleId) {
+            if (!confirm('Delete this scheduled agent permanently? This cannot be undone.')) return;
+            fetch('/api/v0/scheduled_agents/delete', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ workspace_id: workspaceId, schedule_id: scheduleId }),
+            })
+                .then(res => res.json())
+                .then(data => {
+                    const resultEl = document.getElementById('scheduled-agents-result');
+                    if (data.type === "error") {
+                        if (resultEl) { resultEl.textContent = data.error; resultEl.style.color = "#e74c3c"; }
+                        return;
+                    }
+                    if (resultEl) { resultEl.textContent = ""; }
+                    loadScheduledAgents(workspaceId);
+                })
+                .catch(err => console.error("Failed to delete scheduled agent:", err));
+        }
+
 let currentPredictions = [];
 let suggestedPredictions = [];
 const processTableMap = {
@@ -4509,6 +4653,7 @@ function displayPredictionResults(predictionType, results) {
                                         <div class="sub-section-label">Workspace Admin</div>
                                         <li onclick="showDBConfig('${workspace.id}')"><i class="fas fa-server"></i>DB Config</li>
                                         <li onclick="showEmailConfig('${workspace.id}')"><i class="fas fa-envelope-open-text"></i>Email Config</li>
+                                        <li onclick="showScheduledAgents('${workspace.id}')"><i class="fas fa-clock"></i>Scheduled Agents</li>
                                         <li onclick="showTeamsConfig('${workspace.id}')"><i class="fab fa-microsoft"></i>Teams Configuration</li>
                                         <li onclick="deleteWorkspace('${workspace.id}')"><i class="fas fa-trash-alt"></i>Delete</li>
                                     </div>
