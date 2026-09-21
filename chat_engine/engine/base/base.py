@@ -720,23 +720,25 @@ class VannaBase(ABC):
           "email_labels": [str],         # names from known_email_labels the text referred
                                           # to (or the literal "all"); the expected path
                                           # when known_email_labels is provided
-          "schedule": {
-              "type": "date" | "interval" | "cron" | "conditional",
-              # date:        {"run_at": "<ISO8601 datetime, no tz offset>"}
-              # interval:    {"seconds": int}
-              # cron:        {<subset of year/month/day/week/day_of_week/hour/
-              #                minute/second>: "<APScheduler cron field string>"}
-              # conditional: {"condition_text": "<verbatim condition>"}
-              "timezone": "<IANA tz string>",
-              "fortnight_anchor": bool,   # true only for "every other <weekday>"
-          } | None,
-          "also_run_now": bool,  # true only when the request explicitly asks for
-                                  # an immediate delivery IN ADDITION to the
-                                  # recurring/future "schedule" above (e.g. "send
-                                  # this now and every Monday") — caller should
-                                  # queue a second, one-off "date"-type run in
-                                  # this case, since "schedule" itself never
-                                  # encodes both a "now" run and a recurrence.
+          "schedules": [   # 1+ entries — almost always exactly one; more than one
+                            # only when the request genuinely combines multiple
+                            # distinct timing intents that can't be expressed as
+                            # a single trigger (see prompt for the merge-vs-split
+                            # rules, e.g. "send this now and every Monday" ->
+                            # a "date" entry + a "cron" entry). Empty when "ok"
+                            # is false.
+              {
+                  "type": "date" | "interval" | "cron" | "conditional",
+                  # date:        {"run_at": "<ISO8601 datetime, no tz offset>"}
+                  # interval:    {"seconds": int}
+                  # cron:        {<subset of year/month/day/week/day_of_week/hour/
+                  #                minute/second>: "<APScheduler cron field string>"}
+                  # conditional: {"condition_text": "<verbatim condition>"}
+                  "timezone": "<IANA tz string>",
+                  "fortnight_anchor": bool,   # true only for "every other <weekday>"
+              },
+              ...
+          ],
           "ambiguous": [str],   # things the model had to guess at (am/pm, an
                                  # implicit timezone, day-of-month vs anniversary,
                                  # etc.) — surfaced back to the user before the
@@ -774,17 +776,48 @@ class VannaBase(ABC):
             '  "channel": "chat" or "email",\n'
             '  "email_address": "<a raw email address if one was stated inline, else null>",\n'
             '  "email_labels": ["<registered label(s) the text referred to, or \\"all\\">"],\n'
-            '  "schedule": {\n'
-            '    "type": "date" or "interval" or "cron" or "conditional",\n'
-            '    ... type-specific fields ...,\n'
-            '    "timezone": "<IANA timezone, e.g. Asia/Kolkata>",\n'
-            '    "fortnight_anchor": true or false\n'
-            '  },\n'
-            '  "also_run_now": true or false,\n'
+            '  "schedules": [\n'
+            '    {\n'
+            '      "type": "date" or "interval" or "cron" or "conditional",\n'
+            '      ... type-specific fields ...,\n'
+            '      "timezone": "<IANA timezone, e.g. Asia/Kolkata>",\n'
+            '      "fortnight_anchor": true or false\n'
+            '    }\n'
+            '    ... one object per DISTINCT timing intent actually present — see\n'
+            '        "schedules is a list" rules below; almost always just one ...\n'
+            '  ],\n'
             '  "ambiguous": ["<short note on anything you had to guess>", ...],\n'
             '  "error": null\n'
             "}\n\n"
-            "Schedule type field rules:\n"
+            '"schedules" is a list because ONE request can combine multiple DISTINCT timing\n'
+            "intents. The rules below (Schedule type field rules) apply to each entry you emit.\n"
+            "Deciding how many entries to emit:\n"
+            "- The vast majority of requests need exactly ONE entry. Only emit more than one\n"
+            "  when the text genuinely names more than one distinct timing intent — never split\n"
+            "  a single intent into multiple entries just because it has several clauses.\n"
+            "- PREFER MERGING into a single cron entry whenever APScheduler cron field syntax\n"
+            "  can already express the whole thing at once (see the cron rules below for comma\n"
+            '  lists/ranges), e.g. "every Monday and Friday at 9am" -> ONE entry with\n'
+            '  {"day_of_week": "mon,fri", "hour": "9", "minute": "0"} — NOT two entries.\n'
+            "- SPLIT into separate entries only when the timing shapes cannot be merged into\n"
+            "  one trigger:\n"
+            '    - An immediate/"now" delivery combined with a separately-described recurring\n'
+            '      or future part, e.g. "send this now and every Monday", "email this now, then\n'
+            '      repeat weekly" -> a "date" entry for the immediate part (its "run_at" is the\n'
+            '      current reference time above) PLUS a "cron"/"interval" entry for the\n'
+            "      recurring part. This is different from the bare-immediate-request rule under\n"
+            '      \"date\" below — that rule is ONLY for when there is NO recurrence stated at\n'
+            "      all; here a recurrence IS also explicitly present, so both parts must each\n"
+            "      get their own entry.\n"
+            '    - Two recurring patterns that need DIFFERENT field values per occasion, e.g.\n'
+            '      "every Monday at 9am and every Friday at 5pm" -> TWO "cron" entries, because\n'
+            '      one CronTrigger with "day_of_week": "mon,fri", "hour": "9,17" would wrongly\n'
+            "      fire on all four day/hour combinations instead of just the two intended.\n"
+            '    - A fixed interval combined with a cron/date part, e.g. "every 2 hours, and\n'
+            '      also every Monday morning" -> an "interval" entry + a "cron" entry.\n'
+            '    - A conditional watch combined with anything else, e.g. "watch for X, and also\n'
+            '      send me this every Monday" -> a "conditional" entry + a "cron" entry.\n\n'
+            "Schedule type field rules (apply these to each entry in \"schedules\"):\n"
             '- "date": one-time. {"run_at": "<ISO8601 local datetime, no offset>"}. Use for\n'
             '  "just send me this once", "tomorrow at 9", "in 2 hours", "on Friday" — AND for a\n'
             '  bare send/deliver request with NO timing word at all (e.g. "send this to Manager",\n'
@@ -838,19 +871,8 @@ class VannaBase(ABC):
             '  check (a condition can gain new matching records continuously — e.g. more\n'
             '  items becoming "shipped" over time — and each such new record must still be\n'
             '  reported even though the condition overall was already true).\n\n'
-            '"also_run_now" field:\n'
-            '  Set true ONLY when the request explicitly asks for an IMMEDIATE delivery IN\n'
-            '  ADDITION to a separately-described recurring/future schedule — the request names\n'
-            '  BOTH "now" (or equivalent) AND a recurrence/future time in the same message, e.g.\n'
-            '  "send this now and every Monday", "email this now, then repeat weekly", "send it\n'
-            '  right away and also every 2 hours going forward". In these cases "schedule" MUST\n'
-            '  describe only the recurring/future part (never invent a "date" schedule to capture\n'
-            '  the "now" part — that is what "also_run_now" is for). Set false for every other\n'
-            '  case, including a bare immediate-only request with no recurrence stated at all\n'
-            '  (that case is already fully covered by the "date"-defaults-to-now rule above —\n'
-            '  "also_run_now" only applies when a recurrence is ALSO explicitly present).\n\n'
             "If the text isn't a schedulable request at all, set \"ok\": false and put a short\n"
-            "human-readable reason in \"error\"; leave \"schedule\" null."
+            "human-readable reason in \"error\"; leave \"schedules\" an empty list."
         )
 
         messages = [
@@ -874,16 +896,27 @@ class VannaBase(ABC):
         if parsed is None:
             return {
                 "ok": False, "question": None, "channel": "chat", "email_address": None,
-                "email_labels": [], "schedule": None, "also_run_now": False, "ambiguous": [],
+                "email_labels": [], "schedules": [], "ambiguous": [],
                 "error": "Could not understand that as a scheduling request — please rephrase.",
             }
 
-        schedule = parsed.get("schedule") or None
-        if isinstance(schedule, dict):
+        # Accept "schedules" (the current contract) but tolerate a model that still
+        # emits the older singular "schedule" key — wrap it into a one-item list
+        # rather than failing outright.
+        raw_schedules = parsed.get("schedules")
+        if not isinstance(raw_schedules, list):
+            single = parsed.get("schedule")
+            raw_schedules = [single] if single else []
+
+        schedules = []
+        for schedule in raw_schedules:
+            if not isinstance(schedule, dict):
+                continue
             schedule.setdefault("timezone", default_timezone)
             schedule.setdefault("fortnight_anchor", False)
+            schedules.append(schedule)
 
-        ok = bool(parsed.get("ok", True)) and schedule is not None
+        ok = bool(parsed.get("ok", True)) and bool(schedules)
 
         # Shape-sanitize only — do NOT silently drop a label just because it isn't
         # in known_email_labels. A label the model invented (or misspelled) must
@@ -900,8 +933,7 @@ class VannaBase(ABC):
             "channel": parsed.get("channel") if parsed.get("channel") in ("chat", "email") else "chat",
             "email_address": parsed.get("email_address") or None,
             "email_labels": email_labels,
-            "schedule": schedule,
-            "also_run_now": bool(parsed.get("also_run_now")),
+            "schedules": schedules,
             "ambiguous": parsed.get("ambiguous") or [],
             "error": parsed.get("error") or None,
         }

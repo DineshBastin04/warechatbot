@@ -8699,18 +8699,22 @@ class VannaFlaskApp(VannaFlaskAPI):
                 known_email_labels=[e["label"] for e in registered_emails],
             )
 
-            if not extraction.get("ok") or extraction.get("schedule") is None:
+            schedules = extraction.get("schedules") or []
+            if not extraction.get("ok") or not schedules:
                 return jsonify({
                     "type": "text",
                     "text": extraction.get("error") or "I couldn't understand that as a scheduling request — please rephrase.",
                 })
 
-            schedule = extraction["schedule"]
-            is_conditional = schedule.get("type") == "conditional"
-            if is_conditional and not schedule.get("seconds"):
-                schedule["seconds"] = 1800  # no check frequency stated — default to every 30 min
+            # A compound request ("send this now and every Monday") comes back as
+            # more than one entry — almost every request is exactly one, though.
+            multi = len(schedules) > 1
+            for schedule in schedules:
+                if schedule.get("type") == "conditional" and not schedule.get("seconds"):
+                    schedule["seconds"] = 1800  # no check frequency stated — default to every 30 min
 
-            question_en = extraction.get("question") or (schedule.get("condition_text") if is_conditional else None) or prior_question
+            first_conditional = next((s for s in schedules if s.get("type") == "conditional"), None)
+            question_en = extraction.get("question") or (first_conditional.get("condition_text") if first_conditional else None) or prior_question
             if not question_en:
                 return jsonify({
                     "type": "error",
@@ -8764,180 +8768,169 @@ class VannaFlaskApp(VannaFlaskAPI):
                 return jsonify({"type": "error", "error": "Workspace not found"}), 404
 
             enabled_count = sum(1 for r in records if r.get("owner_username") == username and r.get("enabled"))
-            if enabled_count >= MAX_ENABLED_SCHEDULES_PER_USER:
+            if enabled_count + len(schedules) > MAX_ENABLED_SCHEDULES_PER_USER:
                 return jsonify({
                     "type": "error",
-                    "error": f"You already have {MAX_ENABLED_SCHEDULES_PER_USER} scheduled agents — "
-                             f"stop one before creating another.",
+                    "error": f"That would put you at {enabled_count + len(schedules)} scheduled agents — "
+                             f"the limit is {MAX_ENABLED_SCHEDULES_PER_USER}. Stop some before creating more.",
                 }), 400
 
-            try:
-                trigger = _build_schedule_trigger(schedule)
-            except Exception as trigger_exc:
-                return jsonify({"type": "error", "error": f"Couldn't build a schedule from that: {trigger_exc}"}), 400
+            # Pass 1: validate every entry and run each conditional entry's preview
+            # check BEFORE persisting anything — a compound request must succeed or
+            # fail as a whole, never leave a partial set of agents behind because
+            # entry 2 of 3 turned out to be unschedulable.
+            prepared = []
+            for idx, schedule in enumerate(schedules):
+                label = f"Schedule {idx + 1} of {len(schedules)}: " if multi else ""
+                is_conditional = schedule.get("type") == "conditional"
 
-            tz = schedule.get("timezone") or DEFAULT_SCHEDULE_TIMEZONE
-            now = datetime.now(ZoneInfo(tz))
-            fires = []
-            t = trigger.get_next_fire_time(None, now)
-            for _ in range(3):
-                if t is None:
-                    break
-                fires.append(t)
-                t = trigger.get_next_fire_time(t, t)
+                try:
+                    trigger = _build_schedule_trigger(schedule)
+                except Exception as trigger_exc:
+                    return jsonify({"type": "error", "error": f"{label}Couldn't build a schedule from that: {trigger_exc}"}), 400
 
-            if not fires:
-                return jsonify({"type": "error", "error": "That schedule never fires — please rephrase."}), 400
-            if len(fires) >= 2 and (fires[1] - fires[0]).total_seconds() < MIN_SCHEDULE_INTERVAL_SECONDS:
-                return jsonify({
-                    "type": "error",
-                    "error": f"That schedule fires more than once within {MIN_SCHEDULE_INTERVAL_SECONDS // 60} "
-                             f"minutes — please choose a longer interval.",
-                }), 400
-            if schedule.get("type") in ("interval", "conditional") and int(schedule.get("seconds", 0)) < MIN_SCHEDULE_INTERVAL_SECONDS:
-                return jsonify({
-                    "type": "error",
-                    "error": f"Please choose a check interval of at least {MIN_SCHEDULE_INTERVAL_SECONDS // 60} minutes.",
-                }), 400
+                tz = schedule.get("timezone") or DEFAULT_SCHEDULE_TIMEZONE
+                now = datetime.now(ZoneInfo(tz))
+                fires = []
+                t = trigger.get_next_fire_time(None, now)
+                for _ in range(3):
+                    if t is None:
+                        break
+                    fires.append(t)
+                    t = trigger.get_next_fire_time(t, t)
 
-            # Conditional agents run indefinitely, so — unlike every other type,
-            # which defers all SQL generation to the first fire — run the full
-            # chain once here: catches a broken condition immediately instead of
-            # only at the first poll, and lets the confirmation echo show the
-            # condition's current state. This is a real query, but never delivers
-            # a notification for it — the user asked to hear about *future*
-            # transitions, not be re-told what the echo already shows them.
-            initial_condition_state = None
-            initial_matched_keys = None
-            condition_preview_error = None
-            condition_row_count = 0
-            if is_conditional:
-                sql, *_rest = vn.generate_sql(question=question_en, workspace=metadata.get("name") or str(workspace_id))
-                if not vn.is_sql_valid(sql):
-                    condition_preview_error = "Generated SQL was not a valid SELECT statement."
-                else:
-                    ok2, err2 = vn.validate_openquery_literals(sql)
-                    ok3, err3 = (True, "") if not ok2 else vn.validate_db_scope(sql)
-                    if not ok2:
-                        condition_preview_error = err2
-                    elif not ok3:
-                        condition_preview_error = err3
+                if not fires:
+                    return jsonify({"type": "error", "error": f"{label}That schedule never fires — please rephrase."}), 400
+                if len(fires) >= 2 and (fires[1] - fires[0]).total_seconds() < MIN_SCHEDULE_INTERVAL_SECONDS:
+                    return jsonify({
+                        "type": "error",
+                        "error": f"{label}That schedule fires more than once within {MIN_SCHEDULE_INTERVAL_SECONDS // 60} "
+                                 f"minutes — please choose a longer interval.",
+                    }), 400
+                if schedule.get("type") in ("interval", "conditional") and int(schedule.get("seconds", 0)) < MIN_SCHEDULE_INTERVAL_SECONDS:
+                    return jsonify({
+                        "type": "error",
+                        "error": f"{label}Please choose a check interval of at least {MIN_SCHEDULE_INTERVAL_SECONDS // 60} minutes.",
+                    }), 400
+
+                # Conditional agents run indefinitely, so — unlike every other type,
+                # which defers all SQL generation to the first fire — run the full
+                # chain once here: catches a broken condition immediately instead of
+                # only at the first poll, and lets the confirmation echo show the
+                # condition's current state. This is a real query, but never delivers
+                # a notification for it — the user asked to hear about *future*
+                # transitions, not be re-told what the echo already shows them.
+                initial_condition_state = None
+                initial_matched_keys = None
+                condition_preview_error = None
+                condition_row_count = 0
+                if is_conditional:
+                    sql, *_rest = vn.generate_sql(question=question_en, workspace=metadata.get("name") or str(workspace_id))
+                    if not vn.is_sql_valid(sql):
+                        condition_preview_error = "Generated SQL was not a valid SELECT statement."
                     else:
-                        try:
-                            df = vn.run_sql(sql)
-                            condition_row_count = len(df) if df is not None else 0
-                            initial_condition_state = condition_row_count > 0
-                            # Seed the baseline match set from this creation-time check —
-                            # these already-matching records must NOT be reported as "new"
-                            # the moment the first real poll runs (the echo below already
-                            # tells the user what currently matches).
-                            preview_rows = df.to_dict(orient="records") if df is not None and len(df) else []
-                            initial_matched_keys = sorted({
-                                key for key in (_condition_row_key(r) for r in preview_rows)
-                                if key is not None
-                            })
-                        except Exception as check_exc:
-                            condition_preview_error = f"Condition check failed: {check_exc}"
-                if condition_preview_error:
-                    return jsonify({"type": "error", "error": f"Couldn't set up that condition: {condition_preview_error}"}), 400
+                        ok2, err2 = vn.validate_openquery_literals(sql)
+                        ok3, err3 = (True, "") if not ok2 else vn.validate_db_scope(sql)
+                        if not ok2:
+                            condition_preview_error = err2
+                        elif not ok3:
+                            condition_preview_error = err3
+                        else:
+                            try:
+                                df = vn.run_sql(sql)
+                                condition_row_count = len(df) if df is not None else 0
+                                initial_condition_state = condition_row_count > 0
+                                # Seed the baseline match set from this creation-time check —
+                                # these already-matching records must NOT be reported as "new"
+                                # the moment the first real poll runs (the echo below already
+                                # tells the user what currently matches).
+                                preview_rows = df.to_dict(orient="records") if df is not None and len(df) else []
+                                initial_matched_keys = sorted({
+                                    key for key in (_condition_row_key(r) for r in preview_rows)
+                                    if key is not None
+                                })
+                            except Exception as check_exc:
+                                condition_preview_error = f"Condition check failed: {check_exc}"
+                    if condition_preview_error:
+                        return jsonify({"type": "error", "error": f"{label}Couldn't set up that condition: {condition_preview_error}"}), 400
 
-            schedule_id = uuid.uuid4().hex[:8]
-            record = {
-                "schedule_id": schedule_id,
-                "owner_username": username,
-                "workspace_id": str(workspace_id),
-                "workspace_name": metadata.get("name") or str(workspace_id),
-                "question_en": question_en,
-                "display_question": schedule.get("condition_text") if is_conditional else question_en,
-                "channel": channel,
-                "email_recipients": email_recipients,
-                "schedule": schedule,
-                "fortnight_anchor_ts": fires[0].timestamp() if schedule.get("fortnight_anchor") else None,
-                "enabled": True,
-                "created_at": time.time(),
-                "last_run_at": None,
-                "last_status": None,
-                "last_error": None,
-                "last_sql": None,
-                "run_count": 0,
-                "chat_inbox": [],
-                "last_condition_state": initial_condition_state,
-                "matched_keys": initial_matched_keys,
-            }
-            records.append(record)
+                prepared.append({
+                    "schedule": schedule, "is_conditional": is_conditional, "trigger": trigger,
+                    "fires": fires, "condition_row_count": condition_row_count,
+                    "initial_condition_state": initial_condition_state, "initial_matched_keys": initial_matched_keys,
+                })
+
+            # Pass 2: everything validated cleanly — persist and register every entry.
+            created = []
+            for p in prepared:
+                schedule = p["schedule"]
+                is_conditional = p["is_conditional"]
+                schedule_id = uuid.uuid4().hex[:8]
+                record = {
+                    "schedule_id": schedule_id,
+                    "owner_username": username,
+                    "workspace_id": str(workspace_id),
+                    "workspace_name": metadata.get("name") or str(workspace_id),
+                    "question_en": question_en,
+                    "display_question": schedule.get("condition_text") if is_conditional else question_en,
+                    "channel": channel,
+                    "email_recipients": email_recipients,
+                    "schedule": schedule,
+                    "fortnight_anchor_ts": p["fires"][0].timestamp() if schedule.get("fortnight_anchor") else None,
+                    "enabled": True,
+                    "created_at": time.time(),
+                    "last_run_at": None,
+                    "last_status": None,
+                    "last_error": None,
+                    "last_sql": None,
+                    "run_count": 0,
+                    "chat_inbox": [],
+                    "last_condition_state": p["initial_condition_state"],
+                    "matched_keys": p["initial_matched_keys"],
+                }
+                records.append(record)
+                scheduled_agents_scheduler.add_job(
+                    func=_run_scheduled_question,
+                    args=[workspace_id, schedule_id],
+                    trigger=p["trigger"],
+                    id=schedule_id,
+                    max_instances=1,
+                    coalesce=True,
+                    replace_existing=True,
+                    misfire_grace_time=120,
+                )
+                created.append({
+                    "schedule_id": schedule_id, "schedule": schedule, "is_conditional": is_conditional,
+                    "fires": p["fires"], "condition_row_count": p["condition_row_count"],
+                })
             _save_schedule_records(workspace_id, metadata, records)
 
-            scheduled_agents_scheduler.add_job(
-                func=_run_scheduled_question,
-                args=[workspace_id, schedule_id],
-                trigger=trigger,
-                id=schedule_id,
-                max_instances=1,
-                coalesce=True,
-                replace_existing=True,
-                misfire_grace_time=120,
-            )
-
-            # A compound request ("send this now and every Monday") describes
-            # both an immediate delivery and a recurring one — "schedule" above
-            # only ever captures the recurring half, so a second, independent
-            # one-off "date" record covers the "now" half. Not offered for
-            # conditional agents: those already run an initial check synchronously
-            # above and echo its current state, so there's nothing separate to fire.
-            also_run_now_id = None
-            if extraction.get("also_run_now") and not is_conditional:
-                now_schedule = {
-                    "type": "date",
-                    "run_at": datetime.now(ZoneInfo(tz)).replace(tzinfo=None).isoformat(),
-                    "timezone": tz,
-                }
-                try:
-                    now_trigger = _build_schedule_trigger(now_schedule)
-                except Exception:
-                    now_trigger = None
-                if now_trigger is not None:
-                    also_run_now_id = uuid.uuid4().hex[:8]
-                    now_record = dict(record)
-                    now_record["schedule_id"] = also_run_now_id
-                    now_record["schedule"] = now_schedule
-                    now_record["fortnight_anchor_ts"] = None
-                    now_record["created_at"] = time.time()
-                    records.append(now_record)
-                    scheduled_agents_scheduler.add_job(
-                        func=_run_scheduled_question,
-                        args=[workspace_id, also_run_now_id],
-                        trigger=now_trigger,
-                        id=also_run_now_id,
-                        max_instances=1,
-                        coalesce=True,
-                        replace_existing=True,
-                        misfire_grace_time=120,
-                    )
-                    _save_schedule_records(workspace_id, metadata, records)
-
             note = ("Note: " + "; ".join(extraction["ambiguous"]) + "\n") if extraction.get("ambiguous") else ""
-            if is_conditional:
-                echo = (
-                    f"{note}Watching: {schedule.get('condition_text', question_en)}, "
-                    f"checked every {schedule['seconds']}s.\n"
-                    f"Currently: {condition_row_count} record(s) match.\n"
-                    f"You'll be notified by {channel} whenever a NEW record starts matching — "
-                    f"not the {condition_row_count} that already match now.\n"
+
+            def _describe_created(c):
+                schedule = c["schedule"]
+                schedule_id = c["schedule_id"]
+                if c["is_conditional"]:
+                    return (
+                        f"Watching: {schedule.get('condition_text', question_en)}, "
+                        f"checked every {schedule['seconds']}s. "
+                        f"Currently: {c['condition_row_count']} record(s) match. "
+                        f"You'll be notified by {channel} whenever a NEW record starts matching — "
+                        f"not the {c['condition_row_count']} that already match now. "
+                        f"Reply `/stop {schedule_id}` to cancel."
+                    )
+                fire_list = " · ".join(f.strftime("%a %d %b %H:%M") for f in c["fires"])
+                return (
+                    f"Scheduled {_describe_schedule(schedule)}, by {channel}. "
+                    f"Next runs: {fire_list}. "
                     f"Reply `/stop {schedule_id}` to cancel."
                 )
-                return jsonify({"type": "text", "text": echo})
 
-            fire_list = " · ".join(f.strftime("%a %d %b %H:%M") for f in fires)
-            also_run_now_note = (
-                f"Also queued to send immediately (`/stop {also_run_now_id}` to cancel just that one).\n"
-                if also_run_now_id else ""
-            )
-            echo = (
-                f"{note}Scheduled: {question_en}, {_describe_schedule(schedule)}, by {channel}.\n"
-                f"Next runs: {fire_list}\n"
-                f"{also_run_now_note}"
-                f"Reply `/stop {schedule_id}` to cancel."
-            )
+            if not multi:
+                echo = f"{note}{question_en}\n{_describe_created(created[0])}"
+            else:
+                lines = "\n".join(f"{i + 1}. {_describe_created(c)}" for i, c in enumerate(created))
+                echo = f"{note}{question_en} — split into {len(created)} schedules:\n{lines}"
             return jsonify({"type": "text", "text": echo})
 
         @self.flask_app.route('/api/v0/scheduled_agents', methods=['GET'])
