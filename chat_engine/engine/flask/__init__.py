@@ -5135,7 +5135,11 @@ class VannaFlaskApp(VannaFlaskAPI):
                             continue
 
                         # ---------------- SQL SAFETY ---------------- #
-                        if not sql.strip().lower().startswith("select"):
+                        # Accept a leading CTE ("WITH ... SELECT ...", optionally
+                        # semicolon-prefixed) as well as a plain SELECT — a CTE query
+                        # is still read-only, just doesn't start with the literal
+                        # word "select".
+                        if not re.match(r"^\s*;?\s*(select|with)\b", sql, re.IGNORECASE):
                             logger.warning(
                                 "Blocked non-select query in %s / %s", ws_id, sc_id
                             )
@@ -5878,7 +5882,7 @@ class VannaFlaskApp(VannaFlaskAPI):
                     return _fail("rejected", "Re-classified as a write request at fire time — agent disabled.")
 
                 sql, *_rest = vn.generate_sql(question=record["question_en"], workspace=record["workspace_name"])
-                if (not vn.is_sql_valid(sql)) or not sql.strip().lower().startswith("select"):
+                if not vn.is_sql_valid(sql):
                     return _fail("rejected", "Generated SQL was not a valid SELECT statement.")
                 ok2, err2 = vn.validate_openquery_literals(sql)
                 if not ok2:
