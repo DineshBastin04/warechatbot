@@ -2326,11 +2326,16 @@ function previewSqlQuery() {
                         listEl.innerHTML = '<p style="color:#888;">No scheduled agents in this workspace yet.</p>';
                         return;
                     }
+                    const typeLabels = { cron: 'Recurring', interval: 'Interval', date: 'One-time', conditional: 'Conditional' };
+                    const fmtCreated = (ts) => ts ? new Date(ts * 1000).toLocaleString() : '—';
                     listEl.innerHTML = `
+                        <p style="color:#888;font-size:0.85em;margin:0 0 6px;">${agents.length} agent(s) total.</p>
                         <table style="width:100%; border-collapse:collapse; font-size:0.9em;">
                             <thead>
                                 <tr style="text-align:left; border-bottom:2px solid #ddd;">
+                                    <th style="padding:6px;">Created</th>
                                     <th style="padding:6px;">Owner</th>
+                                    <th style="padding:6px;">Type</th>
                                     <th style="padding:6px;">Question</th>
                                     <th style="padding:6px;">Schedule</th>
                                     <th style="padding:6px;">Channel</th>
@@ -2342,7 +2347,9 @@ function previewSqlQuery() {
                             <tbody>
                                 ${agents.map(a => `
                                     <tr style="border-bottom:1px solid #eee;">
+                                        <td style="padding:6px; white-space:nowrap; color:#666;">${fmtCreated(a.created_at)}</td>
                                         <td style="padding:6px;">${a.owner_username || ''}</td>
+                                        <td style="padding:6px; white-space:nowrap;">${typeLabels[a.schedule_type] || a.schedule_type || ''}</td>
                                         <td style="padding:6px; max-width:260px;">${(a.display_question || '').replace(/</g, '&lt;')}</td>
                                         <td style="padding:6px;">${a.description || ''}</td>
                                         <td style="padding:6px;">${a.channel || ''}</td>
@@ -4621,11 +4628,11 @@ function displayPredictionResults(predictionType, results) {
                                         <li onclick="showAgents('${workspace.id}')"><i class="fas fa-envelope"></i>Query Agents</li>
                                         <li onclick="showResetDevicesAgent('${workspace.id}')"><i class="fas fa-sync-alt"></i>Reset Devices Agent</li>
                                         <li onclick="showUnpickAgent('${workspace.id}')"><i class="fas fa-undo-alt"></i>Unpick Agent</li>
-                                        <li onclick="showScheduledAgents('${workspace.id}')"><i class="fas fa-clock"></i>Scheduled Agents</li>
 
                                         <div class="sub-section-label">Workspace Admin</div>
                                         <li onclick="showDBConfig('${workspace.id}')"><i class="fas fa-server"></i>DB Config</li>
                                         <li onclick="showEmailConfig('${workspace.id}')"><i class="fas fa-envelope-open-text"></i>Email Config</li>
+                                        <li onclick="showScheduledAgents('${workspace.id}')"><i class="fas fa-clock"></i>Scheduled Agents</li>
                                         <li onclick="showTeamsConfig('${workspace.id}')"><i class="fab fa-microsoft"></i>Teams Configuration</li>
                                         <li onclick="deleteWorkspace('${workspace.id}')"><i class="fas fa-trash-alt"></i>Delete</li>
                                     </div>
