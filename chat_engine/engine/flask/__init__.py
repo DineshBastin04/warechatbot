@@ -8749,7 +8749,7 @@ class VannaFlaskApp(VannaFlaskAPI):
             condition_row_count = 0
             if is_conditional:
                 sql, *_rest = vn.generate_sql(question=question_en, workspace=metadata.get("name") or str(workspace_id))
-                if (not vn.is_sql_valid(sql)) or not sql.strip().lower().startswith("select"):
+                if not vn.is_sql_valid(sql):
                     condition_preview_error = "Generated SQL was not a valid SELECT statement."
                 else:
                     ok2, err2 = vn.validate_openquery_literals(sql)
