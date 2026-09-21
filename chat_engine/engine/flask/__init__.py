@@ -9046,6 +9046,31 @@ class VannaFlaskApp(VannaFlaskAPI):
             _save_schedule_records(workspace_id, metadata, records)
             return jsonify({"success": True})
 
+        @self.flask_app.route('/api/v0/scheduled_agents/delete', methods=['POST'])
+        @self.requires_auth
+        @self.requires_role(["admin", "superadmin"])
+        def delete_scheduled_agent_route(user=None):
+            data = request.json or {}
+            workspace_id = data.get('workspace_id')
+            schedule_id = data.get('schedule_id')
+            if not workspace_id or not schedule_id:
+                return jsonify({"type": "error", "error": "workspace_id and schedule_id are required"}), 400
+
+            metadata, records = _get_schedule_records(workspace_id)
+            if metadata is None:
+                return jsonify({"type": "error", "error": "Workspace not found"}), 404
+            record = next((r for r in records if r.get("schedule_id") == schedule_id), None)
+            if not record:
+                return jsonify({"type": "error", "error": f"No scheduled agent {schedule_id} found."}), 404
+
+            try:
+                scheduled_agents_scheduler.remove_job(schedule_id)
+            except JobLookupError:
+                pass
+            records = [r for r in records if r.get("schedule_id") != schedule_id]
+            _save_schedule_records(workspace_id, metadata, records)
+            return jsonify({"success": True})
+
         @self.flask_app.route('/api/v0/scheduled_questions/poll', methods=['POST'])
         @self.requires_auth
         def scheduled_questions_poll_route(user=None):

@@ -2365,6 +2365,7 @@ function previewSqlQuery() {
                                                 : (a.schedule_type !== 'date'
                                                     ? `<button class="test" onclick="resumeScheduledAgentUI('${workspaceId}', '${a.schedule_id}')">Resume</button>`
                                                     : '')}
+                                            <button class="test" style="color:#e74c3c;" onclick="deleteScheduledAgentUI('${workspaceId}', '${a.schedule_id}')">Delete</button>
                                         </td>
                                     </tr>
                                 `).join('')}
@@ -2413,6 +2414,26 @@ function previewSqlQuery() {
                     loadScheduledAgents(workspaceId);
                 })
                 .catch(err => console.error("Failed to resume scheduled agent:", err));
+        }
+
+        function deleteScheduledAgentUI(workspaceId, scheduleId) {
+            if (!confirm('Delete this scheduled agent permanently? This cannot be undone.')) return;
+            fetch('/api/v0/scheduled_agents/delete', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ workspace_id: workspaceId, schedule_id: scheduleId }),
+            })
+                .then(res => res.json())
+                .then(data => {
+                    const resultEl = document.getElementById('scheduled-agents-result');
+                    if (data.type === "error") {
+                        if (resultEl) { resultEl.textContent = data.error; resultEl.style.color = "#e74c3c"; }
+                        return;
+                    }
+                    if (resultEl) { resultEl.textContent = ""; }
+                    loadScheduledAgents(workspaceId);
+                })
+                .catch(err => console.error("Failed to delete scheduled agent:", err));
         }
 
 let currentPredictions = [];
