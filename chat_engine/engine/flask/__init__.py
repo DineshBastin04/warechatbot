@@ -5985,10 +5985,15 @@ class VannaFlaskApp(VannaFlaskAPI):
 
                 def _deliver(rows):
                     summary_text = _summarize(df)
-                    body = (
-                        f"{summary_text}\n\n({len(rows)} row(s) attached as CSV.)"
-                        if summary_text else f"{len(rows)} row(s) for: {record['display_question']}"
-                    )
+                    if not rows:
+                        # A genuinely executed, valid query that just found nothing —
+                        # distinct wording from the row-count fallback below so this
+                        # reads as "no data found," not as a failure of any kind.
+                        body = f"No data found for: {record['display_question']}"
+                    elif summary_text:
+                        body = f"{summary_text}\n\n({len(rows)} row(s) attached as CSV.)"
+                    else:
+                        body = f"{len(rows)} row(s) for: {record['display_question']}"
                     if record.get("channel") == "email" and record.get("email_recipients"):
                         try:
                             _send_email(
