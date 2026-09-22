@@ -5785,22 +5785,30 @@ class VannaFlaskApp(VannaFlaskAPI):
                 return f"on a schedule ({', '.join(parts)}) ({tz})"
             return "on an unrecognized schedule"
 
+        def _is_no_training_example(sql):
+            """
+            True when generate_sql() didn't fail on anything broken — the LLM's own
+            anti-hallucination rule made it return the literal text "Insufficient
+            data for query." because no trained example covers the tables/columns
+            this question needs. Most commonly this means nobody has trained a
+            Question→SQL example for that shape of question yet; it says nothing
+            about whether the underlying data itself exists.
+            """
+            text = (sql or "").strip()
+            return text.rstrip(".").lower() == "insufficient data for query"
+
         def _explain_invalid_sql(sql):
             """
             Turns a non-SELECT `sql` value from generate_sql() into a clear reason
             instead of the old generic "not a valid SELECT statement." `sql` here
-            is usually not garbage: generate_sql() itself substitutes a plain-English
+            is usually not garbage — generate_sql() itself substitutes a plain-English
             reason when it internally rejects a malformed OPENQUERY literal or an
-            out-of-scope table, and the prompt's own anti-hallucination rule makes
-            the LLM return the literal text "Insufficient data for query." when no
-            trained example covers the tables/columns the question needs — most
-            commonly because nobody has trained a Question→SQL example for that
-            shape of question yet, not because the underlying data doesn't exist.
+            out-of-scope table.
             """
             text = (sql or "").strip()
             if not text:
                 return "the model did not return a query"
-            if text.rstrip(".").lower() == "insufficient data for query":
+            if _is_no_training_example(text):
                 return (
                     "no trained example covers this kind of question yet — ask your "
                     "admin to add a Question→SQL training example for it"
@@ -5927,22 +5935,35 @@ class VannaFlaskApp(VannaFlaskAPI):
                     total_tokens = input_tokens = output_tokens = 0
                     model_name = "unknown"
                 if not vn.is_sql_valid(sql):
-                    return _fail("rejected", f"Couldn't generate a query for this question: {_explain_invalid_sql(sql)}")
-                ok2, err2 = vn.validate_openquery_literals(sql)
-                if not ok2:
-                    return _fail("rejected", err2)
-                ok3, err3 = vn.validate_db_scope(sql)
-                if not ok3:
-                    return _fail("rejected", err3)
+                    if not _is_no_training_example(sql):
+                        return _fail("rejected", f"Couldn't generate a query for this question: {_explain_invalid_sql(sql)}")
+                    # No trained example covers this question — that's a training-data
+                    # gap, not evidence the underlying data doesn't exist, but from the
+                    # recipient's side it reads the same as "nothing found," and firing
+                    # a FAILED alert every single time for a question that may never
+                    # get better training data isn't useful. Deliver as an empty result
+                    # instead; the gap itself is still logged server-side to notice.
+                    logger.warning(
+                        f"Scheduled question {schedule_id} (workspace {workspace_id}): no trained "
+                        f"example covers question {record['question_en']!r} — delivering as empty result."
+                    )
+                    df = None
+                else:
+                    ok2, err2 = vn.validate_openquery_literals(sql)
+                    if not ok2:
+                        return _fail("rejected", err2)
+                    ok3, err3 = vn.validate_db_scope(sql)
+                    if not ok3:
+                        return _fail("rejected", err3)
 
-                try:
-                    df = vn.run_sql(sql)
-                except Exception as run_exc:
-                    # A raised exception here (timeout, connection failure, etc.) must
-                    # still be recorded — otherwise a real failure looks identical to
-                    # "hasn't fired yet" in /list, and an email-channel failure leaves
-                    # the user with zero visibility that nothing was ever sent.
-                    return _fail("error", f"Query failed: {run_exc}")
+                    try:
+                        df = vn.run_sql(sql)
+                    except Exception as run_exc:
+                        # A raised exception here (timeout, connection failure, etc.) must
+                        # still be recorded — otherwise a real failure looks identical to
+                        # "hasn't fired yet" in /list, and an email-channel failure leaves
+                        # the user with zero visibility that nothing was ever sent.
+                        return _fail("error", f"Query failed: {run_exc}")
                 rows = df.to_dict(orient="records") if df is not None and len(df) else []
 
                 def _summarize(sub_df):
