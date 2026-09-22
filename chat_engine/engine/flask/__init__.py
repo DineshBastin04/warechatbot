@@ -5785,6 +5785,28 @@ class VannaFlaskApp(VannaFlaskAPI):
                 return f"on a schedule ({', '.join(parts)}) ({tz})"
             return "on an unrecognized schedule"
 
+        def _explain_invalid_sql(sql):
+            """
+            Turns a non-SELECT `sql` value from generate_sql() into a clear reason
+            instead of the old generic "not a valid SELECT statement." `sql` here
+            is usually not garbage: generate_sql() itself substitutes a plain-English
+            reason when it internally rejects a malformed OPENQUERY literal or an
+            out-of-scope table, and the prompt's own anti-hallucination rule makes
+            the LLM return the literal text "Insufficient data for query." when no
+            trained example covers the tables/columns the question needs — most
+            commonly because nobody has trained a Question→SQL example for that
+            shape of question yet, not because the underlying data doesn't exist.
+            """
+            text = (sql or "").strip()
+            if not text:
+                return "the model did not return a query"
+            if text.rstrip(".").lower() == "insufficient data for query":
+                return (
+                    "no trained example covers this kind of question yet — ask your "
+                    "admin to add a Question→SQL training example for it"
+                )
+            return text[:300]
+
         def _status_suffix(r):
             status = r.get("last_status")
             condition_suffix = ""
@@ -5905,7 +5927,7 @@ class VannaFlaskApp(VannaFlaskAPI):
                     total_tokens = input_tokens = output_tokens = 0
                     model_name = "unknown"
                 if not vn.is_sql_valid(sql):
-                    return _fail("rejected", "Generated SQL was not a valid SELECT statement.")
+                    return _fail("rejected", f"Couldn't generate a query for this question: {_explain_invalid_sql(sql)}")
                 ok2, err2 = vn.validate_openquery_literals(sql)
                 if not ok2:
                     return _fail("rejected", err2)
@@ -8827,7 +8849,7 @@ class VannaFlaskApp(VannaFlaskAPI):
                 if is_conditional:
                     sql, *_rest = vn.generate_sql(question=question_en, workspace=metadata.get("name") or str(workspace_id))
                     if not vn.is_sql_valid(sql):
-                        condition_preview_error = "Generated SQL was not a valid SELECT statement."
+                        condition_preview_error = _explain_invalid_sql(sql)
                     else:
                         ok2, err2 = vn.validate_openquery_literals(sql)
                         ok3, err3 = (True, "") if not ok2 else vn.validate_db_scope(sql)
