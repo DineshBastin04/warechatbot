@@ -5827,6 +5827,26 @@ class VannaFlaskApp(VannaFlaskAPI):
                 return f" — last run FAILED: {r.get('last_error') or 'unknown error'}{condition_suffix}"
             return f" — not yet run{condition_suffix}"
 
+        def _scheduled_email_body(content):
+            """Wraps a scheduled-agent email's actual content with a proper
+            greeting/closing — chat_inbox delivery uses the bare `content` as-is,
+            this wrapper is only for the email channel."""
+            return (
+                "Hello,\n\n"
+                f"{content}\n\n"
+                "Thank you for using Tychons WI — this report was generated automatically "
+                "by an AI-powered reporting agent, so please verify any figures before "
+                "acting on them.\n\n"
+                "Regards,\n"
+                "Tychons WI"
+            )
+
+        def _scheduled_email_filename(schedule_id):
+            # Date/time leads so files sort and scan chronologically in an inbox or
+            # download folder; schedule_id stays as a suffix for traceability back
+            # to the specific agent that generated it.
+            return f"{_dt.now():%Y-%m-%d_%H-%M-%S}_{schedule_id}.csv"
+
         def _condition_row_key(row):
             """Stable identity for one row of a conditional agent's match query, used
             to diff which specific records are newly matching across polls (not just
@@ -5893,9 +5913,9 @@ class VannaFlaskApp(VannaFlaskAPI):
                             _send_email(
                                 record["email_recipients"],
                                 f"[Scheduled - FAILED] {record.get('display_question', '')}",
-                                failure_note,
+                                _scheduled_email_body(failure_note),
                                 [],
-                                f"{schedule_id}_failed.csv",
+                                _scheduled_email_filename(schedule_id),
                             )
                         else:
                             record.setdefault("chat_inbox", []).append({
@@ -5999,9 +6019,9 @@ class VannaFlaskApp(VannaFlaskAPI):
                             _send_email(
                                 record["email_recipients"],
                                 f"[Scheduled] {record['display_question']}",
-                                body,
+                                _scheduled_email_body(body),
                                 rows,
-                                f"{schedule_id}_{_dt.now():%Y%m%d_%H%M%S}.csv",
+                                _scheduled_email_filename(schedule_id),
                             )
                         except Exception as email_exc:
                             logger.exception(f"Scheduled question {schedule_id} email delivery failed: {email_exc}")
@@ -6024,9 +6044,9 @@ class VannaFlaskApp(VannaFlaskAPI):
                             _send_email(
                                 record["email_recipients"],
                                 subject,
-                                body,
+                                _scheduled_email_body(body),
                                 new_rows,
-                                f"{schedule_id}_{_dt.now():%Y%m%d_%H%M%S}.csv",
+                                _scheduled_email_filename(schedule_id),
                             )
                         except Exception as email_exc:
                             logger.exception(f"Scheduled question {schedule_id} email delivery failed: {email_exc}")
