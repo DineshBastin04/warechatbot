@@ -2341,7 +2341,8 @@ function previewSqlQuery() {
                                     <th style="padding:6px;">Channel</th>
                                     <th style="padding:6px;">Status</th>
                                     <th style="padding:6px;">Runs</th>
-                                    <th style="padding:6px;"></th>
+                                    <th style="padding:6px; min-width:90px;"></th>
+                                    <th style="padding:6px; min-width:80px;"></th>
                                 </tr>
                             </thead>
                             <tbody>
@@ -2359,12 +2360,14 @@ function previewSqlQuery() {
                                             </span>${(a.status_suffix || '').replace(/</g, '&lt;')}
                                         </td>
                                         <td style="padding:6px;">${a.run_count || 0}</td>
-                                        <td style="padding:6px; white-space:nowrap;">
+                                        <td style="padding:6px; white-space:nowrap; min-width:90px;">
                                             ${a.enabled
                                                 ? `<button class="test" onclick="stopScheduledAgentUI('${workspaceId}', '${a.schedule_id}')">Stop</button>`
                                                 : (a.schedule_type !== 'date'
                                                     ? `<button class="test" onclick="resumeScheduledAgentUI('${workspaceId}', '${a.schedule_id}')">Resume</button>`
                                                     : '')}
+                                        </td>
+                                        <td style="padding:6px; white-space:nowrap; min-width:80px;">
                                             <button class="test" style="color:#e74c3c;" onclick="deleteScheduledAgentUI('${workspaceId}', '${a.schedule_id}')">Delete</button>
                                         </td>
                                     </tr>
