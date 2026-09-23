@@ -237,6 +237,11 @@ async function handleSlashCommand(text) {
             workspace_id: workspaceId,
             text,
             prior_question: prior?.question || null,
+            // The prior SQL is the context that makes a follow-up ("show me top 4")
+            // resolvable — generate_sql already relies on it for interactive
+            // follow-ups. Without it the stored agent re-runs the bare text cold at
+            // fire time and the model has nothing to work from.
+            prior_sql: prior?.sql || null,
         });
         Se({ type: "text", text: res.text || res.error || "Something went wrong." });
     } catch (e) {
@@ -911,8 +916,25 @@ function mn(E){return E.type==="functions"&&MR.set(E.functions),E}function hn(E)
             });
         }
 
-        if (!r.ok)
-            throw new Error("The server returned an error. See the server logs for more details.");
+        if (!r.ok) {
+            // The backend puts its real explanation in the JSON body (e.g.
+            // {"error": "...please choose a longer interval."}). Surface that
+            // instead of a generic string — a plain 4xx is a returned jsonify,
+            // not a logged exception, so "see the server logs" pointed at
+            // logs that were never written.
+            let serverError = null;
+            try {
+                const body = await r.json();
+                serverError = body?.error || body?.text || body?.message || null;
+            } catch (_) {
+                // Non-JSON body (proxy/gateway error page) — fall back below.
+            }
+            St.set(!1);
+            return {
+                type: "error",
+                error: serverError || `The server returned an error (HTTP ${r.status}).`
+            };
+        }
 
         const R = await r.json();
         St.set(!1);
