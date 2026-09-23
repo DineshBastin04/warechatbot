@@ -5943,7 +5943,18 @@ class VannaFlaskApp(VannaFlaskAPI):
                     record["enabled"] = False
                     return _fail("rejected", "Re-classified as a write request at fire time — agent disabled.")
 
-                sql_result = vn.generate_sql(question=record["question_en"], workspace=record["workspace_name"])
+                # A follow-up question ("show me top 4") is meaningless on its own —
+                # resolve it against the SQL it was originally asked against, exactly
+                # as the interactive follow-up branch does. .get() keeps agents created
+                # before this field existed working (they simply have no context).
+                if record.get("context_sql"):
+                    sql_result = vn.generate_sql(
+                        question=record["context_sql"],        # previous context
+                        followup_sql=record["question_en"],    # the follow-up itself
+                        workspace=record["workspace_name"],
+                    )
+                else:
+                    sql_result = vn.generate_sql(question=record["question_en"], workspace=record["workspace_name"])
                 if isinstance(sql_result, tuple) and len(sql_result) == 5:
                     sql, total_tokens, input_tokens, output_tokens, model_name = sql_result
                 elif isinstance(sql_result, tuple) and len(sql_result) == 2:
@@ -6082,7 +6093,10 @@ class VannaFlaskApp(VannaFlaskAPI):
                 # each fire is its own independent question/answer, not an update
                 # to a prior one.
                 try:
-                    question_id = uuid.uuid4().hex
+                    # Hyphenated form (str(), not .hex) — dbo.users.question_id is a
+                    # uniqueidentifier column and SQL Server only implicitly converts
+                    # the 36-char 8-4-4-4-12 form; a bare 32-char hex string raises 8169.
+                    question_id = str(uuid.uuid4())
                     cost_usd = self.log_token_count(
                         question_id=question_id,
                         total_tokens=total_tokens,
@@ -8703,6 +8717,7 @@ class VannaFlaskApp(VannaFlaskAPI):
             workspace_id = data.get('workspace_id')
             raw_text = (data.get('text') or '').strip()
             prior_question = data.get('prior_question')
+            prior_sql = data.get('prior_sql')
 
             username = user.get("username") if isinstance(user, dict) else getattr(user, "username", None)
             if not workspace_id or not username:
@@ -8782,7 +8797,17 @@ class VannaFlaskApp(VannaFlaskAPI):
                     schedule["seconds"] = 1800  # no check frequency stated — default to every 30 min
 
             first_conditional = next((s for s in schedules if s.get("type") == "conditional"), None)
-            question_en = extraction.get("question") or (first_conditional.get("condition_text") if first_conditional else None) or prior_question
+            extracted_question = extraction.get("question")
+            conditional_text = first_conditional.get("condition_text") if first_conditional else None
+            question_en = extracted_question or conditional_text or prior_question
+
+            # When the request only referred back ("send this", "email that") we reuse
+            # the prior question verbatim — but that text may itself be a follow-up
+            # ("show me top 4") that means nothing on its own. Carry the prior SQL as
+            # context so each fire can resolve it the same way the interactive
+            # follow-up branch does; a self-contained question needs no context and
+            # gets none, so generation stays unbiased.
+            context_sql = prior_sql if (not extracted_question and not conditional_text and prior_sql) else None
             if not question_en:
                 return jsonify({
                     "type": "error",
@@ -8940,6 +8965,7 @@ class VannaFlaskApp(VannaFlaskAPI):
                     "workspace_id": str(workspace_id),
                     "workspace_name": metadata.get("name") or str(workspace_id),
                     "question_en": question_en,
+                    "context_sql": context_sql,
                     "display_question": schedule.get("condition_text") if is_conditional else question_en,
                     "channel": channel,
                     "email_recipients": email_recipients,
