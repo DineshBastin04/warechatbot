@@ -202,6 +202,16 @@ _auto_unpick_scheduler = None
 _pending_writes = {}
 _pending_writes_lock = None            # initialised after Lock is imported below
 
+# Scheduling/condition requests that are missing one piece of information (what
+# to send, or which registered recipient) — keyed by "{workspace_id}:{username}",
+# one open clarification per user per workspace at a time. Consumed and merged
+# with the user's next message in _handle_schedule_message instead of hard-
+# erroring on the first ambiguous message.
+_pending_schedule_clarifications = {}
+_pending_schedule_clarifications_lock = None   # initialised after Lock is imported below
+_PENDING_CLARIFICATION_TTL_SECONDS = 600
+_MAX_CLARIFICATION_ATTEMPTS = 3
+
 
 
 
@@ -217,6 +227,7 @@ _config_lock = Lock()
 _stuck_device_log_lock = Lock()
 _unpick_log_lock = Lock()
 _pending_writes_lock = Lock()
+_pending_schedule_clarifications_lock = Lock()
 
 
 def save_email_config(data):
@@ -1809,25 +1820,24 @@ class VannaFlaskAPI:
                     }
                 )
 
-        @self.flask_app.route("/api/v0/generate_sql", methods=["GET"])
-        @self.requires_auth
-        def generate_sql(user: any):
+        def _handle_query_message(question_raw, previous_sql, workspace):
             """
-            Generate SQL from a natural language question (supports multilingual input).
-            Handles follow-up questions, token logging, billing, caching, and activity tracking.
-            """
-            question_raw = flask.request.args.get("question")
-            previous_sql = flask.request.args.get("sql")
-            workspace = flask.request.args.get("workspace")
+            Core RAG/text-to-SQL pipeline: validates input, translates, routes read
+            vs write (vn.classify_intent), generates SQL, caches, and logs
+            billing/activity. Shared by generate_sql (GET, question/sql/workspace
+            query params) and route_message (POST, natural-language dispatch) so
+            both entry points run identical logic.
 
+            Returns (body_dict, status_code).
+            """
             # ────────────────────────────────────────────────
             #  Validation
             # ────────────────────────────────────────────────
             if not question_raw:
-                return jsonify({"type": "error", "error": "No question provided"}), 400
+                return {"type": "error", "error": "No question provided"}, 400
 
             if not workspace:
-                return jsonify({"type": "error", "error": "No workspace provided"}), 400
+                return {"type": "error", "error": "No workspace provided"}, 400
 
             # Clean + prepare
             question_clean = clean_question(question_raw)
@@ -1869,16 +1879,16 @@ class VannaFlaskAPI:
             if vn.classify_intent(question_en) == "write":
                 workspace_id_for_write = flask.session.get("workspace_id")
                 if not workspace_id_for_write:
-                    return jsonify({
+                    return {
                         "type": "error",
                         "error": "Workspace is not fully connected (no workspace_id in session) — cannot stage a write.",
-                    }), 400
+                    }, 400
                 body, status = _stage_pending_write(vn, workspace, workspace_id_for_write, question_en, original_question)
                 if status == 200 and body.get("type") == "write_confirmation":
                     body["detected_language"] = detected_language
                     body["was_translated"] = was_translated
                     body["translated_question"] = question_en if was_translated else None
-                return jsonify(body), status
+                return body, status
 
             # ────────────────────────────────────────────────
             # Decide ID + call generate_sql
@@ -1983,7 +1993,7 @@ class VannaFlaskAPI:
 
             response_type = "sql" if vn.is_sql_valid(sql=sql_text) else "text"
 
-            return jsonify({
+            return {
                 "type":               response_type,
                 "id":                 cache_id,
                 "text":               sql_text,   # send only SQL string
@@ -1991,7 +2001,20 @@ class VannaFlaskAPI:
                 "detected_language":  detected_language,
                 "was_translated":     was_translated,
                 "translated_question": question_en if was_translated else None,
-            })
+            }, 200
+
+        @self.flask_app.route("/api/v0/generate_sql", methods=["GET"])
+        @self.requires_auth
+        def generate_sql(user: any):
+            """
+            Generate SQL from a natural language question (supports multilingual input).
+            Handles follow-up questions, token logging, billing, caching, and activity tracking.
+            """
+            question_raw = flask.request.args.get("question")
+            previous_sql = flask.request.args.get("sql")
+            workspace = flask.request.args.get("workspace")
+            body, status = _handle_query_message(question_raw, previous_sql, workspace)
+            return jsonify(body), status
 
         @self.flask_app.route("/api/get_user/<username>", methods=["GET"])
         @self.requires_auth
@@ -8703,40 +8726,76 @@ class VannaFlaskApp(VannaFlaskAPI):
                     except Exception:
                         pass
 
-        @self.flask_app.route('/api/v0/slash_command', methods=['POST'])
-        @self.requires_auth
-        def slash_command_route(user=None):
-            """
-            Single entry point for every "/"-prefixed chat message. Fixed literals
-            (list / stop <id> / email <address>) are handled deterministically with
-            no LLM call; anything else costs exactly one extract_schedule_request
-            call. Strictly read-only — a write-classified request is hard-rejected,
-            never staged or downgraded.
-            """
-            data = request.get_json() or {}
-            workspace_id = data.get('workspace_id')
-            raw_text = (data.get('text') or '').strip()
-            prior_question = data.get('prior_question')
-            prior_sql = data.get('prior_sql')
+        def _has_pending_clarification(workspace_id, username):
+            """Peek (without consuming) whether (workspace_id, username) has an
+            open schedule clarification — used by the routing endpoints to force
+            a bare follow-up reply down the schedule path even though the reply
+            text alone wouldn't obviously classify as "schedule". The actual
+            pop+merge happens inside _handle_schedule_message."""
+            key = f"{workspace_id}:{username}"
+            with _pending_schedule_clarifications_lock:
+                pending = _pending_schedule_clarifications.get(key)
+            return bool(pending) and time.time() - pending.get("created_at", 0) <= _PENDING_CLARIFICATION_TTL_SECONDS
 
-            username = user.get("username") if isinstance(user, dict) else getattr(user, "username", None)
-            if not workspace_id or not username:
-                return jsonify({"type": "error", "error": "workspace_id and an authenticated user are required"}), 400
+        def _handle_schedule_message(workspace_id, raw_text, prior_question, username, prior_sql=None):
+            """
+            Core scheduling/conditional-agent pipeline: fixed literals (list /
+            stop <id> / email list) are handled deterministically with no LLM
+            call; anything else costs exactly one extract_schedule_request call.
+            Strictly read-only — a write-classified request is hard-rejected,
+            never staged or downgraded. Shared by slash_command_route ("/"-prefixed
+            POST body) and route_message (POST, natural-language dispatch) so both
+            entry points run identical logic.
 
+            Returns (body_dict, status_code).
+            """
             body = raw_text[1:].strip() if raw_text.startswith('/') else raw_text
+
+            # A "/" command always abandons any open clarification (pop clears it
+            # either way); a plain reply merges it with the pending context so a
+            # bare "the sales report" can complete an earlier "send this to me".
+            pending_key = f"{workspace_id}:{username}"
+            with _pending_schedule_clarifications_lock:
+                pending = _pending_schedule_clarifications.pop(pending_key, None)
+
+            clarification_attempts = 0
+            if (
+                pending and body and not raw_text.startswith('/')
+                and time.time() - pending.get("created_at", 0) <= _PENDING_CLARIFICATION_TTL_SECONDS
+            ):
+                body = f"{pending['raw_text']} {body}".strip()
+                clarification_attempts = pending.get("attempts", 0)
+
+            def _ask_clarification(question_text):
+                """Store `body` as pending context and ask instead of hard-erroring,
+                unless the retry cap is hit — then give up with a plain error."""
+                new_attempts = clarification_attempts + 1
+                if new_attempts >= _MAX_CLARIFICATION_ATTEMPTS:
+                    return {
+                        "type": "error",
+                        "error": "I still don't have enough information — please restate the full request in one message.",
+                    }, 400
+                with _pending_schedule_clarifications_lock:
+                    _pending_schedule_clarifications[pending_key] = {
+                        "raw_text": body,
+                        "created_at": time.time(),
+                        "attempts": new_attempts,
+                    }
+                return {"type": "text", "text": question_text}, 200
+
             if not body:
-                return jsonify({
+                return {
                     "type": "text",
                     "text": "Usage: /list, /stop <id>, /email list, or a scheduling request like "
                             "\"every Monday at 9am send me open orders to my manager by email\". "
                             "Email recipients are configured by your workspace admin.",
-                })
+                }, 200
 
             if re.match(r'^list$', body, re.IGNORECASE):
                 _, records = _get_schedule_records(workspace_id)
                 mine = [r for r in (records or []) if r.get("owner_username") == username]
                 if not mine:
-                    return jsonify({"type": "text", "text": "You have no scheduled agents in this workspace."})
+                    return {"type": "text", "text": "You have no scheduled agents in this workspace."}, 200
                 lines = [
                     f"{r['schedule_id']} — {r.get('display_question', '')} — "
                     f"{_describe_schedule(r.get('schedule', {}))} — "
@@ -8744,36 +8803,36 @@ class VannaFlaskApp(VannaFlaskAPI):
                     f"{_status_suffix(r)}"
                     for r in mine
                 ]
-                return jsonify({"type": "text", "text": "\n".join(lines)})
+                return {"type": "text", "text": "\n".join(lines)}, 200
 
             stop_match = re.match(r'^stop\s+(\S+)$', body, re.IGNORECASE)
             if stop_match:
                 schedule_id = stop_match.group(1)
                 metadata, records = _get_schedule_records(workspace_id)
                 if metadata is None:
-                    return jsonify({"type": "error", "error": "Workspace not found"}), 404
+                    return {"type": "error", "error": "Workspace not found"}, 404
                 record = next((r for r in records if r.get("schedule_id") == schedule_id), None)
                 if not record or record.get("owner_username") != username:
-                    return jsonify({"type": "error", "error": f"No scheduled agent {schedule_id} found for you."}), 404
+                    return {"type": "error", "error": f"No scheduled agent {schedule_id} found for you."}, 404
                 record["enabled"] = False
                 try:
                     scheduled_agents_scheduler.remove_job(schedule_id)
                 except JobLookupError:
                     pass
                 _save_schedule_records(workspace_id, metadata, records)
-                return jsonify({"type": "text", "text": f"Stopped {schedule_id}."})
+                return {"type": "text", "text": f"Stopped {schedule_id}."}, 200
 
             if re.match(r'^email\s+list$', body, re.IGNORECASE):
                 registered = _get_workspace_emails(workspace_id)
                 if not registered:
-                    return jsonify({"type": "text", "text": "No email recipients configured for this workspace yet — ask your admin to add some."})
+                    return {"type": "text", "text": "No email recipients configured for this workspace yet — ask your admin to add some."}, 200
                 lines = [f"{e['label']} — {e['address']}" for e in registered]
-                return jsonify({"type": "text", "text": "\n".join(lines)})
+                return {"type": "text", "text": "\n".join(lines)}, 200
 
             # Anything else: exactly one LLM call.
             initialized, init_err = self.ensure_vanna_initialized(workspace_id)
             if not initialized:
-                return jsonify({"type": "error", "error": init_err}), 400
+                return {"type": "error", "error": init_err}, 400
 
             registered_emails = _get_workspace_emails(workspace_id)
             reference_time = datetime.now(ZoneInfo(DEFAULT_SCHEDULE_TIMEZONE)).isoformat()
@@ -8784,10 +8843,10 @@ class VannaFlaskApp(VannaFlaskAPI):
 
             schedules = extraction.get("schedules") or []
             if not extraction.get("ok") or not schedules:
-                return jsonify({
+                return {
                     "type": "text",
                     "text": extraction.get("error") or "I couldn't understand that as a scheduling request — please rephrase.",
-                })
+                }, 200
 
             # A compound request ("send this now and every Monday") comes back as
             # more than one entry — almost every request is exactly one, though.
@@ -8809,16 +8868,13 @@ class VannaFlaskApp(VannaFlaskAPI):
             # gets none, so generation stays unbiased.
             context_sql = prior_sql if (not extracted_question and not conditional_text and prior_sql) else None
             if not question_en:
-                return jsonify({
-                    "type": "error",
-                    "error": "I don't have a previous question to refer to — please include what you'd like scheduled.",
-                }), 400
+                return _ask_clarification("What would you like me to send you, or what should I watch for?")
 
             if vn.classify_intent(question_en) == "write":
-                return jsonify({
+                return {
                     "type": "error",
                     "error": "That looks like a write request — scheduled agents are strictly read-only.",
-                }), 409
+                }, 409
 
             channel = extraction.get("channel", "chat")
             email_recipients = []
@@ -8832,41 +8888,37 @@ class VannaFlaskApp(VannaFlaskAPI):
                     unknown = [label for label in email_labels if label.lower() not in registered_by_label]
                     if unknown:
                         known_list = ", ".join(e["label"] for e in registered_emails) or "(none registered)"
-                        return jsonify({
-                            "type": "error",
-                            "error": f"\"{unknown[0]}\" isn't a registered email recipient. "
-                                     f"You have: {known_list}.",
-                        }), 400
+                        return _ask_clarification(
+                            f"\"{unknown[0]}\" isn't a registered recipient. You have: {known_list} — which did you mean?"
+                        )
                     email_recipients = [registered_by_label[label.lower()] for label in email_labels]
                 elif extraction.get("email_address"):
                     email_recipients = [extraction["email_address"]]
                 elif len(registered_emails) == 1:
                     email_recipients = [registered_emails[0]["address"]]
                 elif len(registered_emails) == 0:
-                    return jsonify({
+                    return {
                         "type": "error",
                         "error": "No email recipients configured for this workspace — ask your "
                                  "admin to add some in the Email Recipients section of the DB config panel.",
-                    }), 400
+                    }, 400
                 else:
                     known_list = ", ".join(e["label"] for e in registered_emails)
-                    return jsonify({
-                        "type": "error",
-                        "error": f"You have multiple email recipients configured ({known_list}) — "
-                                 f"please say which to send to, e.g. \"send to me\" or \"send to all\".",
-                    }), 400
+                    return _ask_clarification(
+                        f"You have multiple recipients configured ({known_list}) — who should I send this to?"
+                    )
 
             metadata, records = _get_schedule_records(workspace_id)
             if metadata is None:
-                return jsonify({"type": "error", "error": "Workspace not found"}), 404
+                return {"type": "error", "error": "Workspace not found"}, 404
 
             enabled_count = sum(1 for r in records if r.get("owner_username") == username and r.get("enabled"))
             if enabled_count + len(schedules) > MAX_ENABLED_SCHEDULES_PER_USER:
-                return jsonify({
+                return {
                     "type": "error",
                     "error": f"That would put you at {enabled_count + len(schedules)} scheduled agents — "
                              f"the limit is {MAX_ENABLED_SCHEDULES_PER_USER}. Stop some before creating more.",
-                }), 400
+                }, 400
 
             # Pass 1: validate every entry and run each conditional entry's preview
             # check BEFORE persisting anything — a compound request must succeed or
@@ -8880,7 +8932,7 @@ class VannaFlaskApp(VannaFlaskAPI):
                 try:
                     trigger = _build_schedule_trigger(schedule)
                 except Exception as trigger_exc:
-                    return jsonify({"type": "error", "error": f"{label}Couldn't build a schedule from that: {trigger_exc}"}), 400
+                    return {"type": "error", "error": f"{label}Couldn't build a schedule from that: {trigger_exc}"}, 400
 
                 tz = schedule.get("timezone") or DEFAULT_SCHEDULE_TIMEZONE
                 now = datetime.now(ZoneInfo(tz))
@@ -8893,18 +8945,18 @@ class VannaFlaskApp(VannaFlaskAPI):
                     t = trigger.get_next_fire_time(t, t)
 
                 if not fires:
-                    return jsonify({"type": "error", "error": f"{label}That schedule never fires — please rephrase."}), 400
+                    return {"type": "error", "error": f"{label}That schedule never fires — please rephrase."}, 400
                 if len(fires) >= 2 and (fires[1] - fires[0]).total_seconds() < MIN_SCHEDULE_INTERVAL_SECONDS:
-                    return jsonify({
+                    return {
                         "type": "error",
                         "error": f"{label}That schedule fires more than once within {MIN_SCHEDULE_INTERVAL_SECONDS // 60} "
                                  f"minutes — please choose a longer interval.",
-                    }), 400
+                    }, 400
                 if schedule.get("type") in ("interval", "conditional") and int(schedule.get("seconds", 0)) < MIN_SCHEDULE_INTERVAL_SECONDS:
-                    return jsonify({
+                    return {
                         "type": "error",
                         "error": f"{label}Please choose a check interval of at least {MIN_SCHEDULE_INTERVAL_SECONDS // 60} minutes.",
-                    }), 400
+                    }, 400
 
                 # Conditional agents run indefinitely, so — unlike every other type,
                 # which defers all SQL generation to the first fire — run the full
@@ -8945,7 +8997,7 @@ class VannaFlaskApp(VannaFlaskAPI):
                             except Exception as check_exc:
                                 condition_preview_error = f"Condition check failed: {check_exc}"
                     if condition_preview_error:
-                        return jsonify({"type": "error", "error": f"{label}Couldn't set up that condition: {condition_preview_error}"}), 400
+                        return {"type": "error", "error": f"{label}Couldn't set up that condition: {condition_preview_error}"}, 400
 
                 prepared.append({
                     "schedule": schedule, "is_conditional": is_conditional, "trigger": trigger,
@@ -9025,7 +9077,98 @@ class VannaFlaskApp(VannaFlaskAPI):
             else:
                 lines = "\n".join(f"{i + 1}. {_describe_created(c)}" for i, c in enumerate(created))
                 echo = f"{note}{question_en} — split into {len(created)} schedules:\n{lines}"
-            return jsonify({"type": "text", "text": echo})
+            return {"type": "text", "text": echo}, 200
+
+        @self.flask_app.route('/api/v0/slash_command', methods=['POST'])
+        @self.requires_auth
+        def slash_command_route(user=None):
+            """
+            Single entry point for every "/"-prefixed chat message. Fixed literals
+            (list / stop <id> / email <address>) are handled deterministically with
+            no LLM call; anything else costs exactly one extract_schedule_request
+            call. Strictly read-only — a write-classified request is hard-rejected,
+            never staged or downgraded. See _handle_schedule_message, which is
+            also called by route_message for natural-language (no "/") dispatch.
+            """
+            data = request.get_json() or {}
+            workspace_id = data.get('workspace_id')
+            raw_text = (data.get('text') or '').strip()
+            prior_question = data.get('prior_question')
+            prior_sql = data.get('prior_sql')
+
+            username = user.get("username") if isinstance(user, dict) else getattr(user, "username", None)
+            if not workspace_id or not username:
+                return jsonify({"type": "error", "error": "workspace_id and an authenticated user are required"}), 400
+
+            body, status = _handle_schedule_message(workspace_id, raw_text, prior_question, username, prior_sql)
+            return jsonify(body), status
+
+        @self.flask_app.route('/api/v0/route_message', methods=['POST'])
+        @self.requires_auth
+        def route_message(user=None):
+            """
+            Single natural-language entry point for chat: classifies the raw
+            message (vn.classify_message_route) as a scheduling/condition
+            request or an ordinary data question and dispatches to the same
+            underlying logic as slash_command_route / generate_sql — no "/"
+            prefix required. An explicit leading "/" is still honored as a
+            fast path that skips the classifier call. Deliberately
+            channel-agnostic: any future entry point (Teams, voice) can drive
+            the same routing by POSTing raw text here.
+            """
+            data = request.get_json() or {}
+            workspace_id = data.get('workspace_id')
+            workspace = data.get('workspace') or workspace_id
+            raw_text = (data.get('text') or '').strip()
+            prior_question = data.get('prior_question')
+            previous_sql = data.get('sql')
+
+            username = user.get("username") if isinstance(user, dict) else getattr(user, "username", None)
+            if not workspace_id or not username:
+                return jsonify({"type": "error", "error": "workspace_id and an authenticated user are required"}), 400
+            if not raw_text:
+                return jsonify({"type": "error", "error": "No message provided"}), 400
+
+            if raw_text.startswith('/') or _has_pending_clarification(workspace_id, username):
+                body, status = _handle_schedule_message(workspace_id, raw_text, prior_question, username, previous_sql)
+                return jsonify(body), status
+
+            route = vn.classify_message_route(raw_text)
+            if route == "schedule":
+                body, status = _handle_schedule_message(workspace_id, raw_text, prior_question, username, previous_sql)
+            else:
+                body, status = _handle_query_message(raw_text, previous_sql, workspace)
+            return jsonify(body), status
+
+        @self.flask_app.route('/api/v0/classify_message_route', methods=['POST'])
+        @self.requires_auth
+        def classify_message_route_endpoint(user=None):
+            """
+            Classification-only counterpart to route_message: given raw chat text,
+            says whether it's a scheduling/condition request or an ordinary data
+            question, without executing either path. The chat UI (index.js's uT())
+            calls this to decide between handleSlashCommand (scheduling) and its
+            existing generate_sql flow (query) — that query flow's rewritten-question
+            and get_function steps are frontend-only orchestration and would be lost
+            if every message were instead sent straight through route_message.
+
+            Also forces "schedule" whenever this user/workspace has an open
+            clarification pending (e.g. they were just asked "what would you like
+            me to send you?") — a bare reply like "the sales report" wouldn't
+            otherwise obviously classify as scheduling on its own.
+            """
+            data = request.get_json() or {}
+            raw_text = (data.get('text') or '').strip()
+            workspace_id = data.get('workspace_id')
+            username = user.get("username") if isinstance(user, dict) else getattr(user, "username", None)
+
+            if not raw_text:
+                return jsonify({"type": "route", "route": "query"})
+            if raw_text.startswith('/'):
+                return jsonify({"type": "route", "route": "schedule"})
+            if workspace_id and username and _has_pending_clarification(workspace_id, username):
+                return jsonify({"type": "route", "route": "schedule"})
+            return jsonify({"type": "route", "route": vn.classify_message_route(raw_text)})
 
         @self.flask_app.route('/api/v0/scheduled_agents', methods=['GET'])
         @self.requires_auth

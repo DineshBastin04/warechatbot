@@ -688,6 +688,76 @@ class VannaBase(ABC):
 
         return "write" if (has_write_verb and not has_read_guard) else "read"
 
+    def classify_message_route(self, text: str, **kwargs) -> str:
+        """
+        Single LLM call that decides whether a raw chat message (no "/" prefix
+        required) should be handled as a scheduling/condition request (->
+        extract_schedule_request) or an ordinary data question (-> generate_sql).
+
+        Deliberately a separate, tiny call rather than reusing
+        extract_schedule_request's own "ok" field for this: extract_schedule_request's
+        prompt is large (it also does full field extraction), so running it on every
+        ordinary read query just to get a yes/no would be wasteful.
+
+        Like classify_intent, this is a UX router, not a security boundary — a
+        misclassification just sends the message down the "wrong" existing pipeline,
+        which handles it via its own normal validation (extract_schedule_request
+        itself sets "ok": false for a non-schedule message that slips through, and
+        generate_sql just fails to produce useful SQL for a schedule message that
+        slips through).
+
+        Returns:
+            "schedule" if the message is asking to schedule, remind, notify, or
+            watch for a condition; otherwise "query".
+        """
+        if not text or not text.strip():
+            return "query"
+
+        system_prompt = (
+            "Classify the user's message into exactly one category. Respond with "
+            'ONLY the single word "schedule" or "query" — no punctuation, no '
+            "explanation.\n\n"
+            "Judge by what the message is ABOUT, not by matching it against fixed "
+            "phrases — apply this test to whatever wording appears, including "
+            "wording never shown to you before:\n"
+            '- "query" = the message specifies NEW data or business criteria to '
+            "look up. It could be answered by writing a fresh SQL query against "
+            "the data.\n"
+            '- "schedule" = the message is instead about HOW, WHEN, or WHETHER an '
+            "answer reaches the user — sending/delivering it (even once, even "
+            "with no time stated at all), repeating it on a cadence, or watching "
+            "for a condition/threshold/event over time. It does NOT introduce a "
+            "new data question — it's about managing delivery of one.\n\n"
+            "If unsure, ask: does this message tell me what to look up, or does "
+            "it tell me to do something with an answer (send/deliver/repeat/"
+            "watch it)? The former is \"query\"; the latter is \"schedule\", no "
+            "matter which verb (send, email, text, remind, notify, alert, ping, "
+            "keep me posted, watch, ...) or how much timing detail it includes.\n\n"
+            "A few illustrations only — do not treat this as the complete list, "
+            'reason from the test above for anything else: "remind me every '
+            'Monday at 9am", "email me this report daily", "notify me when '
+            'inventory drops below 100", "send this to me", "text this to my '
+            'manager" -> schedule. "show me sales by region", "how many orders '
+            'shipped today" -> query.'
+        )
+
+        messages = [
+            self.system_message(system_prompt),
+            self.user_message(text),
+        ]
+
+        self.log(title="Message Route Classification Prompt", message=system_prompt)
+        llm_response_tuple = self.submit_prompt(messages, **kwargs)
+
+        if isinstance(llm_response_tuple, tuple) and len(llm_response_tuple) in (2, 5):
+            response_text = llm_response_tuple[0]
+        else:
+            response_text = str(llm_response_tuple)
+
+        self.log(title="Message Route Classification Response", message=response_text)
+
+        return "schedule" if "schedule" in response_text.strip().lower() else "query"
+
     def extract_schedule_request(
         self,
         text: str,

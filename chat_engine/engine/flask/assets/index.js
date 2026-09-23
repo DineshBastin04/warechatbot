@@ -337,14 +337,31 @@ function renderWriteConfirmationModal(sqlRes, workspaceId) {
 }
 
 async function uT(E, L, existingQuestionId = null) {
-    if ((E || "").trim().startsWith("/")) {
-        handleSlashCommand(E.trim());
+    const trimmed = (E || "").trim();
+    const workspaceId = getWorkspaceIdFromUrl() || getCurrentWorkspaceId();
+    if (trimmed.startsWith("/")) {
+        handleSlashCommand(trimmed);
         return;
+    }
+    if (trimmed) {
+        // "/" is still an accepted fast path above, but it's no longer required —
+        // a lightweight server-side classification call decides whether a plain
+        // NL message ("remind me every Monday…", "notify me when X drops below Y")
+        // should go to the same scheduling/condition pipeline as a "/" command
+        // instead of the normal RAG flow below. workspace_id lets the backend
+        // also detect an open clarification (e.g. "what would you like me to
+        // send you?") and keep routing bare follow-up replies to scheduling.
+        // Pe() never throws (it swallows errors into {type:"error"}), so a
+        // classification failure naturally fails open into the RAG flow below.
+        const routeRes = await Pe("classify_message_route", "POST", { text: trimmed, workspace_id: workspaceId });
+        if (routeRes.route === "schedule") {
+            handleSlashCommand(trimmed);
+            return;
+        }
     }
     __feedbackShownForId.clear();
     let e = uE(VE),
         T = yn();
-    const workspaceId = getWorkspaceIdFromUrl() || getCurrentWorkspaceId();
     const workspaceName = await getWorkspaceName(workspaceId);
 
     // Use provided existingQuestionId (from FAQ/sidebar) if available
