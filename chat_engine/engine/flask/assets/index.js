@@ -252,12 +252,15 @@ async function handleSlashCommand(text) {
 // In-window delivery for scheduled agents' "chat" channel — no push/WebSocket
 // infra exists in this app, so poll while the chat view is open. Each drained
 // result is pushed via Se({type:"text",...}), same as handleSlashCommand above.
+// silent:true — this runs unprompted every 30s and must never flash the "Getting
+// that for you..." loading bubble, which previously made the chat look like it
+// was auto-refreshing on its own even when the user hadn't asked anything.
 setInterval(async () => {
     try {
         if (uE(DE) !== "chat") return;
         const workspaceId = getWorkspaceIdFromUrl() || getCurrentWorkspaceId();
         if (!workspaceId) return;
-        const res = await Pe("scheduled_questions/poll", "POST", { workspace_id: workspaceId });
+        const res = await Pe("scheduled_questions/poll", "POST", { workspace_id: workspaceId }, true);
         if (res.type === "schedule_results" && res.messages && res.messages.length) {
             res.messages.forEach(m => Se({ type: "text", text: m.text }));
         }
@@ -362,6 +365,39 @@ async function uT(E, L, existingQuestionId = null) {
     __feedbackShownForId.clear();
     let e = uE(VE),
         T = yn();
+    // T (yn()) truthy is exactly the same "there's an active conversation to build
+    // on" signal the app already uses elsewhere: Pe() unconditionally auto-attaches
+    // the previous SQL to every generate_sql call when T is available, which is what
+    // puts the backend into "Follow-up mode" (engine/flask/__init__.py, previous_sql
+    // present). Reusing that same definition here — instead of requiring
+    // generate_rewritten_question to have changed the text, which turned out to
+    // almost never fire for real follow-ups that are already well-formed on their
+    // own — so the FAQ/history sidebar's grouping matches what "follow-up" already
+    // means everywhere else in this app.
+    //
+    // Resolved to the THREAD ROOT (walking parent_question_id back to the first
+    // question with no parent of its own), not just the immediately previous
+    // question — so an extended back-and-forth collapses into ONE group under its
+    // first question, rather than a chain nested many levels deep that the sidebar's
+    // (intentionally simple, single-level) grouping can't render.
+    //
+    // Captured now, before the Se() call below pushes this question into the feed
+    // (fT() scans the feed for the *previous* question, so it must run before this
+    // one is in there too, or it could resolve to itself when existingQuestionId is set).
+    function _resolveThreadRoot(startId) {
+        if (!startId) return null;
+        const list = uE(CT);
+        let current = list.find(q => q.question_id === startId);
+        let guard = 0;
+        while (current && current.parent_question_id && guard < 50) {
+            const next = list.find(q => q.question_id === current.parent_question_id);
+            if (!next) break;
+            current = next;
+            guard++;
+        }
+        return current ? current.question_id : startId;
+    }
+    const parentQuestionId = T ? _resolveThreadRoot(fT()?.question_id) : null;
     const workspaceName = await getWorkspaceName(workspaceId);
 
     // Use provided existingQuestionId (from FAQ/sidebar) if available
@@ -375,20 +411,31 @@ async function uT(E, L, existingQuestionId = null) {
         question_id: questionId  // may be null for new questions
     });
 
-    // Add to suggested questions / history sidebar (CT store)
-    // Avoid duplicates based on question_id if we have one
+    // Add to suggested questions / history sidebar (CT store). Re-derived through
+    // _faqDisplayOrder on every insert (not just appended) so the sidebar always
+    // shows newest-first with each entry's follow-ups grouped directly under it —
+    // CT is rendered as-is, so it has to already be in the order it should display.
     CT.update(s => {
         if (questionId && s.some(q => q.question_id === questionId)) return s;
         if (!questionId && s.some(q => q.question === E)) return s; // fallback for new
-        return [...s, {
+        return _faqDisplayOrder([...s, {
             question: E,
-            question_id: questionId  // will be updated later if null
-        }];
+            question_id: questionId,  // will be updated later if null
+            id: questionId,  // the sidebar's click-to-view handler (kn's ctx[2],
+                              // Mn(n.id)) reads .id, not .question_id — gn()'s
+                              // page-load hydration already sets both; this keeps
+                              // a live-session-created entry clickable too instead
+                              // of firing Mn(undefined) and showing a bogus
+                              // "no data available" reply
+            parent_question_id: parentQuestionId
+        }]);
     });
 
     Ht.set(!0);
 
-    // Rewritten question logic (if follow-up)
+    // Rewritten question logic (if follow-up) — purely a display/SQL-quality aid
+    // (rewrites ambiguous phrasing like "show me top 4" into something standalone);
+    // unrelated to the grouping decision above.
     if (T) {
         const rewrittenRes = await Pe("generate_rewritten_question", "GET", {
             last_question: T,
@@ -417,7 +464,11 @@ async function uT(E, L, existingQuestionId = null) {
         LAST_USED_SQL = finalSql;
         Et.set(finalSql);
     } else {
-        const sqlRes = await Pe("generate_sql", "GET", { question: E, workspace: workspaceName });
+        const sqlRes = await Pe("generate_sql", "GET", {
+            question: E,
+            workspace: workspaceName,
+            ...(parentQuestionId ? { parent_question_id: parentQuestionId } : {})
+        });
         if (sqlRes.type === "write_confirmation") {
             try { renderWriteConfirmationModal(sqlRes, workspaceId); } catch (e) { console.error("write confirmation modal failed:", e); }
             return;
@@ -466,11 +517,11 @@ async function uT(E, L, existingQuestionId = null) {
 
         // Update CT (sidebar) with the correct backend question_id
         CT.update(s => {
-            return s.map(q => 
-                (q.question === E && (!q.question_id || q.question_id === existingQuestionId)) 
-                    ? { ...q, question_id: questionId }
+            return s.map(q =>
+                (q.question === E && (!q.question_id || q.question_id === existingQuestionId))
+                    ? { ...q, question_id: questionId, id: questionId }
                     : q
-            ).filter((q, idx, self) => 
+            ).filter((q, idx, self) =>
                 self.findIndex(t => t.question === q.question) === idx // dedupe by text
             );
         });
@@ -902,7 +953,77 @@ function pt(E) {
     return E;
 }
 
-function mn(E){return E.type==="functions"&&MR.set(E.functions),E}function hn(E){return LT.set(E),E}function Gn(E){return E.type==="config"?(VE.set(E.config),E.config.debug&&xn()):E.type==="not_logged_in"&&(bt.set(E.html),DE.set("login")),E}function gn(E){return E.type==="question_history"&&CT.set(E.questions),E}function Hn(E,e){gt.set(null);let T={};T[e]=E,Pe("train","POST",T).then(pt).then(t=>{t.type!=="error"&&Pe("get_training_data","GET",[]).then(pt)})}async function Pe(E, e, T) {
+function mn(E){return E.type==="functions"&&MR.set(E.functions),E}function hn(E){return LT.set(E),E}function Gn(E){return E.type==="config"?(VE.set(E.config),E.config.debug&&xn()):E.type==="not_logged_in"&&(bt.set(E.html),DE.set("login")),E}function gn(E){return E.type==="question_history"&&CT.set(_faqDisplayOrder((E.questions||[]).map(q=>({...q,question_id:q.id})))),E}function Hn(E,e){gt.set(null);let T={};T[e]=E,Pe("train","POST",T).then(pt).then(t=>{t.type!=="error"&&Pe("get_training_data","GET",[]).then(pt)})}
+// St is a single shared "is anything loading" store read by the chat spinner, but
+// Pe() is called from many places that can legitimately overlap (uT()'s sequential
+// classify/rewrite/get_function/generate_sql calls, handleSlashCommand, and the 30s
+// background scheduled_questions/poll). A plain St.set(!1) from whichever call
+// happens to finish first was hiding the spinner while another call was still in
+// flight. inFlightCount makes St true only while at least one call is outstanding.
+let _peInFlightCount = 0;
+function _peBeginLoading() { _peInFlightCount++; St.set(!0); }
+function _peEndLoading() { _peInFlightCount = Math.max(0, _peInFlightCount - 1); if (_peInFlightCount === 0) St.set(!1); }
+
+// FAQ/history sidebar: group a follow-up question under its parent instead of
+// listing it as a separate entry. CT itself stays the full flat list (other code
+// reads it for duplicate-checking etc. — see uT()'s CT.update) — only the sidebar
+// row renderer (kT, further down) hides a child row while its parent is collapsed,
+// and decorates parent/child rows via these helpers.
+//
+// Expand state is stored as an `_expanded` field directly ON the parent's own CT
+// entry (not in a side-channel Set) — deliberately, so toggling it is a genuine
+// content change flowing through the exact same CT.update() path already proven
+// reliable for other per-row field changes (e.g. the question_id backfill further
+// down), rather than depending on a bare "new array reference" being correctly
+// propagated to every row's update pass by the sidebar's (compiled, unverifiable
+// without a browser) each-block internals.
+function _faqChildCount(row) {
+    return uE(CT).filter(x => x.parent_question_id === row.question_id).length;
+}
+function _faqRowLabel(row) {
+    const q = row.question || "";
+    if (row.parent_question_id) return "↳ " + q;
+    const kids = _faqChildCount(row);
+    if (kids > 0) return q + (row._expanded ? " ▾" : ` ▸ (${kids})`);
+    return q;
+}
+function _faqRowHidden(row) {
+    if (!row.parent_question_id) return false;
+    const parent = uE(CT).find(x => x.question_id === row.parent_question_id);
+    return !(parent && parent._expanded);
+}
+function _faqExpand(qid) {
+    CT.update(s => s.map(q => q.question_id === qid ? { ...q, _expanded: true } : q));
+}
+// Sidebar display order: newest top-level (parented or standalone) question
+// first, with each one's children placed immediately after it (hidden/shown by
+// _faqRowHidden above) rather than wherever their own timestamp would otherwise
+// place them in a flat reverse-chronological list — that would split a group
+// apart. A "child" whose parent isn't in the current list (evicted/missing) is
+// treated as top-level itself so it doesn't silently disappear.
+function _faqDisplayOrder(list) {
+    const idsPresent = new Set(list.map(r => r.question_id));
+    const byParent = new Map();
+    const topLevel = [];
+    for (const row of list) {
+        if (row.parent_question_id && idsPresent.has(row.parent_question_id)) {
+            if (!byParent.has(row.parent_question_id)) byParent.set(row.parent_question_id, []);
+            byParent.get(row.parent_question_id).push(row);
+        } else {
+            topLevel.push(row);
+        }
+    }
+    const ordered = [];
+    for (let i = topLevel.length - 1; i >= 0; i--) {
+        const parent = topLevel[i];
+        ordered.push(parent);
+        const kids = byParent.get(parent.question_id);
+        if (kids) ordered.push(...kids);
+    }
+    return ordered;
+}
+
+async function Pe(E, e, T, silent = false) {
 
     // 🔥 FIX: Automatically attach previous SQL for follow-up queries
     if (E === "generate_sql") {
@@ -911,10 +1032,15 @@ function mn(E){return E.type==="functions"&&MR.set(E.functions),E}function hn(E)
             console.log("Auto-attached previous SQL:", last.sql);
             T.sql = last.sql;
         }
+        // NOTE: deliberately no auto-attach for parent_question_id here (unlike
+        // sql above) — uT() only passes it once generate_rewritten_question has
+        // confirmed E is a genuine follow-up; fT() alone can't tell a real
+        // follow-up from an unrelated new question, so guessing it here would
+        // group unrelated questions in the FAQ/history sidebar.
     }
 
     try {
-        St.set(!0);
+        if (!silent) _peBeginLoading();
         let t = "", r;
 
         if (e === "GET") {
@@ -946,7 +1072,7 @@ function mn(E){return E.type==="functions"&&MR.set(E.functions),E}function hn(E)
             } catch (_) {
                 // Non-JSON body (proxy/gateway error page) — fall back below.
             }
-            St.set(!1);
+            if (!silent) _peEndLoading();
             return {
                 type: "error",
                 error: serverError || `The server returned an error (HTTP ${r.status}).`
@@ -954,11 +1080,11 @@ function mn(E){return E.type==="functions"&&MR.set(E.functions),E}function hn(E)
         }
 
         const R = await r.json();
-        St.set(!1);
+        if (!silent) _peEndLoading();
         return R;
 
     } catch (t) {
-        St.set(!1);
+        if (!silent) _peEndLoading();
         return { type: "error", error: String(t) };
     }
 }
@@ -1232,8 +1358,8 @@ function wT(){
     
     Se({type:"feedback_incorrect"}),Se({type:"user_sql"})}function $n(E){at("chart_modification"),Se({type:"user_question",question:"Update the chart with these instructions: "+E}),Pe("generate_plotly_figure","GET",{id:uE(GE),chart_instructions:E}).then(Se)}function xn(){var E=new WebSocket("ws://"+window.location.host+"/api/v0/log");E.onopen=function(){console.log("Connected to WebSocket server at /log.")},E.onmessage=function(e){console.log("Received message:",e.data);try{var T=JSON.parse(e.data)}catch(r){console.error("Error parsing JSON:",r);return}var t=document.getElementById("log-contents");t&&(t.innerHTML+="<details> <summary>"+T.title+"</summary> "+JSON.stringify(T.message)+"</details> <br>")},E.onclose=function(e){console.log("WebSocket connection closed:",e)},E.onerror=function(e){console.error("WebSocket error:",e)}}function $T(E,e,T){const t=E.slice();return t[3]=e[T],t}function xT(E){let e,T,t,r;return{c(){e=f("li"),T=f("button"),T.innerHTML=`<svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="1.5" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M4.26 10.147a60.436 60.436 0 00-.491 6.347A48.627 48.627 0 0112 20.904a48.627 48.627 0 018.232-4.41 60.46 60.46 0 00-.491-6.347m-15.482 0a50.57 50.57 0 00-2.658-.813A59.905 59.905 0 0112 3.493a59.902 59.902 0 0110.399 5.84c-.896.248-1.783.52-2.658.814m-15.482 0A50.697 50.697 0 0112 13.489a50.702 50.702 0 017.74-3.342M6.75 15a.75.75 0 100-1.5.75.75 0 000 1.5zm0 0v-3.675A55.378 55.378 0 0112 8.443m-7.007 11.55A5.981 5.981 0 006.75 15.75v-1.5"></path></svg>
               Functions`,a(T,"class","flex items-center gap-x-3 py-2 px-3 text-sm text-slate-700 rounded-md hover:bg-gray-100 dark:hover:bg-gray-900 dark:text-slate-400 dark:hover:text-slate-300 border border-gray-200 dark:border-gray-700 w-full")},m(R,n){V(R,e,n),l(e,T),t||(r=Ne(T,"click",cT),t=!0)},d(R){R&&Y(e),t=!1,r()}}}function XT(E){let e,T,t,r;return{c(){e=f("li"),T=f("button"),T.innerHTML=`<svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="1.5" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M4.26 10.147a60.436 60.436 0 00-.491 6.347A48.627 48.627 0 0112 20.904a48.627 48.627 0 018.232-4.41 60.46 60.46 0 00-.491-6.347m-15.482 0a50.57 50.57 0 00-2.658-.813A59.905 59.905 0 0112 3.493a59.902 59.902 0 0110.399 5.84c-.896.248-1.783.52-2.658.814m-15.482 0A50.697 50.697 0 0112 13.489a50.702 50.702 0 017.74-3.342M6.75 15a.75.75 0 100-1.5.75.75 0 000 1.5zm0 0v-3.675A55.378 55.378 0 0112 8.443m-7.007 11.55A5.981 5.981 0 006.75 15.75v-1.5"></path></svg>
-              Training Data`,a(T,"class","flex items-center gap-x-3 py-2 px-3 text-sm text-slate-700 rounded-md hover:bg-gray-100 dark:hover:bg-gray-900 dark:text-slate-400 dark:hover:text-slate-300 border border-gray-200 dark:border-gray-700 w-full")},m(R,n){V(R,e,n),l(e,T),t||(r=Ne(T,"click",hR),t=!0)},d(R){R&&Y(e),t=!1,r()}}}function kT(E){let e,T,t,r,R,n=E[3].question+"",s,S,A,o;function i(){  return E[2](E[3])}return{c(){e=f("li"),T=f("button"),t=OE("svg"),r=OE("path"),R=$(),s=te(n),S=$(),a(r,"stroke-linecap","round"),a(r,"stroke-linejoin","round"),a(r,"d","M7.5 8.25h9m-9 3H12m-9.75 1.51c0 1.6 1.123 2.994 2.707 3.227 1.129.166 2.27.293 3.423.379.35.026.67.21.865.501L12 21l2.755-4.133a1.14 1.14 0 01.865-.501 48.172 48.172 0 003.423-.379c1.584-.233 2.707-1.626 2.707-3.228V6.741c0-1.602-1.123-2.995-2.707-3.228A48.394 48.394 0 0012 3c-2.392 0-4.744.175-7.043.513C3.373 3.746 2.25 5.14 2.25 6.741v6.018z"),a(t,"class","w-3.5 h-3.5"),a(t,"fill","none"),a(t,"stroke","currentColor"),a(t,"stroke-width","1.5"),a(t,"viewBox","0 0 24 24"),a(t,"xmlns","http://www.w3.org/2000/svg"),a(t,"aria-hidden","true"),
-              a(T,"class","flex items-center text-left gap-x-3 py-2 px-3 text-sm text-slate-700 rounded-md hover:bg-gray-100 dark:hover:bg-gray-900 dark:text-slate-400 dark:hover:text-slate-300")},m(_,c){V(_,e,c),l(e,T),l(T,t),l(t,r),l(T,R),l(T,s),l(e,S),A||(o=Ne(T,"click",i),A=!0)},p(_,c){E=_,c&2&&n!==(n=E[3].question+"")&&Le(s,n)},d(_){_&&Y(e),A=!1,o()}}}function Xn(E){let e,T,t,r,R,n,s,S,A,o,i,_,c,P,p,C,L,I,u,H,b,M=E[0].version+"",O,N,D,B,h,G=E[0].function_generation&&xT(),F=E[0].show_training_data&&XT(),W=De(E[1]),x=[];for(let J=0;J<W.length;J+=1)x[J]=kT($T(E,W,J));return{c(){e=f("div"),T=f("nav"),t=f("div"),r=f("img"),n=$(),s=f("div"),s.innerHTML='<button type="button" class="w-8 h-8 inline-flex justify-center items-center gap-2 rounded-md text-gray-700 align-middle focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-offset-white focus:ring-blue-600 transition-all dark:text-gray-400 dark:focus:ring-offset-gray-800" data-hs-overlay="#application-sidebar" aria-controls="application-sidebar" aria-label="Toggle navigation"><svg class="w-4 h-4" width="16" height="16" fill="currentColor" viewBox="0 0 16 16"><path d="M2.146 2.854a.5.5 0 1 1 .708-.708L8 7.293l5.146-5.147a.5.5 0 0 1 .708.708L8.707 8l5.147 5.146a.5.5 0 0 1-.708.708L8 8.707l-5.146 5.147a.5.5 0 0 1-.708-.708L7.293 8 2.146 2.854Z"></path></svg> <span class="sr-only">Sidebar</span></button>',S=$(),A=f("div"),o=f("ul"),G&&G.c(),i=$(),F&&F.c(),_=$(),c=f("li"),P=f("button"),P.innerHTML=`<svg class="w-3.5 h-3.5" xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="currentColor" viewBox="0 0 16 16"><path fill-rule="evenodd" clip-rule="evenodd" d="M8 2C8.47339 2 8.85714 2.38376 8.85714 2.85714V7.14286L13.1429 7.14286C13.6162 7.14286 14 7.52661 14 8C14 8.47339 13.6162 8.85714 13.1429 8.85714L8.85714 8.85715V13.1429C8.85714 13.6162 8.47339 14 8 14C7.52661 14 7.14286 13.6162 7.14286 13.1429V8.85715L2.85714 8.85715C2.38376 8.85715 2 8.4734 2 8.00001C2 7.52662 2.38376 7.14287 2.85714 7.14287L7.14286 7.14286V2.85714C7.14286 2.38376 7.52661 2 8 2Z" fill="currentColor"></path></svg>
+              Training Data`,a(T,"class","flex items-center gap-x-3 py-2 px-3 text-sm text-slate-700 rounded-md hover:bg-gray-100 dark:hover:bg-gray-900 dark:text-slate-400 dark:hover:text-slate-300 border border-gray-200 dark:border-gray-700 w-full")},m(R,n){V(R,e,n),l(e,T),t||(r=Ne(T,"click",hR),t=!0)},d(R){R&&Y(e),t=!1,r()}}}function kT(E){let e,T,t,r,R,n=_faqRowLabel(E[3]),s,S,A,o;function i(){const row=E[3];if(_faqChildCount(row)>0&&!row.parent_question_id&&!row._expanded){_faqExpand(row.question_id)}return E[2](row)}return{c(){e=f("li"),T=f("button"),t=OE("svg"),r=OE("path"),R=$(),s=te(n),S=$(),a(r,"stroke-linecap","round"),a(r,"stroke-linejoin","round"),a(r,"d","M7.5 8.25h9m-9 3H12m-9.75 1.51c0 1.6 1.123 2.994 2.707 3.227 1.129.166 2.27.293 3.423.379.35.026.67.21.865.501L12 21l2.755-4.133a1.14 1.14 0 01.865-.501 48.172 48.172 0 003.423-.379c1.584-.233 2.707-1.626 2.707-3.228V6.741c0-1.602-1.123-2.995-2.707-3.228A48.394 48.394 0 0012 3c-2.392 0-4.744.175-7.043.513C3.373 3.746 2.25 5.14 2.25 6.741v6.018z"),a(t,"class","w-3.5 h-3.5"),a(t,"fill","none"),a(t,"stroke","currentColor"),a(t,"stroke-width","1.5"),a(t,"viewBox","0 0 24 24"),a(t,"xmlns","http://www.w3.org/2000/svg"),a(t,"aria-hidden","true"),
+              a(T,"class","flex items-center text-left gap-x-3 py-2 px-3 text-sm text-slate-700 rounded-md hover:bg-gray-100 dark:hover:bg-gray-900 dark:text-slate-400 dark:hover:text-slate-300"),a(e,"style",_faqRowHidden(E[3])?"display:none":"")},m(_,c){V(_,e,c),l(e,T),l(T,t),l(t,r),l(T,R),l(T,s),l(e,S),A||(o=Ne(T,"click",i),A=!0)},p(_,c){E=_,c&2&&a(e,"style",_faqRowHidden(E[3])?"display:none":""),c&2&&n!==(n=_faqRowLabel(E[3]))&&Le(s,n)},d(_){_&&Y(e),A=!1,o()}}}function Xn(E){let e,T,t,r,R,n,s,S,A,o,i,_,c,P,p,C,L,I,u,H,b,M=E[0].version+"",O,N,D,B,h,G=E[0].function_generation&&xT(),F=E[0].show_training_data&&XT(),W=De(E[1]),x=[];for(let J=0;J<W.length;J+=1)x[J]=kT($T(E,W,J));return{c(){e=f("div"),T=f("nav"),t=f("div"),r=f("img"),n=$(),s=f("div"),s.innerHTML='<button type="button" class="w-8 h-8 inline-flex justify-center items-center gap-2 rounded-md text-gray-700 align-middle focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-offset-white focus:ring-blue-600 transition-all dark:text-gray-400 dark:focus:ring-offset-gray-800" data-hs-overlay="#application-sidebar" aria-controls="application-sidebar" aria-label="Toggle navigation"><svg class="w-4 h-4" width="16" height="16" fill="currentColor" viewBox="0 0 16 16"><path d="M2.146 2.854a.5.5 0 1 1 .708-.708L8 7.293l5.146-5.147a.5.5 0 0 1 .708.708L8.707 8l5.147 5.146a.5.5 0 0 1-.708.708L8 8.707l-5.146 5.147a.5.5 0 0 1-.708-.708L7.293 8 2.146 2.854Z"></path></svg> <span class="sr-only">Sidebar</span></button>',S=$(),A=f("div"),o=f("ul"),G&&G.c(),i=$(),F&&F.c(),_=$(),c=f("li"),P=f("button"),P.innerHTML=`<svg class="w-3.5 h-3.5" xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="currentColor" viewBox="0 0 16 16"><path fill-rule="evenodd" clip-rule="evenodd" d="M8 2C8.47339 2 8.85714 2.38376 8.85714 2.85714V7.14286L13.1429 7.14286C13.6162 7.14286 14 7.52661 14 8C14 8.47339 13.6162 8.85714 13.1429 8.85714L8.85714 8.85715V13.1429C8.85714 13.6162 8.47339 14 8 14C7.52661 14 7.14286 13.6162 7.14286 13.1429V8.85715L2.85714 8.85715C2.38376 8.85715 2 8.4734 2 8.00001C2 7.52662 2.38376 7.14287 2.85714 7.14287L7.14286 7.14286V2.85714C7.14286 2.38376 7.52661 2 8 2Z" fill="currentColor"></path></svg>
               New question`,p=$();for(let J=0;J<x.length;J+=1)x[J].c();C=$(),L=f("div"),I=f("div"),u=f("p"),H=f("span"),b=te(`
             v`),O=te(M),N=$(),D=f("div"),D.innerHTML=`<li class="list-btns">
                  <button id="predictionButton" class="buttons-home" onclick="redirectToPrediction()">Prediction</button>

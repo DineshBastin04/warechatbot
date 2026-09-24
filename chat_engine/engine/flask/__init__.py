@@ -212,6 +212,28 @@ _pending_schedule_clarifications_lock = None   # initialised after Lock is impor
 _PENDING_CLARIFICATION_TTL_SECONDS = 600
 _MAX_CLARIFICATION_ATTEMPTS = 3
 
+# Per-workspace lock guarding the scheduled_questions read-modify-write cycle
+# (_get_schedule_records -> mutate in memory -> _save_schedule_records writes the
+# WHOLE list back, no per-field atomicity). Without this, two schedules firing
+# concurrently in the same workspace — or a fire racing a /stop, resume, delete,
+# or the chat inbox poll — is a lost-update race: whichever save happens last
+# silently clobbers the other's changes (e.g. a conditional agent's matched_keys
+# update, or a chat_inbox notification, vanishing). RLock (not Lock) since some
+# callers are nested inside other locked sections of this same module.
+_schedule_records_locks = {}
+_schedule_records_locks_guard = None   # initialised after Lock is imported below
+
+
+class _ScheduleRequestError(Exception):
+    """Carries an early-return (body, status) out of a schedule-creation
+    validation loop so the whole read-modify-write cycle can be wrapped in a
+    single `with _get_schedule_records_lock(...):` without re-indenting every
+    line of it — a validation failure partway through just raises this instead
+    of returning, and the caller turns it back into the usual response tuple."""
+    def __init__(self, body, status):
+        self.body = body
+        self.status = status
+
 
 
 
@@ -220,7 +242,7 @@ _MAX_CLARIFICATION_ATTEMPTS = 3
 # load_dotenv(ENV_PATH)
 import os
 import json
-from threading import Lock
+from threading import Lock, RLock
 
 CONFIG_FILE = "feedback_config.json"
 _config_lock = Lock()
@@ -228,6 +250,20 @@ _stuck_device_log_lock = Lock()
 _unpick_log_lock = Lock()
 _pending_writes_lock = Lock()
 _pending_schedule_clarifications_lock = Lock()
+_schedule_records_locks_guard = Lock()
+
+
+def _get_schedule_records_lock(workspace_id):
+    """Lazily creates (once) and returns the RLock for this workspace's
+    scheduled_questions read-modify-write cycle. See _schedule_records_locks
+    above for why this exists."""
+    key = str(workspace_id)
+    with _schedule_records_locks_guard:
+        lock = _schedule_records_locks.get(key)
+        if lock is None:
+            lock = RLock()
+            _schedule_records_locks[key] = lock
+        return lock
 
 
 def save_email_config(data):
@@ -836,7 +872,7 @@ class MemoryCache(Cache):
 
 
             sql = """
-            SELECT question_id, question, sql_query, workspace_name, detected_language
+            SELECT question_id, question, sql_query, workspace_name, detected_language, parent_question_id
             FROM users
             WHERE user_id = ? and workspace_id = ?
             ORDER BY timestamp DESC
@@ -858,7 +894,8 @@ class MemoryCache(Cache):
                         "question": row[1],
                         "sql": row[2],
                         "workspace": row[3],
-                        "detected_language": row[4]
+                        "detected_language": row[4],
+                        "parent_question_id": row[5]
                     }
                 cur.close()
                 conn.commit()
@@ -1820,13 +1857,18 @@ class VannaFlaskAPI:
                     }
                 )
 
-        def _handle_query_message(question_raw, previous_sql, workspace):
+        def _handle_query_message(question_raw, previous_sql, workspace, parent_question_id=None):
             """
             Core RAG/text-to-SQL pipeline: validates input, translates, routes read
             vs write (vn.classify_intent), generates SQL, caches, and logs
             billing/activity. Shared by generate_sql (GET, question/sql/workspace
             query params) and route_message (POST, natural-language dispatch) so
             both entry points run identical logic.
+
+            parent_question_id, when the caller identifies this as a follow-up, is
+            stored on the new cache entry so the FAQ/history sidebar can group a
+            follow-up under the question it followed up on instead of listing it
+            as an independent entry.
 
             Returns (body_dict, status_code).
             """
@@ -1937,6 +1979,7 @@ class VannaFlaskAPI:
             self.cache.set(id=cache_id, field="workspace",          value=workspace)
             self.cache.set(id=cache_id, field="detected_language",  value=detected_language)
             self.cache.set(id=cache_id, field="was_translated",     value=was_translated)
+            self.cache.set(id=cache_id, field="parent_question_id", value=parent_question_id)
 
             # Token-related fields (for UI/debugging/billing)
             self.cache.set(id=cache_id, field="token_total",   value=total_tokens)
@@ -1980,7 +2023,8 @@ class VannaFlaskAPI:
                     model_name=model_name,
                     cached_input_tokens=0,
                     cost_usd=cost_usd,
-                    detected_language=detected_language
+                    detected_language=detected_language,
+                    parent_question_id=parent_question_id
                 )
             except Exception as e:
                 logger.error(f"User activity logging failed: {e}")
@@ -2013,7 +2057,8 @@ class VannaFlaskAPI:
             question_raw = flask.request.args.get("question")
             previous_sql = flask.request.args.get("sql")
             workspace = flask.request.args.get("workspace")
-            body, status = _handle_query_message(question_raw, previous_sql, workspace)
+            parent_question_id = flask.request.args.get("parent_question_id")
+            body, status = _handle_query_message(question_raw, previous_sql, workspace, parent_question_id)
             return jsonify(body), status
 
         @self.flask_app.route("/api/get_user/<username>", methods=["GET"])
@@ -4614,7 +4659,7 @@ class VannaFlaskAPI:
             return jsonify(
                 {
                     "type": "question_history",
-                    "questions": cache.get_all(field_list=["question"]),
+                    "questions": cache.get_all(field_list=["question", "parent_question_id"]),
                 }
             )
 
@@ -5898,6 +5943,14 @@ class VannaFlaskApp(VannaFlaskAPI):
             )
 
         def _run_scheduled_question(workspace_id, schedule_id):
+            # Thin locking wrapper — see _get_schedule_records_lock: holds the
+            # per-workspace lock for this fire's entire read-modify-write cycle so
+            # it can't lose an update racing another fire, a /stop, or the chat
+            # poll in the same workspace. The actual logic is unchanged below.
+            with _get_schedule_records_lock(workspace_id):
+                _run_scheduled_question_locked(workspace_id, schedule_id)
+
+        def _run_scheduled_question_locked(workspace_id, schedule_id):
             global vn
             try:
                 metadata, records = _get_schedule_records(workspace_id)
@@ -5988,6 +6041,7 @@ class VannaFlaskApp(VannaFlaskAPI):
                     sql = str(sql_result)
                     total_tokens = input_tokens = output_tokens = 0
                     model_name = "unknown"
+                no_training_example = False
                 if not vn.is_sql_valid(sql):
                     if not _is_no_training_example(sql):
                         return _fail("rejected", f"Couldn't generate a query for this question: {_explain_invalid_sql(sql)}")
@@ -6002,6 +6056,7 @@ class VannaFlaskApp(VannaFlaskAPI):
                         f"example covers question {record['question_en']!r} — delivering as empty result."
                     )
                     df = None
+                    no_training_example = True
                 else:
                     ok2, err2 = vn.validate_openquery_literals(sql)
                     if not ok2:
@@ -6090,7 +6145,19 @@ class VannaFlaskApp(VannaFlaskAPI):
                             "created_at": time.time(),
                         })
 
-                if schedule.get("type") == "conditional":
+                if schedule.get("type") == "conditional" and no_training_example:
+                    # The query couldn't even be generated this cycle (training-data
+                    # gap, not a real "nothing matches" result) — rows is a fake empty
+                    # set, not a real check. Leave matched_keys/last_condition_state
+                    # untouched so a transient training-data gap can never be mistaken
+                    # for "everything stopped matching," which would silently discard
+                    # the history of already-notified records and cause every one of
+                    # them to be re-notified as "new" the next time a real check runs.
+                    logger.warning(
+                        f"Scheduled question {schedule_id}: skipping condition diff this cycle "
+                        f"(no trained example) — matched_keys left unchanged."
+                    )
+                elif schedule.get("type") == "conditional":
                     # Diff which SPECIFIC records currently match against what matched
                     # on the previous poll — an aggregate true/false isn't enough,
                     # since a condition can keep gaining new matching records forever
@@ -8808,18 +8875,19 @@ class VannaFlaskApp(VannaFlaskAPI):
             stop_match = re.match(r'^stop\s+(\S+)$', body, re.IGNORECASE)
             if stop_match:
                 schedule_id = stop_match.group(1)
-                metadata, records = _get_schedule_records(workspace_id)
-                if metadata is None:
-                    return {"type": "error", "error": "Workspace not found"}, 404
-                record = next((r for r in records if r.get("schedule_id") == schedule_id), None)
-                if not record or record.get("owner_username") != username:
-                    return {"type": "error", "error": f"No scheduled agent {schedule_id} found for you."}, 404
-                record["enabled"] = False
-                try:
-                    scheduled_agents_scheduler.remove_job(schedule_id)
-                except JobLookupError:
-                    pass
-                _save_schedule_records(workspace_id, metadata, records)
+                with _get_schedule_records_lock(workspace_id):
+                    metadata, records = _get_schedule_records(workspace_id)
+                    if metadata is None:
+                        return {"type": "error", "error": "Workspace not found"}, 404
+                    record = next((r for r in records if r.get("schedule_id") == schedule_id), None)
+                    if not record or record.get("owner_username") != username:
+                        return {"type": "error", "error": f"No scheduled agent {schedule_id} found for you."}, 404
+                    record["enabled"] = False
+                    try:
+                        scheduled_agents_scheduler.remove_job(schedule_id)
+                    except JobLookupError:
+                        pass
+                    _save_schedule_records(workspace_id, metadata, records)
                 return {"type": "text", "text": f"Stopped {schedule_id}."}, 200
 
             if re.match(r'^email\s+list$', body, re.IGNORECASE):
@@ -8908,148 +8976,161 @@ class VannaFlaskApp(VannaFlaskAPI):
                         f"You have multiple recipients configured ({known_list}) — who should I send this to?"
                     )
 
-            metadata, records = _get_schedule_records(workspace_id)
-            if metadata is None:
-                return {"type": "error", "error": "Workspace not found"}, 404
+            # The whole read-modify-write cycle below (get -> validate -> persist)
+            # runs under the per-workspace lock so it can't lose an update racing a
+            # fire/stop/resume/delete/poll for this workspace. Early-exit validation
+            # failures raise _ScheduleRequestError instead of returning directly,
+            # so the lock (acquired once, around the call) still covers every path.
+            def _create_schedules():
+                metadata, records = _get_schedule_records(workspace_id)
+                if metadata is None:
+                    raise _ScheduleRequestError({"type": "error", "error": "Workspace not found"}, 404)
 
-            enabled_count = sum(1 for r in records if r.get("owner_username") == username and r.get("enabled"))
-            if enabled_count + len(schedules) > MAX_ENABLED_SCHEDULES_PER_USER:
-                return {
-                    "type": "error",
-                    "error": f"That would put you at {enabled_count + len(schedules)} scheduled agents — "
-                             f"the limit is {MAX_ENABLED_SCHEDULES_PER_USER}. Stop some before creating more.",
-                }, 400
-
-            # Pass 1: validate every entry and run each conditional entry's preview
-            # check BEFORE persisting anything — a compound request must succeed or
-            # fail as a whole, never leave a partial set of agents behind because
-            # entry 2 of 3 turned out to be unschedulable.
-            prepared = []
-            for idx, schedule in enumerate(schedules):
-                label = f"Schedule {idx + 1} of {len(schedules)}: " if multi else ""
-                is_conditional = schedule.get("type") == "conditional"
-
-                try:
-                    trigger = _build_schedule_trigger(schedule)
-                except Exception as trigger_exc:
-                    return {"type": "error", "error": f"{label}Couldn't build a schedule from that: {trigger_exc}"}, 400
-
-                tz = schedule.get("timezone") or DEFAULT_SCHEDULE_TIMEZONE
-                now = datetime.now(ZoneInfo(tz))
-                fires = []
-                t = trigger.get_next_fire_time(None, now)
-                for _ in range(3):
-                    if t is None:
-                        break
-                    fires.append(t)
-                    t = trigger.get_next_fire_time(t, t)
-
-                if not fires:
-                    return {"type": "error", "error": f"{label}That schedule never fires — please rephrase."}, 400
-                if len(fires) >= 2 and (fires[1] - fires[0]).total_seconds() < MIN_SCHEDULE_INTERVAL_SECONDS:
-                    return {
+                enabled_count = sum(1 for r in records if r.get("owner_username") == username and r.get("enabled"))
+                if enabled_count + len(schedules) > MAX_ENABLED_SCHEDULES_PER_USER:
+                    raise _ScheduleRequestError({
                         "type": "error",
-                        "error": f"{label}That schedule fires more than once within {MIN_SCHEDULE_INTERVAL_SECONDS // 60} "
-                                 f"minutes — please choose a longer interval.",
-                    }, 400
-                if schedule.get("type") in ("interval", "conditional") and int(schedule.get("seconds", 0)) < MIN_SCHEDULE_INTERVAL_SECONDS:
-                    return {
-                        "type": "error",
-                        "error": f"{label}Please choose a check interval of at least {MIN_SCHEDULE_INTERVAL_SECONDS // 60} minutes.",
-                    }, 400
+                        "error": f"That would put you at {enabled_count + len(schedules)} scheduled agents — "
+                                 f"the limit is {MAX_ENABLED_SCHEDULES_PER_USER}. Stop some before creating more.",
+                    }, 400)
 
-                # Conditional agents run indefinitely, so — unlike every other type,
-                # which defers all SQL generation to the first fire — run the full
-                # chain once here: catches a broken condition immediately instead of
-                # only at the first poll, and lets the confirmation echo show the
-                # condition's current state. This is a real query, but never delivers
-                # a notification for it — the user asked to hear about *future*
-                # transitions, not be re-told what the echo already shows them.
-                initial_condition_state = None
-                initial_matched_keys = None
-                condition_preview_error = None
-                condition_row_count = 0
-                if is_conditional:
-                    sql, *_rest = vn.generate_sql(question=question_en, workspace=metadata.get("name") or str(workspace_id))
-                    if not vn.is_sql_valid(sql):
-                        condition_preview_error = _explain_invalid_sql(sql)
-                    else:
-                        ok2, err2 = vn.validate_openquery_literals(sql)
-                        ok3, err3 = (True, "") if not ok2 else vn.validate_db_scope(sql)
-                        if not ok2:
-                            condition_preview_error = err2
-                        elif not ok3:
-                            condition_preview_error = err3
+                # Pass 1: validate every entry and run each conditional entry's preview
+                # check BEFORE persisting anything — a compound request must succeed or
+                # fail as a whole, never leave a partial set of agents behind because
+                # entry 2 of 3 turned out to be unschedulable.
+                prepared = []
+                for idx, schedule in enumerate(schedules):
+                    label = f"Schedule {idx + 1} of {len(schedules)}: " if multi else ""
+                    is_conditional = schedule.get("type") == "conditional"
+
+                    try:
+                        trigger = _build_schedule_trigger(schedule)
+                    except Exception as trigger_exc:
+                        raise _ScheduleRequestError({"type": "error", "error": f"{label}Couldn't build a schedule from that: {trigger_exc}"}, 400)
+
+                    tz = schedule.get("timezone") or DEFAULT_SCHEDULE_TIMEZONE
+                    now = datetime.now(ZoneInfo(tz))
+                    fires = []
+                    t = trigger.get_next_fire_time(None, now)
+                    for _ in range(3):
+                        if t is None:
+                            break
+                        fires.append(t)
+                        t = trigger.get_next_fire_time(t, t)
+
+                    if not fires:
+                        raise _ScheduleRequestError({"type": "error", "error": f"{label}That schedule never fires — please rephrase."}, 400)
+                    if len(fires) >= 2 and (fires[1] - fires[0]).total_seconds() < MIN_SCHEDULE_INTERVAL_SECONDS:
+                        raise _ScheduleRequestError({
+                            "type": "error",
+                            "error": f"{label}That schedule fires more than once within {MIN_SCHEDULE_INTERVAL_SECONDS // 60} "
+                                     f"minutes — please choose a longer interval.",
+                        }, 400)
+                    if schedule.get("type") in ("interval", "conditional") and int(schedule.get("seconds", 0)) < MIN_SCHEDULE_INTERVAL_SECONDS:
+                        raise _ScheduleRequestError({
+                            "type": "error",
+                            "error": f"{label}Please choose a check interval of at least {MIN_SCHEDULE_INTERVAL_SECONDS // 60} minutes.",
+                        }, 400)
+
+                    # Conditional agents run indefinitely, so — unlike every other type,
+                    # which defers all SQL generation to the first fire — run the full
+                    # chain once here: catches a broken condition immediately instead of
+                    # only at the first poll, and lets the confirmation echo show the
+                    # condition's current state. This is a real query, but never delivers
+                    # a notification for it — the user asked to hear about *future*
+                    # transitions, not be re-told what the echo already shows them.
+                    initial_condition_state = None
+                    initial_matched_keys = None
+                    condition_preview_error = None
+                    condition_row_count = 0
+                    if is_conditional:
+                        sql, *_rest = vn.generate_sql(question=question_en, workspace=metadata.get("name") or str(workspace_id))
+                        if not vn.is_sql_valid(sql):
+                            condition_preview_error = _explain_invalid_sql(sql)
                         else:
-                            try:
-                                df = vn.run_sql(sql)
-                                condition_row_count = len(df) if df is not None else 0
-                                initial_condition_state = condition_row_count > 0
-                                # Seed the baseline match set from this creation-time check —
-                                # these already-matching records must NOT be reported as "new"
-                                # the moment the first real poll runs (the echo below already
-                                # tells the user what currently matches).
-                                preview_rows = df.to_dict(orient="records") if df is not None and len(df) else []
-                                initial_matched_keys = sorted({
-                                    key for key in (_condition_row_key(r) for r in preview_rows)
-                                    if key is not None
-                                })
-                            except Exception as check_exc:
-                                condition_preview_error = f"Condition check failed: {check_exc}"
-                    if condition_preview_error:
-                        return {"type": "error", "error": f"{label}Couldn't set up that condition: {condition_preview_error}"}, 400
+                            ok2, err2 = vn.validate_openquery_literals(sql)
+                            ok3, err3 = (True, "") if not ok2 else vn.validate_db_scope(sql)
+                            if not ok2:
+                                condition_preview_error = err2
+                            elif not ok3:
+                                condition_preview_error = err3
+                            else:
+                                try:
+                                    df = vn.run_sql(sql)
+                                    condition_row_count = len(df) if df is not None else 0
+                                    initial_condition_state = condition_row_count > 0
+                                    # Seed the baseline match set from this creation-time check —
+                                    # these already-matching records must NOT be reported as "new"
+                                    # the moment the first real poll runs (the echo below already
+                                    # tells the user what currently matches).
+                                    preview_rows = df.to_dict(orient="records") if df is not None and len(df) else []
+                                    initial_matched_keys = sorted({
+                                        key for key in (_condition_row_key(r) for r in preview_rows)
+                                        if key is not None
+                                    })
+                                except Exception as check_exc:
+                                    condition_preview_error = f"Condition check failed: {check_exc}"
+                        if condition_preview_error:
+                            raise _ScheduleRequestError({"type": "error", "error": f"{label}Couldn't set up that condition: {condition_preview_error}"}, 400)
 
-                prepared.append({
-                    "schedule": schedule, "is_conditional": is_conditional, "trigger": trigger,
-                    "fires": fires, "condition_row_count": condition_row_count,
-                    "initial_condition_state": initial_condition_state, "initial_matched_keys": initial_matched_keys,
-                })
+                    prepared.append({
+                        "schedule": schedule, "is_conditional": is_conditional, "trigger": trigger,
+                        "fires": fires, "condition_row_count": condition_row_count,
+                        "initial_condition_state": initial_condition_state, "initial_matched_keys": initial_matched_keys,
+                    })
 
-            # Pass 2: everything validated cleanly — persist and register every entry.
-            created = []
-            for p in prepared:
-                schedule = p["schedule"]
-                is_conditional = p["is_conditional"]
-                schedule_id = uuid.uuid4().hex[:8]
-                record = {
-                    "schedule_id": schedule_id,
-                    "owner_username": username,
-                    "workspace_id": str(workspace_id),
-                    "workspace_name": metadata.get("name") or str(workspace_id),
-                    "question_en": question_en,
-                    "context_sql": context_sql,
-                    "display_question": schedule.get("condition_text") if is_conditional else question_en,
-                    "channel": channel,
-                    "email_recipients": email_recipients,
-                    "schedule": schedule,
-                    "fortnight_anchor_ts": p["fires"][0].timestamp() if schedule.get("fortnight_anchor") else None,
-                    "enabled": True,
-                    "created_at": time.time(),
-                    "last_run_at": None,
-                    "last_status": None,
-                    "last_error": None,
-                    "last_sql": None,
-                    "run_count": 0,
-                    "chat_inbox": [],
-                    "last_condition_state": p["initial_condition_state"],
-                    "matched_keys": p["initial_matched_keys"],
-                }
-                records.append(record)
-                scheduled_agents_scheduler.add_job(
-                    func=_run_scheduled_question,
-                    args=[workspace_id, schedule_id],
-                    trigger=p["trigger"],
-                    id=schedule_id,
-                    max_instances=1,
-                    coalesce=True,
-                    replace_existing=True,
-                    misfire_grace_time=120,
-                )
-                created.append({
-                    "schedule_id": schedule_id, "schedule": schedule, "is_conditional": is_conditional,
-                    "fires": p["fires"], "condition_row_count": p["condition_row_count"],
-                })
-            _save_schedule_records(workspace_id, metadata, records)
+                # Pass 2: everything validated cleanly — persist and register every entry.
+                created = []
+                for p in prepared:
+                    schedule = p["schedule"]
+                    is_conditional = p["is_conditional"]
+                    schedule_id = uuid.uuid4().hex[:8]
+                    record = {
+                        "schedule_id": schedule_id,
+                        "owner_username": username,
+                        "workspace_id": str(workspace_id),
+                        "workspace_name": metadata.get("name") or str(workspace_id),
+                        "question_en": question_en,
+                        "context_sql": context_sql,
+                        "display_question": schedule.get("condition_text") if is_conditional else question_en,
+                        "channel": channel,
+                        "email_recipients": email_recipients,
+                        "schedule": schedule,
+                        "fortnight_anchor_ts": p["fires"][0].timestamp() if schedule.get("fortnight_anchor") else None,
+                        "enabled": True,
+                        "created_at": time.time(),
+                        "last_run_at": None,
+                        "last_status": None,
+                        "last_error": None,
+                        "last_sql": None,
+                        "run_count": 0,
+                        "chat_inbox": [],
+                        "last_condition_state": p["initial_condition_state"],
+                        "matched_keys": p["initial_matched_keys"],
+                    }
+                    records.append(record)
+                    scheduled_agents_scheduler.add_job(
+                        func=_run_scheduled_question,
+                        args=[workspace_id, schedule_id],
+                        trigger=p["trigger"],
+                        id=schedule_id,
+                        max_instances=1,
+                        coalesce=True,
+                        replace_existing=True,
+                        misfire_grace_time=120,
+                    )
+                    created.append({
+                        "schedule_id": schedule_id, "schedule": schedule, "is_conditional": is_conditional,
+                        "fires": p["fires"], "condition_row_count": p["condition_row_count"],
+                    })
+                _save_schedule_records(workspace_id, metadata, records)
+                return created
+
+            try:
+                with _get_schedule_records_lock(workspace_id):
+                    created = _create_schedules()
+            except _ScheduleRequestError as sre:
+                return sre.body, sre.status
 
             note = ("Note: " + "; ".join(extraction["ambiguous"]) + "\n") if extraction.get("ambiguous") else ""
 
@@ -9218,20 +9299,21 @@ class VannaFlaskApp(VannaFlaskAPI):
             if not workspace_id or not schedule_id:
                 return jsonify({"type": "error", "error": "workspace_id and schedule_id are required"}), 400
 
-            metadata, records = _get_schedule_records(workspace_id)
-            if metadata is None:
-                return jsonify({"type": "error", "error": "Workspace not found"}), 404
-            record = next((r for r in records if r.get("schedule_id") == schedule_id), None)
-            if not record:
-                return jsonify({"type": "error", "error": f"No scheduled agent {schedule_id} found."}), 404
+            with _get_schedule_records_lock(workspace_id):
+                metadata, records = _get_schedule_records(workspace_id)
+                if metadata is None:
+                    return jsonify({"type": "error", "error": "Workspace not found"}), 404
+                record = next((r for r in records if r.get("schedule_id") == schedule_id), None)
+                if not record:
+                    return jsonify({"type": "error", "error": f"No scheduled agent {schedule_id} found."}), 404
 
-            # Unlike chat's /stop, an admin may stop any user's agent here.
-            record["enabled"] = False
-            try:
-                scheduled_agents_scheduler.remove_job(schedule_id)
-            except JobLookupError:
-                pass
-            _save_schedule_records(workspace_id, metadata, records)
+                # Unlike chat's /stop, an admin may stop any user's agent here.
+                record["enabled"] = False
+                try:
+                    scheduled_agents_scheduler.remove_job(schedule_id)
+                except JobLookupError:
+                    pass
+                _save_schedule_records(workspace_id, metadata, records)
             return jsonify({"success": True})
 
         @self.flask_app.route('/api/v0/scheduled_agents/resume', methods=['POST'])
@@ -9244,36 +9326,37 @@ class VannaFlaskApp(VannaFlaskAPI):
             if not workspace_id or not schedule_id:
                 return jsonify({"type": "error", "error": "workspace_id and schedule_id are required"}), 400
 
-            metadata, records = _get_schedule_records(workspace_id)
-            if metadata is None:
-                return jsonify({"type": "error", "error": "Workspace not found"}), 404
-            record = next((r for r in records if r.get("schedule_id") == schedule_id), None)
-            if not record:
-                return jsonify({"type": "error", "error": f"No scheduled agent {schedule_id} found."}), 404
+            with _get_schedule_records_lock(workspace_id):
+                metadata, records = _get_schedule_records(workspace_id)
+                if metadata is None:
+                    return jsonify({"type": "error", "error": "Workspace not found"}), 404
+                record = next((r for r in records if r.get("schedule_id") == schedule_id), None)
+                if not record:
+                    return jsonify({"type": "error", "error": f"No scheduled agent {schedule_id} found."}), 404
 
-            schedule = record.get("schedule", {})
-            if schedule.get("type") == "date":
-                # A one-time run already fired (or was stopped before it could) —
-                # there's nothing recurring left to resume.
-                return jsonify({"type": "error", "error": "This was a one-time agent — create a new one instead of resuming it."}), 400
+                schedule = record.get("schedule", {})
+                if schedule.get("type") == "date":
+                    # A one-time run already fired (or was stopped before it could) —
+                    # there's nothing recurring left to resume.
+                    return jsonify({"type": "error", "error": "This was a one-time agent — create a new one instead of resuming it."}), 400
 
-            try:
-                trigger = _build_schedule_trigger(schedule)
-            except Exception as trigger_exc:
-                return jsonify({"type": "error", "error": f"Couldn't rebuild that schedule: {trigger_exc}"}), 400
+                try:
+                    trigger = _build_schedule_trigger(schedule)
+                except Exception as trigger_exc:
+                    return jsonify({"type": "error", "error": f"Couldn't rebuild that schedule: {trigger_exc}"}), 400
 
-            record["enabled"] = True
-            scheduled_agents_scheduler.add_job(
-                func=_run_scheduled_question,
-                args=[workspace_id, schedule_id],
-                trigger=trigger,
-                id=schedule_id,
-                max_instances=1,
-                coalesce=True,
-                replace_existing=True,
-                misfire_grace_time=120,
-            )
-            _save_schedule_records(workspace_id, metadata, records)
+                record["enabled"] = True
+                scheduled_agents_scheduler.add_job(
+                    func=_run_scheduled_question,
+                    args=[workspace_id, schedule_id],
+                    trigger=trigger,
+                    id=schedule_id,
+                    max_instances=1,
+                    coalesce=True,
+                    replace_existing=True,
+                    misfire_grace_time=120,
+                )
+                _save_schedule_records(workspace_id, metadata, records)
             return jsonify({"success": True})
 
         @self.flask_app.route('/api/v0/scheduled_agents/delete', methods=['POST'])
@@ -9286,19 +9369,20 @@ class VannaFlaskApp(VannaFlaskAPI):
             if not workspace_id or not schedule_id:
                 return jsonify({"type": "error", "error": "workspace_id and schedule_id are required"}), 400
 
-            metadata, records = _get_schedule_records(workspace_id)
-            if metadata is None:
-                return jsonify({"type": "error", "error": "Workspace not found"}), 404
-            record = next((r for r in records if r.get("schedule_id") == schedule_id), None)
-            if not record:
-                return jsonify({"type": "error", "error": f"No scheduled agent {schedule_id} found."}), 404
+            with _get_schedule_records_lock(workspace_id):
+                metadata, records = _get_schedule_records(workspace_id)
+                if metadata is None:
+                    return jsonify({"type": "error", "error": "Workspace not found"}), 404
+                record = next((r for r in records if r.get("schedule_id") == schedule_id), None)
+                if not record:
+                    return jsonify({"type": "error", "error": f"No scheduled agent {schedule_id} found."}), 404
 
-            try:
-                scheduled_agents_scheduler.remove_job(schedule_id)
-            except JobLookupError:
-                pass
-            records = [r for r in records if r.get("schedule_id") != schedule_id]
-            _save_schedule_records(workspace_id, metadata, records)
+                try:
+                    scheduled_agents_scheduler.remove_job(schedule_id)
+                except JobLookupError:
+                    pass
+                records = [r for r in records if r.get("schedule_id") != schedule_id]
+                _save_schedule_records(workspace_id, metadata, records)
             return jsonify({"success": True})
 
         @self.flask_app.route('/api/v0/scheduled_questions/poll', methods=['POST'])
@@ -9310,28 +9394,29 @@ class VannaFlaskApp(VannaFlaskAPI):
             if not workspace_id or not username:
                 return jsonify({"type": "error", "error": "workspace_id and an authenticated user are required"}), 400
 
-            metadata, records = _get_schedule_records(workspace_id)
-            if metadata is None:
-                return jsonify({"type": "schedule_results", "messages": []})
+            with _get_schedule_records_lock(workspace_id):
+                metadata, records = _get_schedule_records(workspace_id)
+                if metadata is None:
+                    return jsonify({"type": "schedule_results", "messages": []})
 
-            messages = []
-            changed = False
-            for r in records:
-                if r.get("owner_username") != username:
-                    continue
-                inbox = r.get("chat_inbox") or []
-                if inbox:
-                    for entry in inbox:
-                        messages.append({
-                            "schedule_id": r["schedule_id"],
-                            "text": entry.get("text", ""),
-                            "created_at": entry.get("created_at"),
-                        })
-                    r["chat_inbox"] = []
-                    changed = True
+                messages = []
+                changed = False
+                for r in records:
+                    if r.get("owner_username") != username:
+                        continue
+                    inbox = r.get("chat_inbox") or []
+                    if inbox:
+                        for entry in inbox:
+                            messages.append({
+                                "schedule_id": r["schedule_id"],
+                                "text": entry.get("text", ""),
+                                "created_at": entry.get("created_at"),
+                            })
+                        r["chat_inbox"] = []
+                        changed = True
 
-            if changed:
-                _save_schedule_records(workspace_id, metadata, records)
+                if changed:
+                    _save_schedule_records(workspace_id, metadata, records)
 
             return jsonify({"type": "schedule_results", "messages": messages})
 
@@ -12444,6 +12529,11 @@ class VannaFlaskApp(VannaFlaskAPI):
         workspace_id: str = None,  # explicit override — required for callers with
                                     # no active Flask request/session (e.g. a
                                     # scheduled agent firing on a background thread)
+        parent_question_id: str = None,  # follow-up's parent, for the FAQ/history
+                                    # sidebar's grouping — persisted here so it
+                                    # survives a fresh session reload (see
+                                    # fetch_user_documents_for_user), not just the
+                                    # in-memory cache
     ):
         """
         Logs or updates user activity in the 'users' table using question_id as the primary key.
@@ -12469,6 +12559,7 @@ class VannaFlaskApp(VannaFlaskAPI):
         model_name     = (model_name or "")[:100]
         user_id        = user_id or None
         detected_language = detected_language or "en"
+        parent_question_id = (parent_question_id or None)
 
         token_count         = int(token_count or 0)
         input_tokens        = int(input_tokens or 0)
@@ -12528,7 +12619,8 @@ class VannaFlaskApp(VannaFlaskAPI):
                             output_tokens       = ?,
                             cached_input_tokens = ?,
                             cost_usd            = ?,
-                            model_name          = ?
+                            model_name          = ?,
+                            parent_question_id  = ?
                         WHERE question_id = ?
                     """
                     cursor.execute(update_query, (
@@ -12548,6 +12640,7 @@ class VannaFlaskApp(VannaFlaskAPI):
                         cached_input_tokens,
                         cost_usd,
                         model_name,
+                        parent_question_id,
                         question_id
                     ))
                     logger.info(f"Updated existing user activity record for question_id={question_id}", extra={"admin": True})
@@ -12560,8 +12653,8 @@ class VannaFlaskApp(VannaFlaskAPI):
                             workspace_name, workspace_id, timestamp,
                             user_role, user_id, detected_language,
                             token_count, input_tokens, output_tokens,
-                            cached_input_tokens, cost_usd, model_name
-                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                            cached_input_tokens, cost_usd, model_name, parent_question_id
+                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """
                     cursor.execute(insert_query, (
                         question_id,
@@ -12580,7 +12673,8 @@ class VannaFlaskApp(VannaFlaskAPI):
                         output_tokens,
                         cached_input_tokens,
                         cost_usd,
-                        model_name
+                        model_name,
+                        parent_question_id
                     ))
                     logger.info(f"Inserted new user activity record for question_id={question_id}", extra={"admin": True})
 
