@@ -249,6 +249,27 @@ async function handleSlashCommand(text) {
     }
 }
 
+// Prediction/anomaly chat integration — mirrors handleSlashCommand above.
+// Matches (or, if nothing matches, generates on the fly and offers to save)
+// a prediction/anomaly check via run_matched_analysis, and always replies as
+// plain {type:"text"}, same as every other chat message — no new rendering
+// needed. A pending "want me to save it?" confirmation is resolved by simply
+// calling this again with the user's next reply (classify_message_route
+// forces the "prediction" route while one is open).
+async function handlePredictionQuery(text) {
+    Se({ type: "user_question", question: text, question_id: null });
+    const workspaceId = getWorkspaceIdFromUrl() || getCurrentWorkspaceId();
+    try {
+        const res = await Pe("run_matched_analysis", "POST", {
+            workspace_id: workspaceId,
+            text,
+        });
+        Se({ type: "text", text: res.text || res.error || "Something went wrong." });
+    } catch (e) {
+        Se({ type: "text", text: `Something went wrong: ${e.message}` });
+    }
+}
+
 // In-window delivery for scheduled agents' "chat" channel — no push/WebSocket
 // infra exists in this app, so poll while the chat view is open. Each drained
 // result is pushed via Se({type:"text",...}), same as handleSlashCommand above.
@@ -359,6 +380,10 @@ async function uT(E, L, existingQuestionId = null) {
         const routeRes = await Pe("classify_message_route", "POST", { text: trimmed, workspace_id: workspaceId });
         if (routeRes.route === "schedule") {
             handleSlashCommand(trimmed);
+            return;
+        }
+        if (routeRes.route === "prediction") {
+            handlePredictionQuery(trimmed);
             return;
         }
     }
