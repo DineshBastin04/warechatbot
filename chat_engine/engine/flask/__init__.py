@@ -9730,6 +9730,54 @@ class VannaFlaskApp(VannaFlaskAPI):
                 _save_schedule_records(workspace_id, metadata, records)
             return jsonify({"success": True})
 
+        @self.flask_app.route('/api/v0/scheduled_agents/update_recipients', methods=['POST'])
+        @self.requires_auth
+        @self.requires_role(["admin", "superadmin"])
+        def update_scheduled_agent_recipients_route(user=None):
+            """
+            Lets an admin change WHO an existing email-channel scheduled/conditional
+            agent sends to, without recreating it — found missing during manual
+            conditional-agent testing (the admin panel showed Stop/Resume/Delete but
+            no way to see or edit the recipient). Only accepts addresses already
+            registered in the workspace's email config (same "never invent a
+            recipient" policy used when a schedule is first created via chat).
+            """
+            data = request.json or {}
+            workspace_id = data.get('workspace_id')
+            schedule_id = data.get('schedule_id')
+            submitted = data.get('email_recipients')
+            if not workspace_id or not schedule_id:
+                return jsonify({"type": "error", "error": "workspace_id and schedule_id are required"}), 400
+            if not isinstance(submitted, list):
+                return jsonify({"type": "error", "error": "email_recipients must be a list"}), 400
+
+            with _get_schedule_records_lock(workspace_id):
+                metadata, records = _get_schedule_records(workspace_id)
+                if metadata is None:
+                    return jsonify({"type": "error", "error": "Workspace not found"}), 404
+                record = next((r for r in records if r.get("schedule_id") == schedule_id), None)
+                if not record:
+                    return jsonify({"type": "error", "error": f"No scheduled agent {schedule_id} found."}), 404
+                if record.get("channel") != "email":
+                    return jsonify({"type": "error", "error": "Only email-channel agents have recipients to edit."}), 400
+
+                registered = {e.get("address") for e in _get_workspace_emails(workspace_id) if e.get("address")}
+                cleaned = []
+                for addr in submitted:
+                    addr = addr.strip() if isinstance(addr, str) else ""
+                    if not addr:
+                        continue
+                    if addr not in registered:
+                        return jsonify({"type": "error", "error": f"'{addr}' isn't a registered recipient for this workspace."}), 400
+                    if addr not in cleaned:
+                        cleaned.append(addr)
+                if not cleaned:
+                    return jsonify({"type": "error", "error": "At least one recipient is required."}), 400
+
+                record["email_recipients"] = cleaned
+                _save_schedule_records(workspace_id, metadata, records)
+            return jsonify({"success": True, "email_recipients": cleaned})
+
         @self.flask_app.route('/api/v0/scheduled_questions/poll', methods=['POST'])
         @self.requires_auth
         def scheduled_questions_poll_route(user=None):
