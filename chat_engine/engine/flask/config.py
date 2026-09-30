@@ -2357,10 +2357,11 @@ function previewSqlQuery() {
                                         <td style="padding:6px;">${a.description || ''}</td>
                                         <td style="padding:6px;">${a.channel || ''}</td>
                                         <td style="padding:6px; width:220px; max-width:220px; overflow-wrap:break-word;" id="recipients-cell-${a.schedule_id}">
-                                            ${a.channel === 'email'
-                                                ? `<div style="overflow-wrap:break-word;">${(a.email_recipients && a.email_recipients.length) ? a.email_recipients.join(', ') : '<span style="color:#e74c3c;">none set</span>'}</div>
+                                            ${a.channel === 'email' && (a.email_recipients && a.email_recipients.length)
+                                                ? `<div style="overflow-wrap:break-word;">${a.email_recipients.join(', ')}</div>
                                                    <div style="margin-top:6px;"><button class="test" onclick="editScheduledAgentRecipientsUI('${workspaceId}', '${a.schedule_id}')">Edit</button></div>`
-                                                : '—'}
+                                                : `<div><span style="color:#e74c3c;">unassigned</span></div>
+                                                   <div style="margin-top:6px;"><button class="test" onclick="editScheduledAgentRecipientsUI('${workspaceId}', '${a.schedule_id}')">Assign</button></div>`}
                                         </td>
                                         <td style="padding:6px;">
                                             <span style="color:${a.enabled ? '#2e7d32' : '#e74c3c'};">

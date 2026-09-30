@@ -6048,10 +6048,11 @@ class VannaFlaskApp(VannaFlaskAPI):
                                 _scheduled_email_filename(schedule_id),
                             )
                         else:
-                            record.setdefault("chat_inbox", []).append({
-                                "text": failure_note,
-                                "created_at": time.time(),
-                            })
+                            # Unassigned — the failure is already recorded in
+                            # last_status/last_error, visible in the Scheduled
+                            # Agents admin panel. No chat-inbox fallback (see
+                            # _deliver above for why).
+                            logger.info(f"Scheduled question {schedule_id}: no recipient assigned yet — failure notice not delivered.")
                     except Exception as notify_exc:
                         logger.exception(f"Scheduled question {schedule_id} failure-notice delivery also failed: {notify_exc}")
 
@@ -6169,10 +6170,16 @@ class VannaFlaskApp(VannaFlaskAPI):
                         except Exception as email_exc:
                             logger.exception(f"Scheduled question {schedule_id} email delivery failed: {email_exc}")
                     else:
-                        record.setdefault("chat_inbox", []).append({
-                            "text": body,
-                            "created_at": time.time(),
-                        })
+                        # Unassigned (no recipient yet) — the check still runs and
+                        # last_status/last_run_at still update below, but nothing
+                        # is sent anywhere. Chat delivery isn't a supported ongoing
+                        # channel: it used to silently drop into the owner's chat
+                        # inbox here, which looked like a broken/unassigned agent
+                        # (because it was) and wasn't reliably seen anyway — the
+                        # inbox only drains while that owner happens to have the
+                        # chat page open. An admin assigns a real recipient from
+                        # the Scheduled Agents panel; nothing fires until then.
+                        logger.info(f"Scheduled question {schedule_id}: no recipient assigned yet — result not delivered.")
 
                 def _deliver_condition_matches(new_rows, total_matching):
                     subject = f"[Alert] {record['display_question']}"
@@ -6194,10 +6201,11 @@ class VannaFlaskApp(VannaFlaskAPI):
                         except Exception as email_exc:
                             logger.exception(f"Scheduled question {schedule_id} email delivery failed: {email_exc}")
                     else:
-                        record.setdefault("chat_inbox", []).append({
-                            "text": body,
-                            "created_at": time.time(),
-                        })
+                        # Unassigned — see the matching comment in _deliver above.
+                        # matched_keys/last_condition_state still get tracked below
+                        # regardless, so nothing is missed once a recipient is
+                        # assigned — only the notification itself is withheld.
+                        logger.info(f"Scheduled question {schedule_id}: no recipient assigned yet — match not delivered.")
 
                 if schedule.get("type") == "conditional" and no_training_example:
                     # The query couldn't even be generated this cycle (training-data
@@ -9016,37 +9024,43 @@ class VannaFlaskApp(VannaFlaskAPI):
                     "error": "That looks like a write request — scheduled agents are strictly read-only.",
                 }, 409
 
-            channel = extraction.get("channel", "chat")
+            # Email is the only real delivery channel — chat was previously a
+            # silent fallback that pinged the OWNER's own chat inbox whenever no
+            # recipient could be resolved, which looked broken (a message with
+            # nobody actually assigned to it) and wasn't reliably seen anyway (it
+            # only surfaced if the owner happened to have the chat page open at
+            # the right moment — no push/notification exists). Instead: try to
+            # resolve a recipient the same way as before, but when it can't be
+            # resolved cleanly, create the agent UNASSIGNED (no delivery at all)
+            # rather than blocking creation or interrupting with a clarification
+            # round-trip — an admin assigns a real recipient later from the
+            # Scheduled Agents panel. The one exception is a NAMED-but-unknown
+            # recipient ("email this to Bob" when "Bob" isn't registered): that's
+            # a likely typo/mistake worth catching, not mere ambiguity, so it
+            # still asks rather than silently dropping what the user asked for.
             email_recipients = []
-            if channel == "email":
-                email_labels = extraction.get("email_labels") or []
-                registered_by_label = {e["label"].lower(): e["address"] for e in registered_emails}
+            email_labels = extraction.get("email_labels") or []
+            registered_by_label = {e["label"].lower(): e["address"] for e in registered_emails}
 
-                if any(label.lower() == "all" for label in email_labels):
-                    email_recipients = list(registered_by_label.values())
-                elif email_labels:
-                    unknown = [label for label in email_labels if label.lower() not in registered_by_label]
-                    if unknown:
-                        known_list = ", ".join(e["label"] for e in registered_emails) or "(none registered)"
-                        return _ask_clarification(
-                            f"\"{unknown[0]}\" isn't a registered recipient. You have: {known_list} — which did you mean?"
-                        )
-                    email_recipients = [registered_by_label[label.lower()] for label in email_labels]
-                elif extraction.get("email_address"):
-                    email_recipients = [extraction["email_address"]]
-                elif len(registered_emails) == 1:
-                    email_recipients = [registered_emails[0]["address"]]
-                elif len(registered_emails) == 0:
-                    return {
-                        "type": "error",
-                        "error": "No email recipients configured for this workspace — ask your "
-                                 "admin to add some in the Email Recipients section of the DB config panel.",
-                    }, 400
-                else:
-                    known_list = ", ".join(e["label"] for e in registered_emails)
+            if any(label.lower() == "all" for label in email_labels):
+                email_recipients = list(registered_by_label.values())
+            elif email_labels:
+                unknown = [label for label in email_labels if label.lower() not in registered_by_label]
+                if unknown:
+                    known_list = ", ".join(e["label"] for e in registered_emails) or "(none registered)"
                     return _ask_clarification(
-                        f"You have multiple recipients configured ({known_list}) — who should I send this to?"
+                        f"\"{unknown[0]}\" isn't a registered recipient. You have: {known_list} — which did you mean?"
                     )
+                email_recipients = [registered_by_label[label.lower()] for label in email_labels]
+            elif extraction.get("email_address"):
+                email_recipients = [extraction["email_address"]]
+            elif len(registered_emails) == 1:
+                email_recipients = [registered_emails[0]["address"]]
+            # else: no recipient named, and either zero or multiple recipients are
+            # registered — leave email_recipients empty (unassigned) rather than
+            # blocking or asking; assignment happens later in the admin panel.
+
+            channel = "email" if email_recipients else "unassigned"
 
             # The whole read-modify-write cycle below (get -> validate -> persist)
             # runs under the per-workspace lock so it can't lose an update racing a
@@ -9206,6 +9220,13 @@ class VannaFlaskApp(VannaFlaskAPI):
 
             note = ("Note: " + "; ".join(extraction["ambiguous"]) + "\n") if extraction.get("ambiguous") else ""
 
+            delivery_note = (
+                "You'll be notified by email"
+                if channel == "email"
+                else "This isn't assigned to a recipient yet, so nothing will be sent "
+                     "until an admin assigns one from the Scheduled Agents panel"
+            )
+
             def _describe_created(c):
                 schedule = c["schedule"]
                 schedule_id = c["schedule_id"]
@@ -9214,13 +9235,13 @@ class VannaFlaskApp(VannaFlaskAPI):
                         f"Watching: {schedule.get('condition_text', question_en)}, "
                         f"checked every {schedule['seconds']}s. "
                         f"Currently: {c['condition_row_count']} record(s) match. "
-                        f"You'll be notified by {channel} whenever a NEW record starts matching — "
+                        f"{delivery_note} whenever a NEW record starts matching — "
                         f"not the {c['condition_row_count']} that already match now. "
                         f"Reply `/stop {schedule_id}` to cancel."
                     )
                 fire_list = " · ".join(f.strftime("%a %d %b %H:%M") for f in c["fires"])
                 return (
-                    f"Scheduled {_describe_schedule(schedule)}, by {channel}. "
+                    f"Scheduled {_describe_schedule(schedule)}. {delivery_note}. "
                     f"Next runs: {fire_list}. "
                     f"Reply `/stop {schedule_id}` to cancel."
                 )
@@ -9735,12 +9756,17 @@ class VannaFlaskApp(VannaFlaskAPI):
         @self.requires_role(["admin", "superadmin"])
         def update_scheduled_agent_recipients_route(user=None):
             """
-            Lets an admin change WHO an existing email-channel scheduled/conditional
+            Lets an admin assign or change WHO an existing scheduled/conditional
             agent sends to, without recreating it — found missing during manual
             conditional-agent testing (the admin panel showed Stop/Resume/Delete but
-            no way to see or edit the recipient). Only accepts addresses already
-            registered in the workspace's email config (same "never invent a
-            recipient" policy used when a schedule is first created via chat).
+            no way to see or edit the recipient, and a chat-channel agent had no
+            recipient at all — it silently fell back to notifying whoever happened
+            to be its owner). Works on ANY agent regardless of its current channel:
+            assigning one or more recipients here converts it to email delivery
+            going to those addresses specifically, replacing the owner-chat-inbox
+            fallback. Only accepts addresses already registered in the workspace's
+            email config (same "never invent a recipient" policy used when a
+            schedule is first created via chat).
             """
             data = request.json or {}
             workspace_id = data.get('workspace_id')
@@ -9758,8 +9784,6 @@ class VannaFlaskApp(VannaFlaskAPI):
                 record = next((r for r in records if r.get("schedule_id") == schedule_id), None)
                 if not record:
                     return jsonify({"type": "error", "error": f"No scheduled agent {schedule_id} found."}), 404
-                if record.get("channel") != "email":
-                    return jsonify({"type": "error", "error": "Only email-channel agents have recipients to edit."}), 400
 
                 registered = {e.get("address") for e in _get_workspace_emails(workspace_id) if e.get("address")}
                 cleaned = []
@@ -9775,8 +9799,9 @@ class VannaFlaskApp(VannaFlaskAPI):
                     return jsonify({"type": "error", "error": "At least one recipient is required."}), 400
 
                 record["email_recipients"] = cleaned
+                record["channel"] = "email"
                 _save_schedule_records(workspace_id, metadata, records)
-            return jsonify({"success": True, "email_recipients": cleaned})
+            return jsonify({"success": True, "email_recipients": cleaned, "channel": "email"})
 
         @self.flask_app.route('/api/v0/scheduled_questions/poll', methods=['POST'])
         @self.requires_auth

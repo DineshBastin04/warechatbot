@@ -906,7 +906,6 @@ class VannaBase(ABC):
                                           # doesn't restate a question (e.g. "send
                                           # me this weekly") — caller resolves it
                                           # from the preceding chat turn instead.
-          "channel": "chat" | "email",
           "email_address": str | None,   # only set if a raw address was stated inline
           "email_labels": [str],         # names from known_email_labels the text referred
                                           # to (or the literal "all"); the expected path
@@ -964,7 +963,6 @@ class VannaBase(ABC):
             '  "question": "<the data question being asked, in English, or null if the\n'
             '               message is a follow-up that only refers back to prior results\n'
             '               (e.g. \\"this\\", \\"this data\\", \\"it\\") without restating one>",\n'
-            '  "channel": "chat" or "email",\n'
             '  "email_address": "<a raw email address if one was stated inline, else null>",\n'
             '  "email_labels": ["<registered label(s) the text referred to, or \\"all\\">"],\n'
             '  "schedules": [\n'
@@ -1086,7 +1084,7 @@ class VannaBase(ABC):
         parsed = self._parse_json_response(response_text)
         if parsed is None:
             return {
-                "ok": False, "question": None, "channel": "chat", "email_address": None,
+                "ok": False, "question": None, "email_address": None,
                 "email_labels": [], "schedules": [], "ambiguous": [],
                 "error": "Could not understand that as a scheduling request — please rephrase.",
             }
@@ -1121,7 +1119,6 @@ class VannaBase(ABC):
         return {
             "ok": ok,
             "question": parsed.get("question") or None,
-            "channel": parsed.get("channel") if parsed.get("channel") in ("chat", "email") else "chat",
             "email_address": parsed.get("email_address") or None,
             "email_labels": email_labels,
             "schedules": schedules,
