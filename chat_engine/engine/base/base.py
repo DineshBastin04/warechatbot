@@ -879,6 +879,93 @@ class VannaBase(ABC):
             suggested_table = tables[0] if tables else None
         return {"matched": False, "kind": kind, "suggested_table": suggested_table}
 
+    def suggest_query_clarification(self, question: str, tables: list, **kwargs) -> dict:
+        """
+        Single LLM call used when generate_sql couldn't produce a query — it hit
+        its own anti-hallucination guard and returned the literal "Insufficient
+        data for query." because no trained example/documentation covers this
+        question's shape. Rather than dead-ending there, this decides HOW to
+        respond: ask a short clarifying question that could plausibly narrow the
+        request down to something answerable, or — if the question isn't
+        plausibly about anything in this database at all — say so plainly,
+        since no amount of back-and-forth will conjure data that doesn't exist.
+
+        Args:
+            question: the raw user question that failed to generate SQL.
+            tables: real table names that exist in the connected database (same
+                INFORMATION_SCHEMA.TABLES source used by match_analysis_config),
+                so the model reasons about what's actually here, not what a
+                typical warehouse schema might have.
+
+        Same trust level as classify_message_route/match_analysis_config — a UX
+        aid, not a security boundary. The eventual retried question still goes
+        through the exact same generate_sql path (and its own validation) as
+        every other question; this function only decides what to ask the user.
+
+        Returns a dict:
+            {"ask_user": True, "clarifying_question": "<short question>"}
+            or
+            {"ask_user": False, "reason": "<short plain-English explanation>"}
+        """
+        fallback = {
+            "ask_user": False,
+            "reason": "I don't have a trained example for that kind of question yet — "
+                      "ask your admin to add one, or try rephrasing with more specific detail.",
+        }
+        if not question or not question.strip():
+            return fallback
+
+        tables_desc = ", ".join(tables) if tables else "(no tables known)"
+
+        system_prompt = (
+            "A user asked a data question that a text-to-SQL system could not "
+            "answer, because no trained example or documentation covers this "
+            "shape of question yet. Your job is NOT to write SQL — it's to "
+            "decide how to respond to the user.\n\n"
+            f"Real tables that exist in this database: {tables_desc}\n\n"
+            "Reason about whether the user's question is plausibly about data "
+            "in one of these tables, just phrased in a way the system couldn't "
+            "ground yet — e.g. a business term that likely maps to a real "
+            "table/column, or a question missing one concrete detail (a date "
+            "range, a status, which specific item/order/customer they mean). "
+            "If so, ask ONE short, concrete clarifying question that would "
+            "help narrow it down to something answerable — never a vague "
+            "'can you clarify?', always something specific enough to act on.\n\n"
+            "If instead the question isn't plausibly about anything in this "
+            "table list at all (e.g. it asks about a concept this system has "
+            "no data for, like payroll hours or weather), asking more "
+            "questions won't help — say so plainly instead, don't pretend a "
+            "clarifying question would fix it.\n\n"
+            "Respond with ONLY a single JSON object (no prose, no markdown "
+            "fences), matching exactly:\n"
+            '{"ask_user": true or false, '
+            '"clarifying_question": "<short question, only if ask_user is true>", '
+            '"reason": "<short plain-English reason, only if ask_user is false>"}'
+        )
+
+        messages = [
+            self.system_message(system_prompt),
+            self.user_message(question),
+        ]
+
+        self.log(title="Query Clarification Suggestion Prompt", message=system_prompt)
+        llm_response_tuple = self.submit_prompt(messages, **kwargs)
+
+        if isinstance(llm_response_tuple, tuple) and len(llm_response_tuple) in (2, 5):
+            response_text = llm_response_tuple[0]
+        else:
+            response_text = str(llm_response_tuple)
+
+        self.log(title="Query Clarification Suggestion Response", message=response_text)
+
+        parsed = self._parse_json_response(response_text)
+        if not parsed:
+            return fallback
+
+        if parsed.get("ask_user") and parsed.get("clarifying_question"):
+            return {"ask_user": True, "clarifying_question": parsed["clarifying_question"]}
+        return {"ask_user": False, "reason": parsed.get("reason") or fallback["reason"]}
+
     def extract_schedule_request(
         self,
         text: str,

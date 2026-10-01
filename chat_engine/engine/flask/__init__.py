@@ -221,6 +221,19 @@ _pending_analysis_confirmations = {}
 _pending_analysis_confirmations_lock = None   # initialised after Lock is imported below
 _PENDING_ANALYSIS_CONFIRMATION_TTL_SECONDS = 600
 
+# An ordinary data question that generate_sql couldn't answer (its own
+# anti-hallucination guard fired — no trained example/documentation covers
+# this shape of question, so it returned the literal "Insufficient data for
+# query." instead of guessing at columns) — previously just dead-ended the
+# user there. Same shape/rationale as _pending_schedule_clarifications above:
+# keyed by "{workspace_id}:{username}", the next message is treated as the
+# answer to the clarifying question rather than a brand-new query, merged
+# with the original question and retried through the normal generate_sql path.
+_pending_query_clarifications = {}
+_pending_query_clarifications_lock = None   # initialised after Lock is imported below
+_PENDING_QUERY_CLARIFICATION_TTL_SECONDS = 600
+_MAX_QUERY_CLARIFICATION_ATTEMPTS = 2
+
 # A prediction/anomaly config's SQL query is written by an LLM (or, worse,
 # generated on the fly with no human review yet) and can come back unaggregated
 # against a large table — seen live: a 1.17M-row full-table pull that hung the
@@ -269,6 +282,7 @@ _unpick_log_lock = Lock()
 _pending_writes_lock = Lock()
 _pending_schedule_clarifications_lock = Lock()
 _pending_analysis_confirmations_lock = Lock()
+_pending_query_clarifications_lock = Lock()
 _schedule_records_locks_guard = Lock()
 
 
@@ -1900,6 +1914,85 @@ class VannaFlaskAPI:
             if not workspace:
                 return {"type": "error", "error": "No workspace provided"}, 400
 
+            # ────────────────────────────────────────────────
+            # Ensure vn is ready before touching it. vn is a lazily-
+            # initialized, process-wide global (not per-session) — found live:
+            # both this function and route_message's classifier branch could
+            # crash with AttributeError: 'NoneType' object has no attribute
+            # '...' when reached before any prior request in this process had
+            # initialized vn for this workspace (e.g. a fresh process, or a
+            # client that never calls connect-vanna first). _handle_schedule_
+            # message/_handle_prediction_message already self-protect this
+            # way; this was the one shared entry point missing it.
+            # ────────────────────────────────────────────────
+            workspace_id_for_init = flask.session.get("workspace_id")
+            if workspace_id_for_init:
+                initialized, init_err = self.ensure_vanna_initialized(workspace_id_for_init)
+                if not initialized:
+                    return {"type": "error", "error": init_err}, 400
+            elif vn is None:
+                return {
+                    "type": "error",
+                    "error": "Workspace is not connected yet — reconnect the workspace and try again.",
+                }, 400
+
+            # ────────────────────────────────────────────────
+            # Resume a pending query clarification, if one is open for this
+            # user — treat this message as the answer, merged with the
+            # original question that generate_sql couldn't ground, rather than
+            # a brand-new query on its own (a bare "the pick table" reply
+            # wouldn't make sense as a standalone question). Same pattern as
+            # _pending_schedule_clarifications: keyed by workspace_id+username,
+            # popped (not just peeked) here since this is the actual consumer.
+            # ────────────────────────────────────────────────
+            clarification_workspace_id = workspace_id_for_init
+            clarification_username = session.get("username")
+            query_clarification_attempts = 0
+            if clarification_workspace_id and clarification_username:
+                clarification_key = f"{clarification_workspace_id}:{clarification_username}"
+                with _pending_query_clarifications_lock:
+                    pending_clarification = _pending_query_clarifications.pop(clarification_key, None)
+
+                # Defense in depth, mirrors the discard added to
+                # _handle_schedule_message/_handle_prediction_message: reaching
+                # this function means the message is being treated as a query,
+                # so any stale schedule/prediction clarification for this same
+                # user shouldn't be left to silently merge into a later message
+                # if some future caller ever reaches _handle_query_message
+                # without going through the usual pending-state-aware routing
+                # in route_message/classify_message_route_endpoint.
+                with _pending_schedule_clarifications_lock:
+                    _pending_schedule_clarifications.pop(clarification_key, None)
+                with _pending_analysis_confirmations_lock:
+                    _pending_analysis_confirmations.pop(clarification_key, None)
+
+                if pending_clarification and time.time() - pending_clarification.get("created_at", 0) <= _PENDING_QUERY_CLARIFICATION_TTL_SECONDS:
+                    question_raw = f"{pending_clarification['raw_text']} {question_raw}".strip()
+                    query_clarification_attempts = pending_clarification.get("attempts", 0)
+
+                    # The original question was classified "query" before it
+                    # ever reached here, but the clarifying reply can reveal
+                    # the true intent was actually scheduling/prediction all
+                    # along — e.g. "...and notify me whenever that happens"
+                    # only shows up in the answer, not the original question.
+                    # Re-check the MERGED text rather than blindly trusting
+                    # the earlier classification; if it's changed, hand off
+                    # to the right pipeline instead of forcing an unrelated
+                    # data question through this one.
+                    try:
+                        reclassified_route = vn.classify_message_route(question_raw)
+                    except Exception as reclassify_exc:
+                        logger.warning(f"Query clarification re-classification failed: {reclassify_exc}")
+                        reclassified_route = "query"
+                    if reclassified_route == "schedule":
+                        return self._handle_schedule_message(
+                            clarification_workspace_id, question_raw, None, clarification_username, previous_sql
+                        )
+                    if reclassified_route == "prediction":
+                        return self._handle_prediction_message(
+                            clarification_workspace_id, question_raw, clarification_username
+                        )
+
             # Clean + prepare
             question_clean = clean_question(question_raw)
 
@@ -2055,6 +2148,49 @@ class VannaFlaskAPI:
             sql_text = sql[0] if isinstance(sql, tuple) else sql
 
             response_type = "sql" if vn.is_sql_valid(sql=sql_text) else "text"
+
+            # generate_sql's own anti-hallucination guard fires when no trained
+            # example/documentation covers this question's shape — sometimes as
+            # the exact literal "Insufficient data for query.", but observed
+            # live to also come back as a free-form explanation ("the database
+            # tables listed do not appear to contain X data..."), so match on
+            # "any non-SQL text response" rather than that one exact phrase.
+            # The one explicit exclusion is the DDL/DML write-refusal message —
+            # a write request slipping past classify_intent isn't a data-
+            # availability problem a clarifying question could fix. Previously
+            # every other case just dead-ended the user with the raw text. Try
+            # turning it into a clarifying question instead (same idea as the
+            # scheduling clarification flow), capped at a few attempts so a
+            # genuinely untrained area of the schema doesn't loop forever.
+            _write_refusal_text = "cannot perform ddl or dml functions"
+            if response_type == "text" and (sql_text or "").strip().rstrip(".").lower() != _write_refusal_text:
+                if clarification_workspace_id and clarification_username and query_clarification_attempts < _MAX_QUERY_CLARIFICATION_ATTEMPTS:
+                    try:
+                        tables_df = vn.run_sql("SELECT TABLE_NAME FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_TYPE='BASE TABLE'")
+                        real_tables = tables_df["TABLE_NAME"].tolist() if tables_df is not None and not tables_df.empty else []
+                    except Exception as table_exc:
+                        logger.warning(f"Could not list tables for query clarification: {table_exc}")
+                        real_tables = []
+                    suggestion = vn.suggest_query_clarification(question_en, real_tables)
+                    if suggestion.get("ask_user") and suggestion.get("clarifying_question"):
+                        with _pending_query_clarifications_lock:
+                            _pending_query_clarifications[f"{clarification_workspace_id}:{clarification_username}"] = {
+                                "raw_text": original_question,
+                                "created_at": time.time(),
+                                "attempts": query_clarification_attempts + 1,
+                            }
+                        sql_text = suggestion["clarifying_question"]
+                    else:
+                        sql_text = suggestion.get("reason") or sql_text
+                elif query_clarification_attempts >= _MAX_QUERY_CLARIFICATION_ATTEMPTS:
+                    # Already asked enough times without landing on something
+                    # answerable — stop looping and say so plainly instead of
+                    # surfacing generate_sql's raw (sometimes blunt, sometimes
+                    # LLM-variable) refusal text.
+                    sql_text = (
+                        "I still don't have enough to answer that — it may need a trained "
+                        "example added, or try rephrasing the whole question in one message."
+                    )
 
             return {
                 "type":               response_type,
@@ -8890,6 +9026,18 @@ class VannaFlaskApp(VannaFlaskAPI):
             with _pending_schedule_clarifications_lock:
                 pending = _pending_schedule_clarifications.pop(pending_key, None)
 
+            # Also discard any pending QUERY clarification for this user — found
+            # live: open "show me the problem orders" (query clarification
+            # pending) -> interrupt with an unrelated "/list" (routed straight
+            # here, never through _handle_query_message) -> ask a totally fresh,
+            # unrelated question minutes later -> it silently got merged with
+            # the stale "problem orders" text, since nothing had ever popped it.
+            # Any explicit trip into the scheduling pipeline means the user has
+            # moved on from whatever query clarification was open, same as a
+            # "/" command already abandons this function's own pending state.
+            with _pending_query_clarifications_lock:
+                _pending_query_clarifications.pop(pending_key, None)
+
             clarification_attempts = 0
             if (
                 pending and body and not raw_text.startswith('/')
@@ -9253,6 +9401,14 @@ class VannaFlaskApp(VannaFlaskAPI):
                 echo = f"{note}{question_en} — split into {len(created)} schedules:\n{lines}"
             return {"type": "text", "text": echo}, 200
 
+        # Exposed on self so _handle_query_message (a separate closure/scope,
+        # defined earlier in VannaFlaskAPI.__init__, though it runs on the same
+        # instance) can hand off to this when a resumed query clarification
+        # turns out to actually be a scheduling request — see the matching
+        # comment in _handle_query_message. Same pattern already used for
+        # self._handle_query_message below.
+        self._handle_schedule_message = _handle_schedule_message
+
         # ============= prediction/anomaly chat integration =============
 
         def _has_pending_analysis_confirmation(workspace_id, username):
@@ -9265,6 +9421,17 @@ class VannaFlaskApp(VannaFlaskAPI):
             with _pending_analysis_confirmations_lock:
                 pending = _pending_analysis_confirmations.get(key)
             return bool(pending) and time.time() - pending.get("created_at", 0) <= _PENDING_ANALYSIS_CONFIRMATION_TTL_SECONDS
+
+        def _has_pending_query_clarification(workspace_id, username):
+            """Peek (without consuming) whether (workspace_id, username) was just
+            asked a clarifying question about an ordinary data query that
+            generate_sql couldn't answer — used by the routing endpoints to force
+            the next reply down the query path instead of re-classifying it. The
+            actual pop+merge happens inside _handle_query_message itself."""
+            key = f"{workspace_id}:{username}"
+            with _pending_query_clarifications_lock:
+                pending = _pending_query_clarifications.get(key)
+            return bool(pending) and time.time() - pending.get("created_at", 0) <= _PENDING_QUERY_CLARIFICATION_TTL_SECONDS
 
         def _save_analysis_config(workspace_id, kind, config):
             """Upsert one prediction/anomaly config into the workspace's saved
@@ -9332,6 +9499,15 @@ class VannaFlaskApp(VannaFlaskAPI):
             pending_key = f"{workspace_id}:{username}"
             with _pending_analysis_confirmations_lock:
                 pending = _pending_analysis_confirmations.pop(pending_key, None)
+
+            # Also discard any pending QUERY clarification — same reasoning as
+            # the matching discard in _handle_schedule_message: an explicit
+            # trip into the prediction pipeline means the user has moved on
+            # from whatever query clarification was open. A no-op when this
+            # call IS the reclassification handoff from _handle_query_message,
+            # since that already popped it before calling here.
+            with _pending_query_clarifications_lock:
+                _pending_query_clarifications.pop(pending_key, None)
 
             if pending and time.time() - pending.get("created_at", 0) <= _PENDING_ANALYSIS_CONFIRMATION_TTL_SECONDS:
                 if raw_text.strip().lower() in _AFFIRMATIVE_ANALYSIS_REPLIES:
@@ -9486,6 +9662,11 @@ class VannaFlaskApp(VannaFlaskAPI):
                 }
             return reply, 200
 
+        # Exposed on self for the same reason as self._handle_schedule_message
+        # above — lets _handle_query_message hand off here if a resumed query
+        # clarification turns out to be a prediction/anomaly request instead.
+        self._handle_prediction_message = _handle_prediction_message
+
         @self.flask_app.route('/api/v0/run_matched_analysis', methods=['POST'])
         @self.requires_auth
         def run_matched_analysis_route(user=None):
@@ -9566,6 +9747,20 @@ class VannaFlaskApp(VannaFlaskAPI):
                 body, status = _handle_prediction_message(workspace_id, raw_text, username)
                 return jsonify(body), status
 
+            if _has_pending_query_clarification(workspace_id, username):
+                body, status = self._handle_query_message(raw_text, previous_sql, workspace)
+                return jsonify(body), status
+
+            # vn is a lazily-initialized global — on a fresh process this may be
+            # the very first request to touch it. Found live: calling this
+            # route before any other request had initialized vn crashed with
+            # AttributeError: 'NoneType' object has no attribute
+            # 'classify_message_route' instead of a clean error. Same fix
+            # already applied to classify_message_route_endpoint above.
+            initialized, init_err = ensure_vanna_initialized(self, workspace_id)
+            if not initialized:
+                return jsonify({"type": "error", "error": init_err}), 400
+
             route = vn.classify_message_route(raw_text)
             if route == "schedule":
                 body, status = _handle_schedule_message(workspace_id, raw_text, prior_question, username, previous_sql)
@@ -9607,6 +9802,8 @@ class VannaFlaskApp(VannaFlaskAPI):
                 return jsonify({"type": "route", "route": "schedule"})
             if workspace_id and username and _has_pending_analysis_confirmation(workspace_id, username):
                 return jsonify({"type": "route", "route": "prediction"})
+            if workspace_id and username and _has_pending_query_clarification(workspace_id, username):
+                return jsonify({"type": "route", "route": "query"})
 
             # vn is a lazily-initialized global — on a fresh process this may be
             # the very first request to touch it. Fail open to "query" (the
