@@ -2,15 +2,20 @@ import os
 from dataclasses import dataclass
 
 
-def _env(name, default=""):
-    return (os.environ.get(name) or default).strip()
+def _get(source, name, default=""):
+    return (source.get(name) or default).strip()
 
 
-def _env_flag(name, default=False):
-    value = os.environ.get(name)
+def _flag(source, name, default=False):
+    value = source.get(name)
     if value is None or not value.strip():
         return default
     return value.strip().lower() in ("1", "true", "yes", "on")
+
+
+def default_sso_resource(public_base_url, app_id):
+    host = public_base_url.split("://", 1)[-1].split("/", 1)[0].lower()
+    return f"api://{host}/botid-{app_id}" if host and app_id else ""
 
 
 @dataclass(frozen=True)
@@ -34,26 +39,28 @@ class TeamsSettings:
 
     @classmethod
     def from_env(cls):
-        app_id = _env("MICROSOFT_APP_ID")
-        public_base_url = _env("PUBLIC_BASE_URL").rstrip("/")
-        host = public_base_url.split("://", 1)[-1].split("/", 1)[0].lower()
-        sso_resource = _env("TEAMS_SSO_RESOURCE") or (f"api://{host}/botid-{app_id}" if host and app_id else "")
+        return cls.from_mapping(os.environ)
+
+    @classmethod
+    def from_mapping(cls, source):
+        app_id = _get(source, "MICROSOFT_APP_ID")
+        public_base_url = _get(source, "PUBLIC_BASE_URL").rstrip("/")
         return cls(
             app_id=app_id,
-            app_password=_env("MICROSOFT_APP_PASSWORD"),
-            tenant_id=_env("MICROSOFT_APP_TENANT_ID"),
+            app_password=_get(source, "MICROSOFT_APP_PASSWORD"),
+            tenant_id=_get(source, "MICROSOFT_APP_TENANT_ID"),
             public_base_url=public_base_url,
-            teams_app_id=_env("TEAMS_APP_ID"),
-            sso_resource=sso_resource,
-            bot_enabled=_env_flag("TEAMS_ENABLED", default=bool(app_id)),
-            tab_enabled=_env_flag("TEAMS_TAB_ENABLED"),
+            teams_app_id=_get(source, "TEAMS_APP_ID"),
+            sso_resource=_get(source, "TEAMS_SSO_RESOURCE") or default_sso_resource(public_base_url, app_id),
+            bot_enabled=_flag(source, "TEAMS_ENABLED", default=bool(app_id)),
+            tab_enabled=_flag(source, "TEAMS_TAB_ENABLED"),
             # Off = only users in MICROSOFT_APP_TENANT_ID can use the bot. Default on
             # (safe) — turn off only while the Azure resources and your real Teams
             # tenant don't match yet (e.g. Azure was set up under a personal "Default
             # Directory" instead of your actual work tenant). Re-enable before real use.
-            enforce_tenant=_env_flag("TEAMS_ENFORCE_TENANT", default=True),
-            max_workers=int(_env("TEAMS_BOT_MAX_WORKERS", "4") or 4),
-            conversation_store_path=_env("TEAMS_CONVERSATION_STORE", os.path.join("admin_store", "teams_conversations.json")),
+            enforce_tenant=_flag(source, "TEAMS_ENFORCE_TENANT", default=True),
+            max_workers=int(_get(source, "TEAMS_BOT_MAX_WORKERS", "4") or 4),
+            conversation_store_path=_get(source, "TEAMS_CONVERSATION_STORE", os.path.join("admin_store", "teams_conversations.json")),
         )
 
     @property

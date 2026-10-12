@@ -9,9 +9,9 @@ the bot stays off and /api/messages answers 503; the rest of the app is unaffect
 
 import logging
 
-from flask import Response, jsonify
+from flask import Response, jsonify, request, session
 
-from . import cards
+from . import cards, env_config
 from .bridge import register_bridge
 from .manifest import build_package
 from .settings import TeamsSettings
@@ -79,6 +79,23 @@ def register_teams(app):
             "messaging_endpoint": f"{base}/api/messages" if base else "",
             "tab_url": f"{base}/teams/tab" if base else "",
         })
+
+    @flask_app.route("/api/teams/config", methods=["GET"])
+    def teams_config_get():
+        return jsonify(env_config.describe(settings))
+
+    @flask_app.route("/api/teams/config", methods=["POST"])
+    def teams_config_save():
+        # With the Teams tab on, the session cookie is SameSite=None, so a
+        # cross-site form post would carry it. Requiring a JSON body forces a
+        # CORS preflight the server never grants, which blocks that.
+        if not request.is_json:
+            return jsonify({"error": "Expected a JSON body"}), 415
+        try:
+            result = env_config.save(request.get_json(silent=True), settings, changed_by=session.get("username"))
+        except env_config.ConfigError as e:
+            return jsonify({"error": str(e)}), 400
+        return jsonify(result)
 
     @flask_app.route("/api/teams/manifest.zip", methods=["GET"])
     def teams_manifest_package():
