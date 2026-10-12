@@ -5810,16 +5810,58 @@ function togglePrediction(predictionType, index, workspaceId) {
 
                 <h4 style="margin-top:24px;">Server setup</h4>
                 <div id="teamsStatus">Loading…</div>
+
+                <h4 style="margin-top:24px;">Teams credentials</h4>
+                <p style="font-size:13px;">From the Entra app registration behind your Azure Bot resource. These are
+                   server-wide (shared by every workspace) and saved to the server's <code>.env</code> file.</p>
+                <div id="teamsRestartBanner" style="display:none;padding:10px 12px;margin-bottom:12px;border-radius:6px;background:#fff4e5;border:1px solid #f0b46a;font-size:13px;">
+                    ⚠️ Saved changes aren't active yet — <b>restart the server</b> to apply them. Until then the bot,
+                    voice tab and Teams app package below keep using the previous values.
+                </div>
+
+                <label for="teamsAppId">Bot (Entra app) ID:</label>
+                <input type="text" id="teamsAppId" placeholder="00000000-0000-0000-0000-000000000000" oninput="updateTeamsDerivedFields()">
+
+                <label for="teamsAppPassword">Client secret:</label>
+                <input type="password" id="teamsAppPassword" placeholder="Leave blank to keep the saved one" autocomplete="new-password">
+                <p id="teamsAppPasswordStatus" style="color:#888;font-size:0.85em;"></p>
+
+                <label for="teamsTenantId">Tenant ID:</label>
+                <input type="text" id="teamsTenantId" placeholder="00000000-0000-0000-0000-000000000000">
+
+                <label for="teamsPublicBaseUrl">Public base URL:</label>
+                <input type="text" id="teamsPublicBaseUrl" placeholder="https://your-host.devtunnels.ms" oninput="updateTeamsDerivedFields()">
+
+                <label for="teamsMessagingEndpoint">Messaging endpoint:</label>
+                <input type="text" id="teamsMessagingEndpoint" readonly style="background:#f3f4f6;">
+
+                <label for="teamsTabUrl">Tab URL:</label>
+                <input type="text" id="teamsTabUrl" readonly style="background:#f3f4f6;">
+                <p style="color:#888;font-size:0.85em;">The messaging endpoint and tab URL follow the public base URL —
+                   the server always serves them at <code>/api/messages</code> and <code>/teams/tab</code>.</p>
+
+                <label for="teamsSsoResource">SSO Application ID URI:</label>
+                <input type="text" id="teamsSsoResource" placeholder="api://...">
+                <p id="teamsSsoDefault" style="color:#888;font-size:0.85em;"></p>
+
+                <p style="font-size:13px;">Set the <b>messaging endpoint</b> on your Azure Bot resource, and the
+                   <b>SSO Application ID URI</b> under "Expose an API" in the Entra app registration. After changing
+                   the public base URL or SSO URI, restart the server and re-upload the Teams app package.</p>
+                <button class="save" onclick="saveTeamsCredentials()">Save Teams Credentials</button>
+
+                <div id="teamsPackage" style="margin-top:20px;"></div>
             `;
             contentArea.style.display = 'block';
 
             // Load the configuration immediately
             loadTeamsConfig();
             loadTeamsStatus();
+            loadTeamsCredentials();
         }
 
         function loadTeamsStatus() {
             const target = document.getElementById('teamsStatus');
+            const packageTarget = document.getElementById('teamsPackage');
             fetch('/api/teams/status')
                 .then(response => response.json())
                 .then(s => {
@@ -5833,24 +5875,86 @@ function togglePrediction(predictionType, index, workspaceId) {
                     const missingPkg = (s.missing_for_package || []).join(', ');
                     target.innerHTML = `
                         <table style="border-collapse:collapse;margin-bottom:12px;">
-                            ${row('Bot', s.bot_running ? 'Running' : (missingBot ? 'Not configured — set ' + missingBot + ' in .env' : 'Not running (check the server log)'), s.bot_running)}
+                            ${row('Bot', s.bot_running ? 'Running' : (missingBot ? 'Not configured — fill in the Teams credentials below, then restart the server' : 'Not running (check the server log)'), s.bot_running)}
                             ${row('Voice tab', s.tab_enabled ? (missingTab ? 'Enabled but missing ' + missingTab : 'Enabled') : 'Off — set TEAMS_TAB_ENABLED=true in .env', s.tab_enabled && !missingTab)}
-                            ${row('Bot (Entra app) ID', s.bot_app_id)}
-                            ${row('Tenant ID', s.tenant_id)}
-                            ${row('Messaging endpoint', s.messaging_endpoint)}
-                            ${row('Tab URL', s.tab_url)}
-                            ${row('SSO Application ID URI', s.sso_resource)}
                         </table>
-                        <p style="font-size:13px;">Set the <b>messaging endpoint</b> on your Azure Bot resource, and the
-                           <b>SSO Application ID URI</b> under "Expose an API" in the Entra app registration.</p>
-                        ${missingPkg
-                            ? `<p style="font-size:13px;">⚠️ Set ${esc(missingPkg)} in .env to build the Teams app package.</p>`
-                            : `<a class="save" style="display:inline-block;text-decoration:none;" href="/api/teams/manifest.zip">Download Teams app package</a>
-                               <p style="font-size:13px;">Give this .zip to your Teams administrator to upload in the Teams admin center
-                               (Manage apps → Upload new app), or upload it yourself if custom app upload is allowed.</p>`}
                     `;
+                    packageTarget.innerHTML = missingPkg
+                        ? `<p style="font-size:13px;">⚠️ Set ${esc(missingPkg)} in .env to build the Teams app package.</p>`
+                        : `<a class="save" style="display:inline-block;text-decoration:none;" href="/api/teams/manifest.zip">Download Teams app package</a>
+                           <p style="font-size:13px;">Give this .zip to your Teams administrator to upload in the Teams admin center
+                           (Manage apps → Upload new app), or upload it yourself if custom app upload is allowed.</p>`;
                 })
                 .catch(error => { target.textContent = 'Could not load Teams server status: ' + error.message; });
+        }
+
+        function teamsHostOf(baseUrl) {
+            return (baseUrl || '').trim().replace(/\/+$/, '').split('://').pop().split('/')[0].toLowerCase();
+        }
+
+        function updateTeamsDerivedFields() {
+            const base = document.getElementById('teamsPublicBaseUrl').value.trim().replace(/\/+$/, '');
+            const appId = document.getElementById('teamsAppId').value.trim();
+            document.getElementById('teamsMessagingEndpoint').value = base ? base + '/api/messages' : '';
+            document.getElementById('teamsTabUrl').value = base ? base + '/teams/tab' : '';
+            const host = teamsHostOf(base);
+            const fallback = host && appId ? `api://${host}/botid-${appId}` : '';
+            document.getElementById('teamsSsoDefault').textContent = fallback
+                ? 'Leave blank to use ' + fallback + ' (Azure only accepts that if the host is a verified domain of your tenant).'
+                : '';
+        }
+
+        function loadTeamsCredentials() {
+            fetch('/api/teams/config')
+                .then(async response => {
+                    const data = await response.json().catch(() => ({}));
+                    if (!response.ok) throw new Error(data.error || ('HTTP ' + response.status));
+                    return data;
+                })
+                .then(renderTeamsCredentials)
+                .catch(error => showErrorMessage('Could not load Teams credentials: ' + error.message));
+        }
+
+        function renderTeamsCredentials(data) {
+            document.getElementById('teamsAppId').value = data.app_id || '';
+            document.getElementById('teamsTenantId').value = data.tenant_id || '';
+            document.getElementById('teamsPublicBaseUrl').value = data.public_base_url || '';
+            document.getElementById('teamsSsoResource').value = data.sso_resource || '';
+            document.getElementById('teamsAppPassword').value = '';
+            document.getElementById('teamsAppPasswordStatus').textContent = data.app_password_set
+                ? 'A client secret is saved.' : 'No client secret saved yet.';
+            document.getElementById('teamsRestartBanner').style.display = data.restart_required ? 'block' : 'none';
+            updateTeamsDerivedFields();
+        }
+
+        function saveTeamsCredentials() {
+            const value = (id) => document.getElementById(id).value.trim();
+            const payload = {
+                app_id: value('teamsAppId'),
+                app_password: value('teamsAppPassword'),
+                tenant_id: value('teamsTenantId'),
+                public_base_url: value('teamsPublicBaseUrl'),
+                sso_resource: value('teamsSsoResource'),
+            };
+            fetch('/api/teams/config', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(payload)
+            })
+            .then(async response => {
+                const data = await response.json().catch(() => ({}));
+                if (!response.ok) throw new Error(data.error || ('HTTP ' + response.status));
+                return data;
+            })
+            .then(data => {
+                renderTeamsCredentials(data);
+                showSuccessMessage(!(data.changed || []).length
+                    ? 'No changes to save.'
+                    : (data.restart_required
+                        ? 'Teams credentials saved to .env — restart the server to apply them.'
+                        : 'Teams credentials saved to .env.'));
+            })
+            .catch(error => showErrorMessage('Could not save Teams credentials: ' + error.message));
         }
 
         function saveTeamsConfig() {
