@@ -82,6 +82,7 @@ from .anomaly_page import anomaly_template
 from .vn_registry import VannaRegistry, VnRouter
 from .chat_context import ChatContext, friendly_sql_error
 from .access_control import install_access_control, ADMIN_ROLES
+from ..warehouse_perf import create_warehouse_perf
 
 import io, uuid, logging
 from typing import Dict, Any, Optional
@@ -182,6 +183,59 @@ _pending_schedule_clarifications_lock = None   # initialised after Lock is impor
 _PENDING_CLARIFICATION_TTL_SECONDS = 600
 _MAX_CLARIFICATION_ATTEMPTS = 3
 
+# A freshly-LLM-generated (not yet saved) prediction/anomaly config that chat
+# already ran and answered, waiting on the user's next message to say whether
+# to keep it as a reusable named check — same shape/rationale as
+# _pending_schedule_clarifications above: keyed by "{workspace_id}:{username}",
+# consumed by the next message rather than auto-saving unreviewed configs.
+_pending_analysis_confirmations = {}
+_pending_analysis_confirmations_lock = None   # initialised after Lock is imported below
+_PENDING_ANALYSIS_CONFIRMATION_TTL_SECONDS = 600
+
+# An ordinary data question that generate_sql couldn't answer (its own
+# anti-hallucination guard fired — no trained example/documentation covers
+# this shape of question, so it returned the literal "Insufficient data for
+# query." instead of guessing at columns) — previously just dead-ended the
+# user there. Same shape/rationale as _pending_schedule_clarifications above:
+# keyed by "{workspace_id}:{username}", the next message is treated as the
+# answer to the clarifying question rather than a brand-new query, merged
+# with the original question and retried through the normal generate_sql path.
+_pending_query_clarifications = {}
+_pending_query_clarifications_lock = None   # initialised after Lock is imported below
+_PENDING_QUERY_CLARIFICATION_TTL_SECONDS = 600
+_MAX_QUERY_CLARIFICATION_ATTEMPTS = 2
+
+# A prediction/anomaly config's SQL query is written by an LLM (or, worse,
+# generated on the fly with no human review yet) and can come back unaggregated
+# against a large table — seen live: a 1.17M-row full-table pull that hung the
+# request indefinitely in the sklearn/pandas processing and the final
+# to_dict(orient="records") conversion. Cap rows right after fetch so a bad
+# query degrades to a truncated-but-fast answer instead of hanging a worker
+# thread; a real analysis is expected to aggregate/filter, not need 1M+ rows.
+_MAX_ANALYSIS_ROWS = 20000
+
+# Per-workspace lock guarding the scheduled_questions read-modify-write cycle
+# (_get_schedule_records -> mutate in memory -> _save_schedule_records writes the
+# WHOLE list back, no per-field atomicity). Without this, two schedules firing
+# concurrently in the same workspace — or a fire racing a /stop, resume, delete,
+# or the chat inbox poll — is a lost-update race: whichever save happens last
+# silently clobbers the other's changes (e.g. a conditional agent's matched_keys
+# update, or a chat_inbox notification, vanishing). RLock (not Lock) since some
+# callers are nested inside other locked sections of this same module.
+_schedule_records_locks = {}
+_schedule_records_locks_guard = None   # initialised after Lock is imported below
+
+
+class _ScheduleRequestError(Exception):
+    """Carries an early-return (body, status) out of a schedule-creation
+    validation loop so the whole read-modify-write cycle can be wrapped in a
+    single `with _get_schedule_records_lock(...):` without re-indenting every
+    line of it — a validation failure partway through just raises this instead
+    of returning, and the caller turns it back into the usual response tuple."""
+    def __init__(self, body, status):
+        self.body = body
+        self.status = status
+
 
 
 
@@ -190,7 +244,7 @@ _MAX_CLARIFICATION_ATTEMPTS = 3
 # load_dotenv(ENV_PATH)
 import os
 import json
-from threading import Lock
+from threading import Lock, RLock
 
 CONFIG_FILE = "feedback_config.json"
 _config_lock = Lock()
@@ -198,6 +252,22 @@ _stuck_device_log_lock = Lock()
 _unpick_log_lock = Lock()
 _pending_writes_lock = Lock()
 _pending_schedule_clarifications_lock = Lock()
+_pending_analysis_confirmations_lock = Lock()
+_pending_query_clarifications_lock = Lock()
+_schedule_records_locks_guard = Lock()
+
+
+def _get_schedule_records_lock(workspace_id):
+    """Lazily creates (once) and returns the RLock for this workspace's
+    scheduled_questions read-modify-write cycle. See _schedule_records_locks
+    above for why this exists."""
+    key = str(workspace_id)
+    with _schedule_records_locks_guard:
+        lock = _schedule_records_locks.get(key)
+        if lock is None:
+            lock = RLock()
+            _schedule_records_locks[key] = lock
+        return lock
 
 
 def save_email_config(data):
@@ -781,7 +851,7 @@ class MemoryCache(Cache):
 
 
             sql = """
-            SELECT question_id, question, sql_query, workspace_name, detected_language
+            SELECT question_id, question, sql_query, workspace_name, detected_language, parent_question_id
             FROM users
             WHERE user_id = ? and workspace_id = ?
             ORDER BY timestamp DESC
@@ -803,7 +873,8 @@ class MemoryCache(Cache):
                         "question": row[1],
                         "sql": row[2],
                         "workspace": row[3],
-                        "detected_language": row[4]
+                        "detected_language": row[4],
+                        "parent_question_id": row[5]
                     }
                 cur.close()
                 conn.commit()
@@ -1220,7 +1291,7 @@ def _rows_to_csv(rows):
     return out.getvalue()
 
 # Send email using SMTP (e.g., Gmail)
-def _send_email_smtp(recipients, subject, body, rows, filename, cfg):
+def _send_email_smtp(recipients, subject, body, rows, filename, cfg, html=None, inline_images=None, extra_attachments=None):
     if not recipients:
         return False
 
@@ -1234,7 +1305,29 @@ def _send_email_smtp(recipients, subject, body, rows, filename, cfg):
     msg["From"] = SMTP_FROM
     msg["To"] = ", ".join(recipients)
     msg["Subject"] = subject
-    msg.attach(MIMEText(body, "plain", "utf-8"))
+    if html:
+        # multipart/related( multipart/alternative(plain, html), inline images by Content-ID )
+        from email.mime.image import MIMEImage
+        related = MIMEMultipart("related")
+        alternative = MIMEMultipart("alternative")
+        alternative.attach(MIMEText(body, "plain", "utf-8"))
+        alternative.attach(MIMEText(html, "html", "utf-8"))
+        related.attach(alternative)
+        for cid, data in inline_images or []:
+            img = MIMEImage(data, _subtype="png")
+            img.add_header("Content-ID", f"<{cid}>")
+            img.add_header("Content-Disposition", "inline", filename=f"{cid}.png")
+            related.attach(img)
+        msg.attach(related)
+    else:
+        msg.attach(MIMEText(body, "plain", "utf-8"))
+    for att_name, att_mime, att_data in extra_attachments or []:
+        maintype, _, subtype = (att_mime or "application/octet-stream").partition("/")
+        extra_part = MIMEBase(maintype, subtype or "octet-stream")
+        extra_part.set_payload(att_data)
+        encoders.encode_base64(extra_part)
+        extra_part.add_header("Content-Disposition", f'attachment; filename="{att_name}"')
+        msg.attach(extra_part)
 
     csv_data = _rows_to_csv(rows)
     if csv_data:
@@ -1258,7 +1351,7 @@ def _send_email_smtp(recipients, subject, body, rows, filename, cfg):
 
 
 # Send email using Microsoft Graph API (Outlook)
-def _send_email_outlook_graph(recipients, subject, body, rows, filename, cfg):
+def _send_email_outlook_graph(recipients, subject, body, rows, filename, cfg, html=None, inline_images=None, extra_attachments=None):
     outlook = cfg["outlook"]
 
     # 1) Get access token
@@ -1289,13 +1382,30 @@ def _send_email_outlook_graph(recipients, subject, body, rows, filename, cfg):
             ).decode("utf-8")
         })
 
+    for cid, data in inline_images or []:
+        attachments.append({
+            "@odata.type": "#microsoft.graph.fileAttachment",
+            "name": f"{cid}.png",
+            "contentType": "image/png",
+            "contentBytes": base64.b64encode(data).decode("utf-8"),
+            "isInline": True,
+            "contentId": cid,
+        })
+    for att_name, att_mime, att_data in extra_attachments or []:
+        attachments.append({
+            "@odata.type": "#microsoft.graph.fileAttachment",
+            "name": att_name,
+            "contentType": att_mime or "application/octet-stream",
+            "contentBytes": base64.b64encode(att_data).decode("utf-8"),
+        })
+
     # 3) Build mail payload
     mail = {
         "message": {
             "subject": subject,
             "body": {
-                "contentType": "Text",
-                "content": body
+                "contentType": "HTML" if html else "Text",
+                "content": html if html else body
             },
             "toRecipients": [
                 {"emailAddress": {"address": r}} for r in recipients
@@ -1320,7 +1430,9 @@ def _send_email_outlook_graph(recipients, subject, body, rows, filename, cfg):
 
 
 # Main function to send email based on configured provider
-def _send_email(recipients, subject, body, rows, filename):
+def _send_email(recipients, subject, body, rows, filename, html=None, inline_images=None, extra_attachments=None):
+    # html / inline_images [(content_id, png_bytes)] / extra_attachments [(name, mime, bytes)]
+    # are optional; every existing caller passes none of them and gets the old plain-text email.
     if not recipients:
         return False
 
@@ -1337,12 +1449,14 @@ def _send_email(recipients, subject, body, rows, filename):
         # keys on cfg (set by save_feedback_config) — _send_email_smtp expects
         # them there, not inside the nested cfg["gmail"] sub-object.
         return _send_email_smtp(
-            recipients, subject, body, rows, filename, cfg
+            recipients, subject, body, rows, filename, cfg,
+            html=html, inline_images=inline_images, extra_attachments=extra_attachments
         )
 
     if provider == "outlook":
         return _send_email_outlook_graph(
-            recipients, subject, body, rows, filename, cfg
+            recipients, subject, body, rows, filename, cfg,
+            html=html, inline_images=inline_images, extra_attachments=extra_attachments
         )
 
     raise ValueError(f"Unsupported email provider: {provider}")
@@ -1768,7 +1882,7 @@ class VannaFlaskAPI:
                     }
                 )
 
-        def _handle_query_message(question_raw, previous_sql, workspace, ctx=None):
+        def _handle_query_message(question_raw, previous_sql, workspace, ctx=None, parent_question_id=None):
             """
             Core RAG/text-to-SQL pipeline: validates input, translates, routes read
             vs write (vn.classify_intent), generates SQL, caches, and logs
@@ -1778,6 +1892,11 @@ class VannaFlaskAPI:
 
             ctx (ChatContext) supplies identity for callers with no Flask session;
             when None, identity comes from the session as before.
+
+            parent_question_id, when the caller identifies this as a follow-up, is
+            stored on the new cache entry so the FAQ/history sidebar can group a
+            follow-up under the question it followed up on instead of listing it
+            as an independent entry.
 
             Returns (body_dict, status_code).
             """
@@ -1792,6 +1911,85 @@ class VannaFlaskAPI:
 
             if not workspace:
                 return {"type": "error", "error": "No workspace provided"}, 400
+
+            # ────────────────────────────────────────────────
+            # Ensure vn is ready before touching it. vn is a lazily-
+            # initialized, process-wide global (not per-session) — found live:
+            # both this function and route_message's classifier branch could
+            # crash with AttributeError: 'NoneType' object has no attribute
+            # '...' when reached before any prior request in this process had
+            # initialized vn for this workspace (e.g. a fresh process, or a
+            # client that never calls connect-vanna first). _handle_schedule_
+            # message/_handle_prediction_message already self-protect this
+            # way; this was the one shared entry point missing it.
+            # ────────────────────────────────────────────────
+            workspace_id_for_init = flask.session.get("workspace_id")
+            if workspace_id_for_init:
+                initialized, init_err = self.ensure_vanna_initialized(workspace_id_for_init)
+                if not initialized:
+                    return {"type": "error", "error": init_err}, 400
+            elif vn is None:
+                return {
+                    "type": "error",
+                    "error": "Workspace is not connected yet — reconnect the workspace and try again.",
+                }, 400
+
+            # ────────────────────────────────────────────────
+            # Resume a pending query clarification, if one is open for this
+            # user — treat this message as the answer, merged with the
+            # original question that generate_sql couldn't ground, rather than
+            # a brand-new query on its own (a bare "the pick table" reply
+            # wouldn't make sense as a standalone question). Same pattern as
+            # _pending_schedule_clarifications: keyed by workspace_id+username,
+            # popped (not just peeked) here since this is the actual consumer.
+            # ────────────────────────────────────────────────
+            clarification_workspace_id = workspace_id_for_init
+            clarification_username = session.get("username")
+            query_clarification_attempts = 0
+            if clarification_workspace_id and clarification_username:
+                clarification_key = f"{clarification_workspace_id}:{clarification_username}"
+                with _pending_query_clarifications_lock:
+                    pending_clarification = _pending_query_clarifications.pop(clarification_key, None)
+
+                # Defense in depth, mirrors the discard added to
+                # _handle_schedule_message/_handle_prediction_message: reaching
+                # this function means the message is being treated as a query,
+                # so any stale schedule/prediction clarification for this same
+                # user shouldn't be left to silently merge into a later message
+                # if some future caller ever reaches _handle_query_message
+                # without going through the usual pending-state-aware routing
+                # in route_message/classify_message_route_endpoint.
+                with _pending_schedule_clarifications_lock:
+                    _pending_schedule_clarifications.pop(clarification_key, None)
+                with _pending_analysis_confirmations_lock:
+                    _pending_analysis_confirmations.pop(clarification_key, None)
+
+                if pending_clarification and time.time() - pending_clarification.get("created_at", 0) <= _PENDING_QUERY_CLARIFICATION_TTL_SECONDS:
+                    question_raw = f"{pending_clarification['raw_text']} {question_raw}".strip()
+                    query_clarification_attempts = pending_clarification.get("attempts", 0)
+
+                    # The original question was classified "query" before it
+                    # ever reached here, but the clarifying reply can reveal
+                    # the true intent was actually scheduling/prediction all
+                    # along — e.g. "...and notify me whenever that happens"
+                    # only shows up in the answer, not the original question.
+                    # Re-check the MERGED text rather than blindly trusting
+                    # the earlier classification; if it's changed, hand off
+                    # to the right pipeline instead of forcing an unrelated
+                    # data question through this one.
+                    try:
+                        reclassified_route = vn.classify_message_route(question_raw)
+                    except Exception as reclassify_exc:
+                        logger.warning(f"Query clarification re-classification failed: {reclassify_exc}")
+                        reclassified_route = "query"
+                    if reclassified_route == "schedule":
+                        return self._handle_schedule_message(
+                            clarification_workspace_id, question_raw, None, clarification_username, previous_sql
+                        )
+                    if reclassified_route == "prediction":
+                        return self._handle_prediction_message(
+                            clarification_workspace_id, question_raw, clarification_username
+                        )
 
             # Clean + prepare
             question_clean = clean_question(question_raw)
@@ -1891,6 +2089,7 @@ class VannaFlaskAPI:
             self.cache.set(id=cache_id, field="workspace",          value=workspace, **cache_scope)
             self.cache.set(id=cache_id, field="detected_language",  value=detected_language, **cache_scope)
             self.cache.set(id=cache_id, field="was_translated",     value=was_translated, **cache_scope)
+            self.cache.set(id=cache_id, field="parent_question_id", value=parent_question_id, **cache_scope)
 
             # Token-related fields (for UI/debugging/billing)
             self.cache.set(id=cache_id, field="token_total",   value=total_tokens, **cache_scope)
@@ -1936,6 +2135,7 @@ class VannaFlaskAPI:
                     cost_usd=cost_usd,
                     detected_language=detected_language,
                     workspace_id=ctx.workspace_id if ctx else None,
+                    parent_question_id=parent_question_id,
                 )
             except Exception as e:
                 logger.error(f"User activity logging failed: {e}")
@@ -1948,6 +2148,49 @@ class VannaFlaskAPI:
 
             response_type = "sql" if vn.is_sql_valid(sql=sql_text) else "text"
 
+            # generate_sql's own anti-hallucination guard fires when no trained
+            # example/documentation covers this question's shape — sometimes as
+            # the exact literal "Insufficient data for query.", but observed
+            # live to also come back as a free-form explanation ("the database
+            # tables listed do not appear to contain X data..."), so match on
+            # "any non-SQL text response" rather than that one exact phrase.
+            # The one explicit exclusion is the DDL/DML write-refusal message —
+            # a write request slipping past classify_intent isn't a data-
+            # availability problem a clarifying question could fix. Previously
+            # every other case just dead-ended the user with the raw text. Try
+            # turning it into a clarifying question instead (same idea as the
+            # scheduling clarification flow), capped at a few attempts so a
+            # genuinely untrained area of the schema doesn't loop forever.
+            _write_refusal_text = "cannot perform ddl or dml functions"
+            if response_type == "text" and (sql_text or "").strip().rstrip(".").lower() != _write_refusal_text:
+                if clarification_workspace_id and clarification_username and query_clarification_attempts < _MAX_QUERY_CLARIFICATION_ATTEMPTS:
+                    try:
+                        tables_df = vn.run_sql("SELECT TABLE_NAME FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_TYPE='BASE TABLE'")
+                        real_tables = tables_df["TABLE_NAME"].tolist() if tables_df is not None and not tables_df.empty else []
+                    except Exception as table_exc:
+                        logger.warning(f"Could not list tables for query clarification: {table_exc}")
+                        real_tables = []
+                    suggestion = vn.suggest_query_clarification(question_en, real_tables)
+                    if suggestion.get("ask_user") and suggestion.get("clarifying_question"):
+                        with _pending_query_clarifications_lock:
+                            _pending_query_clarifications[f"{clarification_workspace_id}:{clarification_username}"] = {
+                                "raw_text": original_question,
+                                "created_at": time.time(),
+                                "attempts": query_clarification_attempts + 1,
+                            }
+                        sql_text = suggestion["clarifying_question"]
+                    else:
+                        sql_text = suggestion.get("reason") or sql_text
+                elif query_clarification_attempts >= _MAX_QUERY_CLARIFICATION_ATTEMPTS:
+                    # Already asked enough times without landing on something
+                    # answerable — stop looping and say so plainly instead of
+                    # surfacing generate_sql's raw (sometimes blunt, sometimes
+                    # LLM-variable) refusal text.
+                    sql_text = (
+                        "I still don't have enough to answer that — it may need a trained "
+                        "example added, or try rephrasing the whole question in one message."
+                    )
+
             return {
                 "type":               response_type,
                 "id":                 cache_id,
@@ -1957,6 +2200,11 @@ class VannaFlaskAPI:
                 "was_translated":     was_translated,
                 "translated_question": question_en if was_translated else None,
             }, 200
+
+        # Exposed on self so VannaFlaskApp's __init__ (a separate closure/scope
+        # from this one, though it runs on the same instance via super().__init__)
+        # can reach it — e.g. route_message's NL "query" branch.
+        self._handle_query_message = _handle_query_message
 
         @self.flask_app.route("/api/v0/generate_sql", methods=["GET"])
         @self.requires_auth
@@ -1968,7 +2216,8 @@ class VannaFlaskAPI:
             question_raw = flask.request.args.get("question")
             previous_sql = flask.request.args.get("sql")
             workspace = flask.request.args.get("workspace")
-            body, status = _handle_query_message(question_raw, previous_sql, workspace)
+            parent_question_id = flask.request.args.get("parent_question_id")
+            body, status = _handle_query_message(question_raw, previous_sql, workspace, parent_question_id=parent_question_id)
             return jsonify(body), status
 
         # Published so routes defined in VannaFlaskApp.__init__ (route_message,
@@ -4559,7 +4808,7 @@ class VannaFlaskAPI:
             return jsonify(
                 {
                     "type": "question_history",
-                    "questions": cache.get_all(field_list=["question"]),
+                    "questions": cache.get_all(field_list=["question", "parent_question_id"]),
                 }
             )
 
@@ -4587,44 +4836,64 @@ class VannaFlaskAPI:
 
         @self.flask_app.route('/api/v0/save_feedback', methods=['POST'])
         def save_feedback():
-            data = request.json
+            data = request.json or {}
             workspace_id = data.get('workspace_id')
             question_id = data.get('question_id')
             question = data.get('question')
             sql = data.get('sql', '')  # allow empty
             rating = data.get('rating')
             comment = data.get('comment')
-            conn = pyodbc.connect(USER_FEEDBACK_CONNECTION_STRING, timeout=30)
-            cursor = conn.cursor()
-            # Fix: Use SELECT COUNT(*) to check existence, include all keys
-            cursor.execute("""
-                SELECT COUNT(*)
-                FROM user_feedback
-                WHERE workspace_id = ? AND question_id = ?
-            """, workspace_id, question_id)
 
-            exists = cursor.fetchone()[0] > 0
+            if not workspace_id or not question_id:
+                return jsonify({"status": "error", "error": "workspace_id and question_id are required"}), 400
 
-            if exists:
+            if rating is not None:
+                try:
+                    rating = int(rating)
+                except (TypeError, ValueError):
+                    return jsonify({"status": "error", "error": f"rating must be a number, got {rating!r}"}), 400
+
+            try:
+                conn = pyodbc.connect(USER_FEEDBACK_CONNECTION_STRING, timeout=30)
+            except Exception as e:
+                logger.error(f"save_feedback: DB connection failed: {e}")
+                return jsonify({"status": "error", "error": "Could not reach the feedback database"}), 500
+
+            try:
+                cursor = conn.cursor()
+                # Fix: Use SELECT COUNT(*) to check existence, include all keys
                 cursor.execute("""
-                    UPDATE user_feedback
-                    SET
-                        rating = ?,
-                        comment = ?,
-                        sql = COALESCE(NULLIF(?, ''), sql),
-                        created_at = GETDATE()
+                    SELECT COUNT(*)
+                    FROM user_feedback
                     WHERE workspace_id = ? AND question_id = ?
-                """, rating, comment, sql, workspace_id, question_id)
-            else:
-                cursor.execute("""
-                    INSERT INTO user_feedback
-                        (workspace_id, question_id, question, sql, rating, comment, created_at)
-                    VALUES (?, ?, ?, ?, ?, ?, GETDATE())
-                """, workspace_id, question_id, question, sql, rating, comment)
+                """, workspace_id, question_id)
 
-            conn.commit()
-            conn.close()
-            return jsonify({"status": "success"})
+                exists = cursor.fetchone()[0] > 0
+
+                if exists:
+                    cursor.execute("""
+                        UPDATE user_feedback
+                        SET
+                            rating = ?,
+                            comment = ?,
+                            sql = COALESCE(NULLIF(?, ''), sql),
+                            created_at = GETDATE()
+                        WHERE workspace_id = ? AND question_id = ?
+                    """, rating, comment, sql, workspace_id, question_id)
+                else:
+                    cursor.execute("""
+                        INSERT INTO user_feedback
+                            (workspace_id, question_id, question, sql, rating, comment, created_at)
+                        VALUES (?, ?, ?, ?, ?, ?, GETDATE())
+                    """, workspace_id, question_id, question, sql, rating, comment)
+
+                conn.commit()
+                return jsonify({"status": "success"})
+            except Exception as e:
+                logger.error(f"save_feedback: failed for workspace_id={workspace_id} question_id={question_id}: {e}")
+                return jsonify({"status": "error", "error": "Could not save feedback"}), 500
+            finally:
+                conn.close()
             
 
 
@@ -4637,27 +4906,37 @@ class VannaFlaskAPI:
             if not workspace_id or not question_id:
                 return jsonify({"exists": False})
 
-            conn = pyodbc.connect(USER_FEEDBACK_CONNECTION_STRING, timeout=30)
-            cursor = conn.cursor()
+            try:
+                conn = pyodbc.connect(USER_FEEDBACK_CONNECTION_STRING, timeout=30)
+            except Exception as e:
+                logger.error(f"get_feedback: DB connection failed: {e}")
+                return jsonify({"exists": False, "error": "Could not reach the feedback database"}), 500
 
-            cursor.execute("""
-                SELECT TOP 1 rating, comment
-                FROM user_feedback
-                WHERE workspace_id = ? AND question_id = ?
-                ORDER BY created_at DESC
-            """, workspace_id, question_id)
+            try:
+                cursor = conn.cursor()
 
-            row = cursor.fetchone()
-            conn.close()
+                cursor.execute("""
+                    SELECT TOP 1 rating, comment
+                    FROM user_feedback
+                    WHERE workspace_id = ? AND question_id = ?
+                    ORDER BY created_at DESC
+                """, workspace_id, question_id)
 
-            if row:
-                return jsonify({
-                    "exists": True,
-                    "rating": row.rating,
-                    "comment": row.comment
-                })
+                row = cursor.fetchone()
 
-            return jsonify({"exists": False})
+                if row:
+                    return jsonify({
+                        "exists": True,
+                        "rating": row.rating,
+                        "comment": row.comment
+                    })
+
+                return jsonify({"exists": False})
+            except Exception as e:
+                logger.error(f"get_feedback: failed for workspace_id={workspace_id} question_id={question_id}: {e}")
+                return jsonify({"exists": False, "error": "Could not read feedback"}), 500
+            finally:
+                conn.close()
         
 
 
@@ -5864,24 +6143,31 @@ class VannaFlaskApp(VannaFlaskAPI):
                 documents=[f"Workspace: {metadata.get('name', workspace_id)}"],
             )
 
-        def _deliver_to_chat_channel(record, text, rows=None):
-            """Non-email delivery for a scheduled agent. An agent created from Teams
-            is pushed into that user's Teams chat; everything else, and any Teams
-            delivery that fails, lands in the web chat inbox the chat UI polls."""
-            if record.get("channel") == "teams" and record.get("teams_aad_id"):
-                sender = getattr(self, "teams_proactive_sender", None)
-                if sender is not None:
-                    try:
-                        if sender(record["teams_aad_id"], text, rows):
-                            return
-                    except Exception as teams_exc:
-                        logger.exception(f"Scheduled question {record.get('schedule_id')}: Teams delivery failed, falling back to chat inbox: {teams_exc}")
-            record.setdefault("chat_inbox", []).append({
-                "text": text,
-                "created_at": time.time(),
-            })
+        def _deliver_to_teams(record, text, rows=None):
+            """Push a scheduled agent's result into the Teams conversation it was
+            created from. No chat-inbox fallback on failure — see the "unassigned"
+            handling in _deliver/_deliver_condition_matches/_fail for why that
+            silent-drop mechanism was removed; a failed Teams send is just logged,
+            same as an unassigned agent's result."""
+            sender = getattr(self, "teams_proactive_sender", None)
+            if sender is None:
+                logger.warning(f"Scheduled question {record.get('schedule_id')}: Teams delivery unavailable (bot not running).")
+                return
+            try:
+                if not sender(record["teams_aad_id"], text, rows):
+                    logger.warning(f"Scheduled question {record.get('schedule_id')}: Teams delivery failed.")
+            except Exception as teams_exc:
+                logger.exception(f"Scheduled question {record.get('schedule_id')}: Teams delivery failed: {teams_exc}")
 
         def _run_scheduled_question(workspace_id, schedule_id):
+            # Thin locking wrapper — see _get_schedule_records_lock: holds the
+            # per-workspace lock for this fire's entire read-modify-write cycle so
+            # it can't lose an update racing another fire, a /stop, or the chat
+            # poll in the same workspace. The actual logic is unchanged below.
+            with _get_schedule_records_lock(workspace_id):
+                _run_scheduled_question_locked(workspace_id, schedule_id)
+
+        def _run_scheduled_question_locked(workspace_id, schedule_id):
             global vn
             try:
                 metadata, records = _get_schedule_records(workspace_id)
@@ -5924,8 +6210,14 @@ class VannaFlaskApp(VannaFlaskAPI):
                                 [],
                                 _scheduled_email_filename(schedule_id),
                             )
+                        elif record.get("channel") == "teams" and record.get("teams_aad_id"):
+                            _deliver_to_teams(record, failure_note)
                         else:
-                            _deliver_to_chat_channel(record, failure_note)
+                            # Unassigned — the failure is already recorded in
+                            # last_status/last_error, visible in the Scheduled
+                            # Agents admin panel. No chat-inbox fallback (see
+                            # _deliver above for why).
+                            logger.info(f"Scheduled question {schedule_id}: no recipient assigned yet — failure notice not delivered.")
                     except Exception as notify_exc:
                         logger.exception(f"Scheduled question {schedule_id} failure-notice delivery also failed: {notify_exc}")
 
@@ -5969,6 +6261,7 @@ class VannaFlaskApp(VannaFlaskAPI):
                     sql = str(sql_result)
                     total_tokens = input_tokens = output_tokens = 0
                     model_name = "unknown"
+                no_training_example = False
                 if not vn.is_sql_valid(sql):
                     if not _is_no_training_example(sql):
                         return _fail("rejected", f"Couldn't generate a query for this question: {_explain_invalid_sql(sql)}")
@@ -5983,6 +6276,7 @@ class VannaFlaskApp(VannaFlaskAPI):
                         f"example covers question {record['question_en']!r} — delivering as empty result."
                     )
                     df = None
+                    no_training_example = True
                 else:
                     ok2, err2 = vn.validate_openquery_literals(sql)
                     if not ok2:
@@ -6040,8 +6334,19 @@ class VannaFlaskApp(VannaFlaskAPI):
                             )
                         except Exception as email_exc:
                             logger.exception(f"Scheduled question {schedule_id} email delivery failed: {email_exc}")
+                    elif record.get("channel") == "teams" and record.get("teams_aad_id"):
+                        _deliver_to_teams(record, body, rows)
                     else:
-                        _deliver_to_chat_channel(record, body, rows)
+                        # Unassigned (no recipient yet) — the check still runs and
+                        # last_status/last_run_at still update below, but nothing
+                        # is sent anywhere. Chat delivery isn't a supported ongoing
+                        # channel: it used to silently drop into the owner's chat
+                        # inbox here, which looked like a broken/unassigned agent
+                        # (because it was) and wasn't reliably seen anyway — the
+                        # inbox only drains while that owner happens to have the
+                        # chat page open. An admin assigns a real recipient from
+                        # the Scheduled Agents panel; nothing fires until then.
+                        logger.info(f"Scheduled question {schedule_id}: no recipient assigned yet — result not delivered.")
 
                 def _deliver_condition_matches(new_rows, total_matching):
                     subject = f"[Alert] {record['display_question']}"
@@ -6062,10 +6367,28 @@ class VannaFlaskApp(VannaFlaskAPI):
                             )
                         except Exception as email_exc:
                             logger.exception(f"Scheduled question {schedule_id} email delivery failed: {email_exc}")
+                    elif record.get("channel") == "teams" and record.get("teams_aad_id"):
+                        _deliver_to_teams(record, body, new_rows)
                     else:
-                        _deliver_to_chat_channel(record, body, new_rows)
+                        # Unassigned — see the matching comment in _deliver above.
+                        # matched_keys/last_condition_state still get tracked below
+                        # regardless, so nothing is missed once a recipient is
+                        # assigned — only the notification itself is withheld.
+                        logger.info(f"Scheduled question {schedule_id}: no recipient assigned yet — match not delivered.")
 
-                if schedule.get("type") == "conditional":
+                if schedule.get("type") == "conditional" and no_training_example:
+                    # The query couldn't even be generated this cycle (training-data
+                    # gap, not a real "nothing matches" result) — rows is a fake empty
+                    # set, not a real check. Leave matched_keys/last_condition_state
+                    # untouched so a transient training-data gap can never be mistaken
+                    # for "everything stopped matching," which would silently discard
+                    # the history of already-notified records and cause every one of
+                    # them to be re-notified as "new" the next time a real check runs.
+                    logger.warning(
+                        f"Scheduled question {schedule_id}: skipping condition diff this cycle "
+                        f"(no trained example) — matched_keys left unchanged."
+                    )
+                elif schedule.get("type") == "conditional":
                     # Diff which SPECIFIC records currently match against what matched
                     # on the previous poll — an aggregate true/false isn't enough,
                     # since a condition can keep gaining new matching records forever
@@ -6166,6 +6489,17 @@ class VannaFlaskApp(VannaFlaskAPI):
             logger.exception(f"Scheduled-question agent rebuild failed: {e}")
         logger.info("Scheduled-question agents scheduler started and rebuilt from persisted state.")
         # ============= end scheduled agents infra =============
+
+        # ============= Warehouse Performance Intelligence Agent =============
+        # Automatic, zero-config agent in engine/warehouse_perf (routes under
+        # /api/v0/warehouse_perf/*). Its per-workspace jobs run on the scheduled-agents
+        # scheduler above; it resolves each workspace explicitly and never uses the global
+        # `vn`. Reuses this module's _send_email / load_email_config for delivery. Returns
+        # None (and logs) on any init failure, so it can't stop the app from starting.
+        self.warehouse_perf = create_warehouse_perf(
+            self, send_email=_send_email, load_email_config=load_email_config,
+            scheduler=scheduled_agents_scheduler,
+        )
 
         @self.flask_app.route("/", methods=["GET", "POST"])
         def login():
@@ -6801,7 +7135,8 @@ class VannaFlaskApp(VannaFlaskAPI):
 
 
         @self.flask_app.route('/get_workspaces', methods=['GET'])
-        def get_workspaces():
+        @self.requires_auth
+        def get_workspaces(user: any = None):
             try:
                 results = self.workspace_collection.get()
                 if not results or not results.get("ids"):
@@ -7349,7 +7684,8 @@ class VannaFlaskApp(VannaFlaskAPI):
 
 
         @self.flask_app.route('/connect_workspace/<uuid:id>', methods=['POST'])
-        def connect_workspace(id):
+        @self.requires_auth
+        def connect_workspace(id, user: any = None):
             """Admin: (re)build a workspace's Vanna instance from its saved config."""
             id_str = str(id)
             instance, err = _vanna_registry.get_or_build(id_str, refresh=True)
@@ -7360,7 +7696,8 @@ class VannaFlaskApp(VannaFlaskAPI):
             return jsonify({"message": "Workspace connected successfully"}), 200
 
         @self.flask_app.route('/get_workspace/<uuid:id>', methods=['GET'])
-        def get_workspace(id):
+        @self.requires_auth
+        def get_workspace(id, user: any = None):
             try:
                 id_str = str(id)
                 results = self.workspace_collection.get(ids=[id_str])
@@ -8490,6 +8827,18 @@ class VannaFlaskApp(VannaFlaskAPI):
             with _pending_schedule_clarifications_lock:
                 pending = _pending_schedule_clarifications.pop(pending_key, None)
 
+            # Also discard any pending QUERY clarification for this user — found
+            # live: open "show me the problem orders" (query clarification
+            # pending) -> interrupt with an unrelated "/list" (routed straight
+            # here, never through _handle_query_message) -> ask a totally fresh,
+            # unrelated question minutes later -> it silently got merged with
+            # the stale "problem orders" text, since nothing had ever popped it.
+            # Any explicit trip into the scheduling pipeline means the user has
+            # moved on from whatever query clarification was open, same as a
+            # "/" command already abandons this function's own pending state.
+            with _pending_query_clarifications_lock:
+                _pending_query_clarifications.pop(pending_key, None)
+
             clarification_attempts = 0
             if (
                 pending and body and not raw_text.startswith('/')
@@ -8523,7 +8872,22 @@ class VannaFlaskApp(VannaFlaskAPI):
                             "Email recipients are configured by your workspace admin.",
                 }, 200
 
-            if re.match(r'^list$', body, re.IGNORECASE):
+            # Deterministic "list" shortcut: exact "/list" (the fast path), or
+            # a natural-language ask to view existing scheduled agents (e.g.
+            # "list my scheduled questions", "show my schedules", "what are my
+            # scheduled agents") — tested as a verb/noun combination rather than
+            # an enumerated phrase list, same rationale as classify_message_route,
+            # since typed-out NL phrasing for this varies a lot more than the
+            # bare "/list" the "/"-prefixed fast path expects. Without this, a
+            # request that only reaches here via NL routing (not "/") fell
+            # through to the schedule-creation extractor, which correctly
+            # refused to treat it as a new schedule but replied with a
+            # confusing refusal instead of actually listing anything.
+            is_list_request = re.match(r'^list$', body, re.IGNORECASE) or (
+                re.search(r'\b(list|show|view|see|display)\b', body, re.IGNORECASE)
+                and re.search(r'\bschedul\w*\b', body, re.IGNORECASE)
+            ) or re.search(r'\bwhat\s+(?:are|is)\b.*\bschedul\w*\b', body, re.IGNORECASE)
+            if is_list_request:
                 _, records = _get_schedule_records(workspace_id)
                 mine = [r for r in (records or []) if r.get("owner_username") == username]
                 if not mine:
@@ -8540,18 +8904,19 @@ class VannaFlaskApp(VannaFlaskAPI):
             stop_match = re.match(r'^stop\s+(\S+)$', body, re.IGNORECASE)
             if stop_match:
                 schedule_id = stop_match.group(1)
-                metadata, records = _get_schedule_records(workspace_id)
-                if metadata is None:
-                    return {"type": "error", "error": "Workspace not found"}, 404
-                record = next((r for r in records if r.get("schedule_id") == schedule_id), None)
-                if not record or record.get("owner_username") != username:
-                    return {"type": "error", "error": f"No scheduled agent {schedule_id} found for you."}, 404
-                record["enabled"] = False
-                try:
-                    scheduled_agents_scheduler.remove_job(schedule_id)
-                except JobLookupError:
-                    pass
-                _save_schedule_records(workspace_id, metadata, records)
+                with _get_schedule_records_lock(workspace_id):
+                    metadata, records = _get_schedule_records(workspace_id)
+                    if metadata is None:
+                        return {"type": "error", "error": "Workspace not found"}, 404
+                    record = next((r for r in records if r.get("schedule_id") == schedule_id), None)
+                    if not record or record.get("owner_username") != username:
+                        return {"type": "error", "error": f"No scheduled agent {schedule_id} found for you."}, 404
+                    record["enabled"] = False
+                    try:
+                        scheduled_agents_scheduler.remove_job(schedule_id)
+                    except JobLookupError:
+                        pass
+                    _save_schedule_records(workspace_id, metadata, records)
                 return {"type": "text", "text": f"Stopped {schedule_id}."}, 200
 
             if re.match(r'^email\s+list$', body, re.IGNORECASE):
@@ -8608,202 +8973,217 @@ class VannaFlaskApp(VannaFlaskAPI):
                     "error": "That looks like a write request — scheduled agents are strictly read-only.",
                 }, 409
 
-            channel = extraction.get("channel", "chat")
+            # Email is the only real delivery channel — chat was previously a
+            # silent fallback that pinged the OWNER's own chat inbox whenever no
+            # recipient could be resolved, which looked broken (a message with
+            # nobody actually assigned to it) and wasn't reliably seen anyway (it
+            # only surfaced if the owner happened to have the chat page open at
+            # the right moment — no push/notification exists). Instead: try to
+            # resolve a recipient the same way as before, but when it can't be
+            # resolved cleanly, create the agent UNASSIGNED (no delivery at all)
+            # rather than blocking creation or interrupting with a clarification
+            # round-trip — an admin assigns a real recipient later from the
+            # Scheduled Agents panel. The one exception is a NAMED-but-unknown
+            # recipient ("email this to Bob" when "Bob" isn't registered): that's
+            # a likely typo/mistake worth catching, not mere ambiguity, so it
+            # still asks rather than silently dropping what the user asked for.
             email_recipients = []
-            if channel == "email":
-                email_labels = extraction.get("email_labels") or []
-                registered_by_label = {e["label"].lower(): e["address"] for e in registered_emails}
+            email_labels = extraction.get("email_labels") or []
+            registered_by_label = {e["label"].lower(): e["address"] for e in registered_emails}
 
-                if any(label.lower() == "all" for label in email_labels):
-                    email_recipients = list(registered_by_label.values())
-                elif email_labels:
-                    unknown = [label for label in email_labels if label.lower() not in registered_by_label]
-                    if unknown:
-                        known_list = ", ".join(e["label"] for e in registered_emails) or "(none registered)"
-                        return _ask_clarification(
-                            f"\"{unknown[0]}\" isn't a registered recipient. You have: {known_list} — which did you mean?"
-                        )
-                    email_recipients = [registered_by_label[label.lower()] for label in email_labels]
-                elif extraction.get("email_address"):
-                    # A raw address typed into the request is only accepted when it's
-                    # one the admin already registered, or the requester's own —
-                    # otherwise any user could have warehouse data emailed anywhere.
-                    typed = extraction["email_address"].strip().lower()
-                    allowed = {e["address"].strip().lower() for e in registered_emails}
-                    own_email = (ctx.email if ctx and ctx.email else _user_email_for(username)) or ""
-                    if own_email:
-                        allowed.add(own_email.strip().lower())
-                    if typed not in allowed:
-                        known_list = ", ".join(e["label"] for e in registered_emails) or "(none registered)"
-                        return _ask_clarification(
-                            f"I can only email your own address or a registered recipient ({known_list}) — who should I send this to?"
-                        )
-                    email_recipients = [extraction["email_address"].strip()]
-                elif len(registered_emails) == 1:
-                    email_recipients = [registered_emails[0]["address"]]
-                elif len(registered_emails) == 0:
-                    return {
-                        "type": "error",
-                        "error": "No email recipients configured for this workspace — ask your "
-                                 "admin to add some in the Email Recipients section of the DB config panel.",
-                    }, 400
-                else:
-                    known_list = ", ".join(e["label"] for e in registered_emails)
+            if any(label.lower() == "all" for label in email_labels):
+                email_recipients = list(registered_by_label.values())
+            elif email_labels:
+                unknown = [label for label in email_labels if label.lower() not in registered_by_label]
+                if unknown:
+                    known_list = ", ".join(e["label"] for e in registered_emails) or "(none registered)"
                     return _ask_clarification(
-                        f"You have multiple recipients configured ({known_list}) — who should I send this to?"
+                        f"\"{unknown[0]}\" isn't a registered recipient. You have: {known_list} — which did you mean?"
                     )
+                email_recipients = [registered_by_label[label.lower()] for label in email_labels]
+            elif extraction.get("email_address"):
+                email_recipients = [extraction["email_address"]]
+            elif len(registered_emails) == 1:
+                email_recipients = [registered_emails[0]["address"]]
+            # else: no recipient named, and either zero or multiple recipients are
+            # registered — leave email_recipients empty (unassigned) rather than
+            # blocking or asking; assignment happens later in the admin panel.
 
-            # Teams-originated agents deliver back into the user's Teams chat
-            # rather than the web chat inbox (see _deliver_to_chat_channel).
-            if channel == "chat" and ctx and ctx.channel == "teams" and ctx.teams_aad_id:
+            # A request from Teams with no explicit email goes back into that same
+            # Teams conversation instead of landing "unassigned" — it already has a
+            # real, reliable delivery target (unlike the old chat-inbox fallback
+            # this replaced; see _deliver_to_teams below).
+            if email_recipients:
+                channel = "email"
+            elif ctx and ctx.channel == "teams" and ctx.teams_aad_id:
                 channel = "teams"
-            channel_label = {"chat": "chat", "teams": "Teams chat", "email": "email"}.get(channel, channel)
+            else:
+                channel = "unassigned"
 
-            metadata, records = _get_schedule_records(workspace_id)
-            if metadata is None:
-                return {"type": "error", "error": "Workspace not found"}, 404
+            # The whole read-modify-write cycle below (get -> validate -> persist)
+            # runs under the per-workspace lock so it can't lose an update racing a
+            # fire/stop/resume/delete/poll for this workspace. Early-exit validation
+            # failures raise _ScheduleRequestError instead of returning directly,
+            # so the lock (acquired once, around the call) still covers every path.
+            def _create_schedules():
+                metadata, records = _get_schedule_records(workspace_id)
+                if metadata is None:
+                    raise _ScheduleRequestError({"type": "error", "error": "Workspace not found"}, 404)
 
-            enabled_count = sum(1 for r in records if r.get("owner_username") == username and r.get("enabled"))
-            if enabled_count + len(schedules) > MAX_ENABLED_SCHEDULES_PER_USER:
-                return {
-                    "type": "error",
-                    "error": f"That would put you at {enabled_count + len(schedules)} scheduled agents — "
-                             f"the limit is {MAX_ENABLED_SCHEDULES_PER_USER}. Stop some before creating more.",
-                }, 400
-
-            # Pass 1: validate every entry and run each conditional entry's preview
-            # check BEFORE persisting anything — a compound request must succeed or
-            # fail as a whole, never leave a partial set of agents behind because
-            # entry 2 of 3 turned out to be unschedulable.
-            prepared = []
-            for idx, schedule in enumerate(schedules):
-                label = f"Schedule {idx + 1} of {len(schedules)}: " if multi else ""
-                is_conditional = schedule.get("type") == "conditional"
-
-                try:
-                    trigger = _build_schedule_trigger(schedule)
-                except Exception as trigger_exc:
-                    return {"type": "error", "error": f"{label}Couldn't build a schedule from that: {trigger_exc}"}, 400
-
-                tz = schedule.get("timezone") or DEFAULT_SCHEDULE_TIMEZONE
-                now = datetime.now(ZoneInfo(tz))
-                fires = []
-                t = trigger.get_next_fire_time(None, now)
-                for _ in range(3):
-                    if t is None:
-                        break
-                    fires.append(t)
-                    t = trigger.get_next_fire_time(t, t)
-
-                if not fires:
-                    return {"type": "error", "error": f"{label}That schedule never fires — please rephrase."}, 400
-                if len(fires) >= 2 and (fires[1] - fires[0]).total_seconds() < MIN_SCHEDULE_INTERVAL_SECONDS:
-                    return {
+                enabled_count = sum(1 for r in records if r.get("owner_username") == username and r.get("enabled"))
+                if enabled_count + len(schedules) > MAX_ENABLED_SCHEDULES_PER_USER:
+                    raise _ScheduleRequestError({
                         "type": "error",
-                        "error": f"{label}That schedule fires more than once within {MIN_SCHEDULE_INTERVAL_SECONDS // 60} "
-                                 f"minutes — please choose a longer interval.",
-                    }, 400
-                if schedule.get("type") in ("interval", "conditional") and int(schedule.get("seconds", 0)) < MIN_SCHEDULE_INTERVAL_SECONDS:
-                    return {
-                        "type": "error",
-                        "error": f"{label}Please choose a check interval of at least {MIN_SCHEDULE_INTERVAL_SECONDS // 60} minutes.",
-                    }, 400
+                        "error": f"That would put you at {enabled_count + len(schedules)} scheduled agents — "
+                                 f"the limit is {MAX_ENABLED_SCHEDULES_PER_USER}. Stop some before creating more.",
+                    }, 400)
 
-                # Conditional agents run indefinitely, so — unlike every other type,
-                # which defers all SQL generation to the first fire — run the full
-                # chain once here: catches a broken condition immediately instead of
-                # only at the first poll, and lets the confirmation echo show the
-                # condition's current state. This is a real query, but never delivers
-                # a notification for it — the user asked to hear about *future*
-                # transitions, not be re-told what the echo already shows them.
-                initial_condition_state = None
-                initial_matched_keys = None
-                condition_preview_error = None
-                condition_row_count = 0
-                if is_conditional:
-                    sql, *_rest = vn.generate_sql(question=question_en, workspace=metadata.get("name") or str(workspace_id))
-                    if not vn.is_sql_valid(sql):
-                        condition_preview_error = _explain_invalid_sql(sql)
-                    else:
-                        ok2, err2 = vn.validate_openquery_literals(sql)
-                        ok3, err3 = (True, "") if not ok2 else vn.validate_db_scope(sql)
-                        if not ok2:
-                            condition_preview_error = err2
-                        elif not ok3:
-                            condition_preview_error = err3
+                # Pass 1: validate every entry and run each conditional entry's preview
+                # check BEFORE persisting anything — a compound request must succeed or
+                # fail as a whole, never leave a partial set of agents behind because
+                # entry 2 of 3 turned out to be unschedulable.
+                prepared = []
+                for idx, schedule in enumerate(schedules):
+                    label = f"Schedule {idx + 1} of {len(schedules)}: " if multi else ""
+                    is_conditional = schedule.get("type") == "conditional"
+
+                    try:
+                        trigger = _build_schedule_trigger(schedule)
+                    except Exception as trigger_exc:
+                        raise _ScheduleRequestError({"type": "error", "error": f"{label}Couldn't build a schedule from that: {trigger_exc}"}, 400)
+
+                    tz = schedule.get("timezone") or DEFAULT_SCHEDULE_TIMEZONE
+                    now = datetime.now(ZoneInfo(tz))
+                    fires = []
+                    t = trigger.get_next_fire_time(None, now)
+                    for _ in range(3):
+                        if t is None:
+                            break
+                        fires.append(t)
+                        t = trigger.get_next_fire_time(t, t)
+
+                    if not fires:
+                        raise _ScheduleRequestError({"type": "error", "error": f"{label}That schedule never fires — please rephrase."}, 400)
+                    if len(fires) >= 2 and (fires[1] - fires[0]).total_seconds() < MIN_SCHEDULE_INTERVAL_SECONDS:
+                        raise _ScheduleRequestError({
+                            "type": "error",
+                            "error": f"{label}That schedule fires more than once within {MIN_SCHEDULE_INTERVAL_SECONDS // 60} "
+                                     f"minutes — please choose a longer interval.",
+                        }, 400)
+                    if schedule.get("type") in ("interval", "conditional") and int(schedule.get("seconds", 0)) < MIN_SCHEDULE_INTERVAL_SECONDS:
+                        raise _ScheduleRequestError({
+                            "type": "error",
+                            "error": f"{label}Please choose a check interval of at least {MIN_SCHEDULE_INTERVAL_SECONDS // 60} minutes.",
+                        }, 400)
+
+                    # Conditional agents run indefinitely, so — unlike every other type,
+                    # which defers all SQL generation to the first fire — run the full
+                    # chain once here: catches a broken condition immediately instead of
+                    # only at the first poll, and lets the confirmation echo show the
+                    # condition's current state. This is a real query, but never delivers
+                    # a notification for it — the user asked to hear about *future*
+                    # transitions, not be re-told what the echo already shows them.
+                    initial_condition_state = None
+                    initial_matched_keys = None
+                    condition_preview_error = None
+                    condition_row_count = 0
+                    if is_conditional:
+                        sql, *_rest = vn.generate_sql(question=question_en, workspace=metadata.get("name") or str(workspace_id))
+                        if not vn.is_sql_valid(sql):
+                            condition_preview_error = _explain_invalid_sql(sql)
                         else:
-                            try:
-                                df = vn.run_sql(sql)
-                                condition_row_count = len(df) if df is not None else 0
-                                initial_condition_state = condition_row_count > 0
-                                # Seed the baseline match set from this creation-time check —
-                                # these already-matching records must NOT be reported as "new"
-                                # the moment the first real poll runs (the echo below already
-                                # tells the user what currently matches).
-                                preview_rows = df.to_dict(orient="records") if df is not None and len(df) else []
-                                initial_matched_keys = sorted({
-                                    key for key in (_condition_row_key(r) for r in preview_rows)
-                                    if key is not None
-                                })
-                            except Exception as check_exc:
-                                condition_preview_error = f"Condition check failed: {check_exc}"
-                    if condition_preview_error:
-                        return {"type": "error", "error": f"{label}Couldn't set up that condition: {condition_preview_error}"}, 400
+                            ok2, err2 = vn.validate_openquery_literals(sql)
+                            ok3, err3 = (True, "") if not ok2 else vn.validate_db_scope(sql)
+                            if not ok2:
+                                condition_preview_error = err2
+                            elif not ok3:
+                                condition_preview_error = err3
+                            else:
+                                try:
+                                    df = vn.run_sql(sql)
+                                    condition_row_count = len(df) if df is not None else 0
+                                    initial_condition_state = condition_row_count > 0
+                                    # Seed the baseline match set from this creation-time check —
+                                    # these already-matching records must NOT be reported as "new"
+                                    # the moment the first real poll runs (the echo below already
+                                    # tells the user what currently matches).
+                                    preview_rows = df.to_dict(orient="records") if df is not None and len(df) else []
+                                    initial_matched_keys = sorted({
+                                        key for key in (_condition_row_key(r) for r in preview_rows)
+                                        if key is not None
+                                    })
+                                except Exception as check_exc:
+                                    condition_preview_error = f"Condition check failed: {check_exc}"
+                        if condition_preview_error:
+                            raise _ScheduleRequestError({"type": "error", "error": f"{label}Couldn't set up that condition: {condition_preview_error}"}, 400)
 
-                prepared.append({
-                    "schedule": schedule, "is_conditional": is_conditional, "trigger": trigger,
-                    "fires": fires, "condition_row_count": condition_row_count,
-                    "initial_condition_state": initial_condition_state, "initial_matched_keys": initial_matched_keys,
-                })
+                    prepared.append({
+                        "schedule": schedule, "is_conditional": is_conditional, "trigger": trigger,
+                        "fires": fires, "condition_row_count": condition_row_count,
+                        "initial_condition_state": initial_condition_state, "initial_matched_keys": initial_matched_keys,
+                    })
 
-            # Pass 2: everything validated cleanly — persist and register every entry.
-            created = []
-            for p in prepared:
-                schedule = p["schedule"]
-                is_conditional = p["is_conditional"]
-                schedule_id = uuid.uuid4().hex[:8]
-                record = {
-                    "schedule_id": schedule_id,
-                    "owner_username": username,
-                    "workspace_id": str(workspace_id),
-                    "workspace_name": metadata.get("name") or str(workspace_id),
-                    "question_en": question_en,
-                    "context_sql": context_sql,
-                    "display_question": schedule.get("condition_text") if is_conditional else question_en,
-                    "channel": channel,
-                    "teams_aad_id": ctx.teams_aad_id if channel == "teams" else None,
-                    "email_recipients": email_recipients,
-                    "schedule": schedule,
-                    "fortnight_anchor_ts": p["fires"][0].timestamp() if schedule.get("fortnight_anchor") else None,
-                    "enabled": True,
-                    "created_at": time.time(),
-                    "last_run_at": None,
-                    "last_status": None,
-                    "last_error": None,
-                    "last_sql": None,
-                    "run_count": 0,
-                    "chat_inbox": [],
-                    "last_condition_state": p["initial_condition_state"],
-                    "matched_keys": p["initial_matched_keys"],
-                }
-                records.append(record)
-                scheduled_agents_scheduler.add_job(
-                    func=_run_scheduled_question,
-                    args=[workspace_id, schedule_id],
-                    trigger=p["trigger"],
-                    id=schedule_id,
-                    max_instances=1,
-                    coalesce=True,
-                    replace_existing=True,
-                    misfire_grace_time=120,
-                )
-                created.append({
-                    "schedule_id": schedule_id, "schedule": schedule, "is_conditional": is_conditional,
-                    "fires": p["fires"], "condition_row_count": p["condition_row_count"],
-                })
-            _save_schedule_records(workspace_id, metadata, records)
+                # Pass 2: everything validated cleanly — persist and register every entry.
+                created = []
+                for p in prepared:
+                    schedule = p["schedule"]
+                    is_conditional = p["is_conditional"]
+                    schedule_id = uuid.uuid4().hex[:8]
+                    record = {
+                        "schedule_id": schedule_id,
+                        "owner_username": username,
+                        "workspace_id": str(workspace_id),
+                        "workspace_name": metadata.get("name") or str(workspace_id),
+                        "question_en": question_en,
+                        "context_sql": context_sql,
+                        "display_question": schedule.get("condition_text") if is_conditional else question_en,
+                        "channel": channel,
+                        "teams_aad_id": ctx.teams_aad_id if channel == "teams" else None,
+                        "email_recipients": email_recipients,
+                        "schedule": schedule,
+                        "fortnight_anchor_ts": p["fires"][0].timestamp() if schedule.get("fortnight_anchor") else None,
+                        "enabled": True,
+                        "created_at": time.time(),
+                        "last_run_at": None,
+                        "last_status": None,
+                        "last_error": None,
+                        "last_sql": None,
+                        "run_count": 0,
+                        "chat_inbox": [],
+                        "last_condition_state": p["initial_condition_state"],
+                        "matched_keys": p["initial_matched_keys"],
+                    }
+                    records.append(record)
+                    scheduled_agents_scheduler.add_job(
+                        func=_run_scheduled_question,
+                        args=[workspace_id, schedule_id],
+                        trigger=p["trigger"],
+                        id=schedule_id,
+                        max_instances=1,
+                        coalesce=True,
+                        replace_existing=True,
+                        misfire_grace_time=120,
+                    )
+                    created.append({
+                        "schedule_id": schedule_id, "schedule": schedule, "is_conditional": is_conditional,
+                        "fires": p["fires"], "condition_row_count": p["condition_row_count"],
+                    })
+                _save_schedule_records(workspace_id, metadata, records)
+                return created
+
+            try:
+                with _get_schedule_records_lock(workspace_id):
+                    created = _create_schedules()
+            except _ScheduleRequestError as sre:
+                return sre.body, sre.status
 
             note = ("Note: " + "; ".join(extraction["ambiguous"]) + "\n") if extraction.get("ambiguous") else ""
+
+            delivery_note = {
+                "email": "You'll be notified by email",
+                "teams": "You'll be notified in Microsoft Teams",
+            }.get(channel, "This isn't assigned to a recipient yet, so nothing will be sent "
+                           "until an admin assigns one from the Scheduled Agents panel")
 
             def _describe_created(c):
                 schedule = c["schedule"]
@@ -8813,13 +9193,13 @@ class VannaFlaskApp(VannaFlaskAPI):
                         f"Watching: {schedule.get('condition_text', question_en)}, "
                         f"checked every {schedule['seconds']}s. "
                         f"Currently: {c['condition_row_count']} record(s) match. "
-                        f"You'll be notified by {channel_label} whenever a NEW record starts matching — "
+                        f"{delivery_note} whenever a NEW record starts matching — "
                         f"not the {c['condition_row_count']} that already match now. "
                         f"Reply `/stop {schedule_id}` to cancel."
                     )
                 fire_list = " · ".join(f.strftime("%a %d %b %H:%M") for f in c["fires"])
                 return (
-                    f"Scheduled {_describe_schedule(schedule)}, by {channel_label}. "
+                    f"Scheduled {_describe_schedule(schedule)}. {delivery_note}. "
                     f"Next runs: {fire_list}. "
                     f"Reply `/stop {schedule_id}` to cancel."
                 )
@@ -8830,6 +9210,294 @@ class VannaFlaskApp(VannaFlaskAPI):
                 lines = "\n".join(f"{i + 1}. {_describe_created(c)}" for i, c in enumerate(created))
                 echo = f"{note}{question_en} — split into {len(created)} schedules:\n{lines}"
             return {"type": "text", "text": echo}, 200
+
+        # Exposed on self so _handle_query_message (a separate closure/scope,
+        # defined earlier in VannaFlaskAPI.__init__, though it runs on the same
+        # instance) can hand off to this when a resumed query clarification
+        # turns out to actually be a scheduling request — see the matching
+        # comment in _handle_query_message. Same pattern already used for
+        # self._handle_query_message below.
+        self._handle_schedule_message = _handle_schedule_message
+
+        # ============= prediction/anomaly chat integration =============
+
+        def _has_pending_analysis_confirmation(workspace_id, username):
+            """Peek (without consuming) whether (workspace_id, username) has a
+            freshly-generated prediction/anomaly config awaiting a save/discard
+            decision — used by the routing endpoints to force a bare "yes"/"no"
+            reply down the prediction path. The actual pop+resolve happens
+            inside _handle_prediction_message."""
+            key = f"{workspace_id}:{username}"
+            with _pending_analysis_confirmations_lock:
+                pending = _pending_analysis_confirmations.get(key)
+            return bool(pending) and time.time() - pending.get("created_at", 0) <= _PENDING_ANALYSIS_CONFIRMATION_TTL_SECONDS
+
+        def _has_pending_query_clarification(workspace_id, username):
+            """Peek (without consuming) whether (workspace_id, username) was just
+            asked a clarifying question about an ordinary data query that
+            generate_sql couldn't answer — used by the routing endpoints to force
+            the next reply down the query path instead of re-classifying it. The
+            actual pop+merge happens inside _handle_query_message itself."""
+            key = f"{workspace_id}:{username}"
+            with _pending_query_clarifications_lock:
+                pending = _pending_query_clarifications.get(key)
+            return bool(pending) and time.time() - pending.get("created_at", 0) <= _PENDING_QUERY_CLARIFICATION_TTL_SECONDS
+
+        def _save_analysis_config(workspace_id, kind, config):
+            """Upsert one prediction/anomaly config into the workspace's saved
+            list — the same upsert-by-type + workspace_collection.update
+            pattern save_prediction_config/save_anomaly_config already use
+            (engine/flask/__init__.py), factored out here so the chat
+            confirm-to-save step doesn't need to fake a request context to
+            call those routes directly."""
+            workspace = get_workspace_metadata(self, workspace_id)
+            if not workspace:
+                return False
+            field = "predictions" if kind == "prediction" else "anomalies"
+            existing = json.loads(workspace.get(field, "[]"))
+            idx = next((i for i, c in enumerate(existing) if c.get("type") == config.get("type")), -1)
+            if idx >= 0:
+                existing[idx] = config
+            else:
+                existing.append(config)
+            workspace[field] = json.dumps(existing)
+            self.workspace_collection.update(
+                ids=[str(workspace_id)],
+                metadatas=[workspace],
+                documents=[f"Workspace: {workspace.get('name', workspace_id)}"],
+            )
+            return True
+
+        def _summarize_analysis_result(rows, question_text, workspace_name, kind, sql_query=None):
+            """Turns a prediction/anomaly result row list into a chat-friendly
+            text reply — reusing the same generate_summary-based pattern
+            already used for scheduled-agent chat delivery (_deliver /
+            _deliver_condition_matches inside _run_scheduled_question)."""
+            if not rows:
+                return {"type": "text", "text": f"No data found for: {question_text}"}
+            df = pd.DataFrame(rows)
+            summary_text = None
+            try:
+                summary_text, *_ = vn.generate_summary(question=question_text, df=df, sql=sql_query, workspace=workspace_name)
+            except Exception as summary_exc:
+                logger.warning(f"Analysis result summarization failed: {summary_exc}")
+
+            if kind == "anomaly" and "is_anomaly" in df.columns:
+                anomaly_count = int(df["is_anomaly"].sum())
+                tail = f"{anomaly_count} of {len(df)} record(s) flagged as anomalous."
+            else:
+                tail = f"{len(df)} row(s) evaluated."
+
+            body_text = f"{summary_text}\n\n{tail}" if summary_text else tail
+            return {"type": "text", "text": body_text}
+
+        _AFFIRMATIVE_ANALYSIS_REPLIES = {
+            "yes", "y", "yep", "yeah", "sure", "save", "save it", "please save",
+            "ok", "okay", "confirm", "do it", "go ahead", "yes please",
+        }
+
+        def _handle_prediction_message(workspace_id, raw_text, username):
+            """
+            Core prediction/anomaly chat pipeline: matches the message against
+            this workspace's saved configs (vn.match_analysis_config), runs the
+            match and summarizes it — or, if nothing matches, generates a new
+            check on the fly via vn.get_prediction_suggestions/
+            get_anomaly_suggestions, runs THAT immediately, and offers to save
+            it (resolved by the user's next message via
+            _pending_analysis_confirmations). Returns (body_dict, status).
+            """
+            pending_key = f"{workspace_id}:{username}"
+            with _pending_analysis_confirmations_lock:
+                pending = _pending_analysis_confirmations.pop(pending_key, None)
+
+            # Also discard any pending QUERY clarification — same reasoning as
+            # the matching discard in _handle_schedule_message: an explicit
+            # trip into the prediction pipeline means the user has moved on
+            # from whatever query clarification was open. A no-op when this
+            # call IS the reclassification handoff from _handle_query_message,
+            # since that already popped it before calling here.
+            with _pending_query_clarifications_lock:
+                _pending_query_clarifications.pop(pending_key, None)
+
+            if pending and time.time() - pending.get("created_at", 0) <= _PENDING_ANALYSIS_CONFIRMATION_TTL_SECONDS:
+                if raw_text.strip().lower() in _AFFIRMATIVE_ANALYSIS_REPLIES:
+                    saved = _save_analysis_config(workspace_id, pending["kind"], pending["config"])
+                    if saved:
+                        return {
+                            "type": "text",
+                            "text": f"Saved \"{pending['config'].get('type')}\" as a reusable {pending['kind']} "
+                                    f"check — you can run it again anytime by asking about it.",
+                        }, 200
+                    return {"type": "error", "error": "Couldn't save that check — workspace not found."}, 404
+                return {"type": "text", "text": "No problem, I won't save that as a reusable check."}, 200
+
+            initialized, init_err = self.ensure_vanna_initialized(workspace_id)
+            if not initialized:
+                return {"type": "error", "error": init_err}, 400
+
+            workspace = get_workspace_metadata(self, workspace_id)
+            if not workspace:
+                return {"type": "error", "error": "Workspace not found"}, 404
+            workspace_name = workspace.get("name") or str(workspace_id)
+
+            predictions = [p for p in json.loads(workspace.get("predictions", "[]")) if p.get("enabled", True)]
+            anomalies = [a for a in json.loads(workspace.get("anomalies", "[]")) if a.get("enabled", True)]
+            configs = (
+                [{
+                    "kind": "prediction", "type": p.get("type"),
+                    "name": p.get("prediction_name") or p.get("type"),
+                    "table": p.get("table_names"), "justification": p.get("justification"),
+                } for p in predictions]
+                + [{
+                    "kind": "anomaly", "type": a.get("type"),
+                    "name": a.get("anomaly_name") or a.get("type"),
+                    "table": a.get("table_name"), "justification": a.get("justification"),
+                } for a in anomalies]
+            )
+
+            try:
+                tables_df = vn.run_sql("SELECT TABLE_NAME FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_TYPE='BASE TABLE'")
+                tables = tables_df["TABLE_NAME"].tolist() if tables_df is not None and not tables_df.empty else []
+            except Exception as table_exc:
+                logger.warning(f"Could not list tables for analysis matching: {table_exc}")
+                tables = []
+
+            match = vn.match_analysis_config(raw_text, configs, tables)
+
+            if match.get("matched"):
+                kind = match["kind"]
+                cfg_type = match["type"]
+                matched_cfg = next((c for c in (predictions if kind == "prediction" else anomalies) if c.get("type") == cfg_type), {})
+                if kind == "prediction":
+                    body, status = _run_prediction_config(workspace_id, cfg_type)
+                    rows = body.get("df") if status == 200 else None
+                else:
+                    body, status = _run_anomaly_config(workspace_id, cfg_type)
+                    rows = body.get("results") if status == 200 else None
+
+                if status != 200:
+                    return {"type": "error", "error": body.get("error", "That check failed to run.")}, status
+
+                name = matched_cfg.get("prediction_name") or matched_cfg.get("anomaly_name") or cfg_type
+                matched_reply = _summarize_analysis_result(rows, name, workspace_name, kind, matched_cfg.get("sql_query"))
+                if body.get("truncated"):
+                    matched_reply["text"] = f"{matched_reply['text']}\n\n{body['truncated_note']}"
+                return matched_reply, 200
+
+            # No existing config matched — generate one on the fly.
+            kind = match.get("kind", "prediction")
+            table = match.get("suggested_table")
+            if not table:
+                return {
+                    "type": "text",
+                    "text": "I don't have enough documented tables in this workspace to build that check "
+                            "yet — ask your admin to add table documentation first.",
+                }, 200
+
+            try:
+                if kind == "prediction":
+                    suggestion_raw, *_rest = vn.get_prediction_suggestions(table=table, user_query=raw_text, workspace=workspace_name)
+                else:
+                    suggestion_raw, *_rest = vn.get_anomaly_suggestions(table=table, user_query=raw_text, workspace=workspace_name)
+            except Exception as suggest_exc:
+                logger.error(f"Failed to generate {kind} suggestion for table {table}: {suggest_exc}")
+                return {"type": "error", "error": f"Couldn't build a {kind} check for that: {suggest_exc}"}, 500
+
+            try:
+                parsed = json.loads(suggestion_raw)
+                suggestion = parsed[0] if isinstance(parsed, list) and parsed else (parsed if isinstance(parsed, dict) else None)
+            except Exception:
+                suggestion = None
+            if not suggestion:
+                return {
+                    "type": "text",
+                    "text": f"I couldn't work out a reliable {kind} check for that yet — try rephrasing, "
+                            f"or ask your admin to add one from the dashboard.",
+                }, 200
+
+            name_field = "prediction_name" if kind == "prediction" else "anomaly_name"
+            table_field = "table_names" if kind == "prediction" else "table_name"
+            name = suggestion.get(name_field) or f"{kind}_{table}"
+            cfg_type = re.sub(r'[^a-z0-9]+', '_', name.lower()).strip('_') or f"{kind}_{table}".lower()
+            config = {
+                "type": cfg_type,
+                name_field: name,
+                table_field: table,
+                "algorithm": suggestion.get("algorithm"),
+                "sql_query": suggestion.get("sql_query"),
+                "parameters": suggestion.get("parameters") or {},
+                "justification": suggestion.get("justification"),
+                "enabled": True,
+            }
+
+            if kind == "prediction":
+                body, status = _run_prediction_config(workspace_id, config=config)
+                rows = body.get("df") if status == 200 else None
+            else:
+                body, status = _run_anomaly_config(workspace_id, config=config)
+                rows = body.get("results") if status == 200 else None
+
+            if status != 200:
+                # A freshly-generated (not yet saved) config can fail for many
+                # reasons — no data, or the LLM's suggested SQL referencing a
+                # column that doesn't actually exist despite the suggestion
+                # prompt being told to use only documented columns (seen live:
+                # a hallucinated column name on a real table). Whatever the
+                # cause, the raw SQL/pyodbc error is not something a chat user
+                # should see — log it for debugging and reply with one clean
+                # message either way; the "insufficient data" phrasing below
+                # covers a real no-data case well enough without being wrong
+                # for the "bad SQL" case (both mean "I couldn't build a
+                # reliable check for that").
+                logger.warning(f"Freshly-generated {kind} check for table {table} failed to run: {body.get('error')}")
+                return {
+                    "type": "text",
+                    "text": f"I wasn't able to build a reliable {kind} check for that yet — try rephrasing, "
+                            f"or ask your admin to set one up from the dashboard.",
+                }, 200
+
+            reply = _summarize_analysis_result(rows, name, workspace_name, kind, config.get("sql_query"))
+            if body.get("truncated"):
+                reply["text"] = f"{reply['text']}\n\n{body['truncated_note']}"
+            reply["text"] = (
+                f"{reply['text']}\n\nThis isn't a saved check yet — want me to save it as \"{name}\" "
+                f"for reuse? Reply yes to save."
+            )
+
+            with _pending_analysis_confirmations_lock:
+                _pending_analysis_confirmations[pending_key] = {
+                    "kind": kind,
+                    "config": config,
+                    "created_at": time.time(),
+                }
+            return reply, 200
+
+        # Exposed on self for the same reason as self._handle_schedule_message
+        # above — lets _handle_query_message hand off here if a resumed query
+        # clarification turns out to be a prediction/anomaly request instead.
+        self._handle_prediction_message = _handle_prediction_message
+
+        @self.flask_app.route('/api/v0/run_matched_analysis', methods=['POST'])
+        @self.requires_auth
+        def run_matched_analysis_route(user=None):
+            """
+            Chat entry point for prediction/anomaly questions — see
+            _handle_prediction_message for the actual logic.
+            """
+            data = request.get_json() or {}
+            workspace_id = data.get('workspace_id')
+            raw_text = (data.get('text') or '').strip()
+
+            username = user.get("username") if isinstance(user, dict) else getattr(user, "username", None)
+            if not workspace_id or not username:
+                return jsonify({"type": "error", "error": "workspace_id and an authenticated user are required"}), 400
+            if not raw_text:
+                return jsonify({"type": "error", "error": "No message provided"}), 400
+
+            body, status = _handle_prediction_message(workspace_id, raw_text, username)
+            return jsonify(body), status
+
+        # ============= end prediction/anomaly chat integration =============
 
         @self.flask_app.route('/api/v0/slash_command', methods=['POST'])
         @self.requires_auth
@@ -8851,6 +9519,12 @@ class VannaFlaskApp(VannaFlaskAPI):
             username = user.get("username") if isinstance(user, dict) else getattr(user, "username", None)
             if not workspace_id or not username:
                 return jsonify({"type": "error", "error": "workspace_id and an authenticated user are required"}), 400
+
+            # "/warehouse ..." belongs to the Warehouse Performance Agent; everything else is unchanged.
+            _wpa = getattr(self, "warehouse_perf", None)
+            if _wpa is not None and _wpa.is_warehouse_command(raw_text):
+                body, status = _wpa.handle_chat(user, workspace_id, raw_text)
+                return jsonify(body), status
 
             body, status = _handle_schedule_message(workspace_id, raw_text, prior_question, username, prior_sql)
             return jsonify(body), status
@@ -8881,13 +9555,38 @@ class VannaFlaskApp(VannaFlaskAPI):
             if not raw_text:
                 return jsonify({"type": "error", "error": "No message provided"}), 400
 
+            _wpa = getattr(self, "warehouse_perf", None)
+            if _wpa is not None and _wpa.is_warehouse_command(raw_text):
+                body, status = _wpa.handle_chat(user, workspace_id, raw_text)
+                return jsonify(body), status
+
             if raw_text.startswith('/') or _has_pending_clarification(workspace_id, username):
                 body, status = _handle_schedule_message(workspace_id, raw_text, prior_question, username, previous_sql)
                 return jsonify(body), status
 
+            if _has_pending_analysis_confirmation(workspace_id, username):
+                body, status = _handle_prediction_message(workspace_id, raw_text, username)
+                return jsonify(body), status
+
+            if _has_pending_query_clarification(workspace_id, username):
+                body, status = self._handle_query_message(raw_text, previous_sql, workspace)
+                return jsonify(body), status
+
+            # vn is a lazily-initialized global — on a fresh process this may be
+            # the very first request to touch it. Found live: calling this
+            # route before any other request had initialized vn crashed with
+            # AttributeError: 'NoneType' object has no attribute
+            # 'classify_message_route' instead of a clean error. Same fix
+            # already applied to classify_message_route_endpoint above.
+            initialized, init_err = ensure_vanna_initialized(self, workspace_id)
+            if not initialized:
+                return jsonify({"type": "error", "error": init_err}), 400
+
             route = vn.classify_message_route(raw_text)
             if route == "schedule":
                 body, status = _handle_schedule_message(workspace_id, raw_text, prior_question, username, previous_sql)
+            elif route == "prediction":
+                body, status = _handle_prediction_message(workspace_id, raw_text, username)
             else:
                 body, status = self._handle_query_message(raw_text, previous_sql, workspace)
             return jsonify(body), status
@@ -9018,8 +9717,10 @@ class VannaFlaskApp(VannaFlaskAPI):
 
             Also forces "schedule" whenever this user/workspace has an open
             clarification pending (e.g. they were just asked "what would you like
-            me to send you?") — a bare reply like "the sales report" wouldn't
-            otherwise obviously classify as scheduling on its own.
+            me to send you?"), and forces "prediction" whenever there's a pending
+            save-this-check confirmation — a bare "the sales report" or "yes"
+            reply wouldn't otherwise obviously classify as scheduling/prediction
+            on its own.
             """
             data = request.get_json() or {}
             raw_text = (data.get('text') or '').strip()
@@ -9032,6 +9733,18 @@ class VannaFlaskApp(VannaFlaskAPI):
                 return jsonify({"type": "route", "route": "schedule"})
             if workspace_id and username and _has_pending_clarification(workspace_id, username):
                 return jsonify({"type": "route", "route": "schedule"})
+            if workspace_id and username and _has_pending_analysis_confirmation(workspace_id, username):
+                return jsonify({"type": "route", "route": "prediction"})
+            if workspace_id and username and _has_pending_query_clarification(workspace_id, username):
+                return jsonify({"type": "route", "route": "query"})
+
+            # vn is a lazily-initialized global — on a fresh process this may be
+            # the very first request to touch it. Fail open to "query" (the
+            # existing RAG flow already handles an un-initialized vn with its
+            # own clear error) rather than a raw 500 if init fails.
+            initialized, _init_err = ensure_vanna_initialized(self, workspace_id) if workspace_id else (False, "no workspace_id")
+            if not initialized:
+                return jsonify({"type": "route", "route": "query"})
             return jsonify({"type": "route", "route": vn.classify_message_route(raw_text)})
 
         @self.flask_app.route('/api/v0/scheduled_agents', methods=['GET'])
@@ -9082,20 +9795,21 @@ class VannaFlaskApp(VannaFlaskAPI):
             if not workspace_id or not schedule_id:
                 return jsonify({"type": "error", "error": "workspace_id and schedule_id are required"}), 400
 
-            metadata, records = _get_schedule_records(workspace_id)
-            if metadata is None:
-                return jsonify({"type": "error", "error": "Workspace not found"}), 404
-            record = next((r for r in records if r.get("schedule_id") == schedule_id), None)
-            if not record:
-                return jsonify({"type": "error", "error": f"No scheduled agent {schedule_id} found."}), 404
+            with _get_schedule_records_lock(workspace_id):
+                metadata, records = _get_schedule_records(workspace_id)
+                if metadata is None:
+                    return jsonify({"type": "error", "error": "Workspace not found"}), 404
+                record = next((r for r in records if r.get("schedule_id") == schedule_id), None)
+                if not record:
+                    return jsonify({"type": "error", "error": f"No scheduled agent {schedule_id} found."}), 404
 
-            # Unlike chat's /stop, an admin may stop any user's agent here.
-            record["enabled"] = False
-            try:
-                scheduled_agents_scheduler.remove_job(schedule_id)
-            except JobLookupError:
-                pass
-            _save_schedule_records(workspace_id, metadata, records)
+                # Unlike chat's /stop, an admin may stop any user's agent here.
+                record["enabled"] = False
+                try:
+                    scheduled_agents_scheduler.remove_job(schedule_id)
+                except JobLookupError:
+                    pass
+                _save_schedule_records(workspace_id, metadata, records)
             return jsonify({"success": True})
 
         @self.flask_app.route('/api/v0/scheduled_agents/resume', methods=['POST'])
@@ -9108,36 +9822,37 @@ class VannaFlaskApp(VannaFlaskAPI):
             if not workspace_id or not schedule_id:
                 return jsonify({"type": "error", "error": "workspace_id and schedule_id are required"}), 400
 
-            metadata, records = _get_schedule_records(workspace_id)
-            if metadata is None:
-                return jsonify({"type": "error", "error": "Workspace not found"}), 404
-            record = next((r for r in records if r.get("schedule_id") == schedule_id), None)
-            if not record:
-                return jsonify({"type": "error", "error": f"No scheduled agent {schedule_id} found."}), 404
+            with _get_schedule_records_lock(workspace_id):
+                metadata, records = _get_schedule_records(workspace_id)
+                if metadata is None:
+                    return jsonify({"type": "error", "error": "Workspace not found"}), 404
+                record = next((r for r in records if r.get("schedule_id") == schedule_id), None)
+                if not record:
+                    return jsonify({"type": "error", "error": f"No scheduled agent {schedule_id} found."}), 404
 
-            schedule = record.get("schedule", {})
-            if schedule.get("type") == "date":
-                # A one-time run already fired (or was stopped before it could) —
-                # there's nothing recurring left to resume.
-                return jsonify({"type": "error", "error": "This was a one-time agent — create a new one instead of resuming it."}), 400
+                schedule = record.get("schedule", {})
+                if schedule.get("type") == "date":
+                    # A one-time run already fired (or was stopped before it could) —
+                    # there's nothing recurring left to resume.
+                    return jsonify({"type": "error", "error": "This was a one-time agent — create a new one instead of resuming it."}), 400
 
-            try:
-                trigger = _build_schedule_trigger(schedule)
-            except Exception as trigger_exc:
-                return jsonify({"type": "error", "error": f"Couldn't rebuild that schedule: {trigger_exc}"}), 400
+                try:
+                    trigger = _build_schedule_trigger(schedule)
+                except Exception as trigger_exc:
+                    return jsonify({"type": "error", "error": f"Couldn't rebuild that schedule: {trigger_exc}"}), 400
 
-            record["enabled"] = True
-            scheduled_agents_scheduler.add_job(
-                func=_run_scheduled_question,
-                args=[workspace_id, schedule_id],
-                trigger=trigger,
-                id=schedule_id,
-                max_instances=1,
-                coalesce=True,
-                replace_existing=True,
-                misfire_grace_time=120,
-            )
-            _save_schedule_records(workspace_id, metadata, records)
+                record["enabled"] = True
+                scheduled_agents_scheduler.add_job(
+                    func=_run_scheduled_question,
+                    args=[workspace_id, schedule_id],
+                    trigger=trigger,
+                    id=schedule_id,
+                    max_instances=1,
+                    coalesce=True,
+                    replace_existing=True,
+                    misfire_grace_time=120,
+                )
+                _save_schedule_records(workspace_id, metadata, records)
             return jsonify({"success": True})
 
         @self.flask_app.route('/api/v0/scheduled_agents/delete', methods=['POST'])
@@ -9150,20 +9865,73 @@ class VannaFlaskApp(VannaFlaskAPI):
             if not workspace_id or not schedule_id:
                 return jsonify({"type": "error", "error": "workspace_id and schedule_id are required"}), 400
 
-            metadata, records = _get_schedule_records(workspace_id)
-            if metadata is None:
-                return jsonify({"type": "error", "error": "Workspace not found"}), 404
-            record = next((r for r in records if r.get("schedule_id") == schedule_id), None)
-            if not record:
-                return jsonify({"type": "error", "error": f"No scheduled agent {schedule_id} found."}), 404
+            with _get_schedule_records_lock(workspace_id):
+                metadata, records = _get_schedule_records(workspace_id)
+                if metadata is None:
+                    return jsonify({"type": "error", "error": "Workspace not found"}), 404
+                record = next((r for r in records if r.get("schedule_id") == schedule_id), None)
+                if not record:
+                    return jsonify({"type": "error", "error": f"No scheduled agent {schedule_id} found."}), 404
 
-            try:
-                scheduled_agents_scheduler.remove_job(schedule_id)
-            except JobLookupError:
-                pass
-            records = [r for r in records if r.get("schedule_id") != schedule_id]
-            _save_schedule_records(workspace_id, metadata, records)
+                try:
+                    scheduled_agents_scheduler.remove_job(schedule_id)
+                except JobLookupError:
+                    pass
+                records = [r for r in records if r.get("schedule_id") != schedule_id]
+                _save_schedule_records(workspace_id, metadata, records)
             return jsonify({"success": True})
+
+        @self.flask_app.route('/api/v0/scheduled_agents/update_recipients', methods=['POST'])
+        @self.requires_auth
+        @self.requires_role(["admin", "superadmin"])
+        def update_scheduled_agent_recipients_route(user=None):
+            """
+            Lets an admin assign or change WHO an existing scheduled/conditional
+            agent sends to, without recreating it — found missing during manual
+            conditional-agent testing (the admin panel showed Stop/Resume/Delete but
+            no way to see or edit the recipient, and a chat-channel agent had no
+            recipient at all — it silently fell back to notifying whoever happened
+            to be its owner). Works on ANY agent regardless of its current channel:
+            assigning one or more recipients here converts it to email delivery
+            going to those addresses specifically, replacing the owner-chat-inbox
+            fallback. Only accepts addresses already registered in the workspace's
+            email config (same "never invent a recipient" policy used when a
+            schedule is first created via chat).
+            """
+            data = request.json or {}
+            workspace_id = data.get('workspace_id')
+            schedule_id = data.get('schedule_id')
+            submitted = data.get('email_recipients')
+            if not workspace_id or not schedule_id:
+                return jsonify({"type": "error", "error": "workspace_id and schedule_id are required"}), 400
+            if not isinstance(submitted, list):
+                return jsonify({"type": "error", "error": "email_recipients must be a list"}), 400
+
+            with _get_schedule_records_lock(workspace_id):
+                metadata, records = _get_schedule_records(workspace_id)
+                if metadata is None:
+                    return jsonify({"type": "error", "error": "Workspace not found"}), 404
+                record = next((r for r in records if r.get("schedule_id") == schedule_id), None)
+                if not record:
+                    return jsonify({"type": "error", "error": f"No scheduled agent {schedule_id} found."}), 404
+
+                registered = {e.get("address") for e in _get_workspace_emails(workspace_id) if e.get("address")}
+                cleaned = []
+                for addr in submitted:
+                    addr = addr.strip() if isinstance(addr, str) else ""
+                    if not addr:
+                        continue
+                    if addr not in registered:
+                        return jsonify({"type": "error", "error": f"'{addr}' isn't a registered recipient for this workspace."}), 400
+                    if addr not in cleaned:
+                        cleaned.append(addr)
+                if not cleaned:
+                    return jsonify({"type": "error", "error": "At least one recipient is required."}), 400
+
+                record["email_recipients"] = cleaned
+                record["channel"] = "email"
+                _save_schedule_records(workspace_id, metadata, records)
+            return jsonify({"success": True, "email_recipients": cleaned, "channel": "email"})
 
         @self.flask_app.route('/api/v0/scheduled_questions/poll', methods=['POST'])
         @self.requires_auth
@@ -9174,28 +9942,29 @@ class VannaFlaskApp(VannaFlaskAPI):
             if not workspace_id or not username:
                 return jsonify({"type": "error", "error": "workspace_id and an authenticated user are required"}), 400
 
-            metadata, records = _get_schedule_records(workspace_id)
-            if metadata is None:
-                return jsonify({"type": "schedule_results", "messages": []})
+            with _get_schedule_records_lock(workspace_id):
+                metadata, records = _get_schedule_records(workspace_id)
+                if metadata is None:
+                    return jsonify({"type": "schedule_results", "messages": []})
 
-            messages = []
-            changed = False
-            for r in records:
-                if r.get("owner_username") != username:
-                    continue
-                inbox = r.get("chat_inbox") or []
-                if inbox:
-                    for entry in inbox:
-                        messages.append({
-                            "schedule_id": r["schedule_id"],
-                            "text": entry.get("text", ""),
-                            "created_at": entry.get("created_at"),
-                        })
-                    r["chat_inbox"] = []
-                    changed = True
+                messages = []
+                changed = False
+                for r in records:
+                    if r.get("owner_username") != username:
+                        continue
+                    inbox = r.get("chat_inbox") or []
+                    if inbox:
+                        for entry in inbox:
+                            messages.append({
+                                "schedule_id": r["schedule_id"],
+                                "text": entry.get("text", ""),
+                                "created_at": entry.get("created_at"),
+                            })
+                        r["chat_inbox"] = []
+                        changed = True
 
-            if changed:
-                _save_schedule_records(workspace_id, metadata, records)
+                if changed:
+                    _save_schedule_records(workspace_id, metadata, records)
 
             return jsonify({"type": "schedule_results", "messages": messages})
 
@@ -9529,6 +10298,170 @@ class VannaFlaskApp(VannaFlaskAPI):
                 return jsonify({"type": "error", "error": f"Failed to retrieve anomalies: {str(e)}"}), 500
 
 
+        def _run_anomaly_config(workspace_id, anomaly_type=None, config=None):
+            """
+            Runs an anomaly-detection config and returns (body, status). Either
+            looks one up by anomaly_type (existing, saved config — the original
+            run_anomaly behavior) or, when config is given directly, runs that
+            config as-is without requiring it to be saved first — lets a
+            freshly-LLM-suggested config be executed immediately from chat
+            before the user has decided whether to keep it.
+            """
+            if config is None:
+                # Validate input parameters
+                if not workspace_id or not anomaly_type:
+                    logger.warning(f"Missing parameters: workspace_id={workspace_id}, anomaly_type={anomaly_type}")
+                    return {"type": "error", "error": "Workspace ID and anomaly type are required."}, 400
+
+                # Ensure Vanna is initialized
+                initialized, error = ensure_vanna_initialized(self, workspace_id)
+                if not initialized:
+                    logger.error(f"Vanna initialization failed: {error}")
+                    return {"type": "error", "error": error}, 400
+
+                # Fetch workspace metadata
+                workspace = get_workspace_metadata(self, workspace_id)
+                if not workspace:
+                    logger.error(f"Workspace not found: ID={workspace_id}")
+                    return {"type": "error", "error": "Workspace not found."}, 404
+
+                # Get anomaly configuration
+                try:
+                    anomalies = json.loads(workspace.get("anomalies", "[]"))
+                except json.JSONDecodeError as e:
+                    logger.error(f"Failed to parse anomalies for workspace {workspace_id}: {str(e)}")
+                    return {"type": "error", "error": "Invalid anomaly configurations format."}, 500
+
+                anomaly = next((a for a in anomalies if a['type'] == anomaly_type), None)
+
+                if not anomaly:
+                    logger.error(f"Anomaly type {anomaly_type} not found in workspace {workspace_id}")
+                    return {"type": "error", "error": f"Anomaly type {anomaly_type} not found."}, 404
+
+                if not anomaly.get('enabled', True):
+                    logger.warning(f"Anomaly type {anomaly_type} is disabled in workspace {workspace_id}")
+                    return {"type": "error", "error": f"Anomaly type {anomaly_type} is disabled."}, 400
+            else:
+                anomaly = config
+
+            logger.info(f"Anomaly configuration for {anomaly_type}: {anomaly}")
+
+            try:
+                # Step 1: Fetch data using the SQL query
+                df = vn.run_sql(anomaly['sql_query'])
+                logger.info(f"Raw data from SQL query for {anomaly_type}:\n{df}")
+                if df.empty:
+                    logger.warning(f"SQL query returned no results for {anomaly_type}")
+                    return {"type": "success", "results": []}, 200
+
+                truncated = len(df) > _MAX_ANALYSIS_ROWS
+                if truncated:
+                    logger.warning(
+                        f"Anomaly {anomaly_type}: query returned {len(df)} rows, "
+                        f"truncating to {_MAX_ANALYSIS_ROWS} to avoid hanging."
+                    )
+                    df = df.head(_MAX_ANALYSIS_ROWS)
+
+                # Step 2: Preprocess data
+                algorithm = anomaly.get('algorithm')
+                parameters = anomaly.get('parameters', {})
+                target = parameters.get('target')
+                features = parameters.get('features', [])
+
+                # Replace NaN with None for JSON compatibility
+                df = df.replace({np.nan: None})
+                # Convert datetime columns to strings
+                for col in df.columns:
+                    if pd.api.types.is_datetime64_any_dtype(df[col]):
+                        df[col] = df[col].astype(str)
+
+                # Initialize result_df to store all data
+                result_df = df.copy()
+
+                # Step 3: Apply anomaly detection logic based on algorithm
+                if algorithm == 'z_score':
+                    if not target:
+                        logger.error(f"No target specified for z_score in {anomaly_type}")
+                        return {"type": "error", "error": f"No target column specified for z_score anomaly {anomaly_type}."}, 400
+                    if target not in df.columns:
+                        logger.error(f"Target column {target} not found in data for {anomaly_type}")
+                        return {"type": "error", "error": f"Target column {target} not found in query results for {anomaly_type}."}, 400
+                    threshold = float(parameters.get('threshold', 2.0))
+                    mean = df[target].mean()
+                    std = df[target].std()
+                    if std == 0:
+                        logger.error(f"Standard deviation is zero for {target} in {anomaly_type}")
+                        return {"type": "error", "error": f"Standard deviation is zero for {target}, cannot compute z-score."}, 400
+                    result_df['z_score'] = (df[target] - mean) / std
+                    result_df['is_anomaly'] = result_df['z_score'].abs() > threshold
+                    # Do not filter, keep all rows
+                    result_df = result_df[df.columns.tolist() + ['z_score', 'is_anomaly']]
+
+                elif algorithm == 'isolation_forest':
+                    if not features or not all(f in df.columns for f in features):
+                        logger.error(f"Invalid or missing features {features} for {anomaly_type}")
+                        return {"type": "error", "error": f"Invalid or missing features {features} for isolation_forest anomaly {anomaly_type}."}, 400
+                    contamination = float(parameters.get('contamination', 0.1))
+                    model = IsolationForest(contamination=contamination, random_state=42)
+                    X = df[features].values
+                    result_df['is_anomaly'] = model.fit_predict(X) == -1
+                    result_df['anomaly_score'] = model.score_samples(X)
+                    # Do not filter, keep all rows
+                    result_df = result_df[df.columns.tolist() + ['anomaly_score', 'is_anomaly']]
+
+                elif algorithm == 'dbscan':
+                    if not features or not all(f in df.columns for f in features):
+                        logger.error(f"Invalid or missing features {features} for {anomaly_type}")
+                        return {"type": "error", "error": f"Invalid or missing features {features} for dbscan anomaly {anomaly_type}."}, 400
+                    eps = float(parameters.get('eps', 0.5))
+                    min_samples = int(parameters.get('min_samples', 5))
+                    model = DBSCAN(eps=eps, min_samples=min_samples)
+                    X = df[features].values
+                    labels = model.fit_predict(X)
+                    result_df['is_anomaly'] = labels == -1
+                    # Do not filter, keep all rows
+                    result_df = result_df[df.columns.tolist() + ['is_anomaly']]
+
+                elif algorithm == 'custom':
+                    rule = parameters.get('rule')
+                    if not rule:
+                        logger.error(f"No rule provided for custom anomaly {anomaly_type}")
+                        return {"type": "error", "error": f"No rule specified for custom anomaly {anomaly_type}."}, 400
+                    try:
+                        if rule.startswith('SELECT'):
+                            result_df = vn.run_sql(rule)
+                            if len(result_df) > _MAX_ANALYSIS_ROWS:
+                                truncated = True
+                                result_df = result_df.head(_MAX_ANALYSIS_ROWS)
+                            result_df['is_anomaly'] = True
+                            # Need to merge with original df to include normal data
+                            original_df = df.copy()
+                            original_df['is_anomaly'] = False
+                            result_df = pd.concat([original_df, result_df]).drop_duplicates().reset_index(drop=True)
+                        else:
+                            result_df['is_anomaly'] = df.eval(rule)
+                        # Do not filter, keep all rows
+                        result_df = result_df[df.columns.tolist() + ['is_anomaly']]
+                    except Exception as e:
+                        logger.error(f"Failed to apply custom rule '{rule}' for {anomaly_type}: {str(e)}")
+                        return {"type": "error", "error": f"Failed to apply custom rule for {anomaly_type}: {str(e)}"}, 400
+
+                # Convert DataFrame to list of dicts for JSON response
+                result = result_df.to_dict(orient='records')
+                logger.info(f"Returning {len(result)} rows (including {len(result_df[result_df['is_anomaly']])} anomalies) for {anomaly_type}")
+                body = {"type": "success", "results": result}
+                if truncated:
+                    body["truncated"] = True
+                    body["truncated_note"] = (
+                        f"Note: this check's query returned more than {_MAX_ANALYSIS_ROWS} rows — "
+                        f"results below are based on the first {_MAX_ANALYSIS_ROWS} only."
+                    )
+                return body, 200
+
+            except Exception as e:
+                logger.error(f"Error running anomaly {anomaly_type}: {str(e)}", exc_info=True)
+                return {"type": "error", "error": f"Error running anomaly detection: {str(e)}"}, 500
+
         @self.flask_app.route('/api/v0/run_anomaly', methods=['GET'])
         def run_anomaly():
             """
@@ -9545,176 +10478,58 @@ class VannaFlaskApp(VannaFlaskAPI):
             """
             workspace_id = request.args.get('workspace_id')
             anomaly_type = request.args.get('anomaly_type')
+            body, status = _run_anomaly_config(workspace_id, anomaly_type)
+            return jsonify(body), status
 
-            # Validate input parameters
-            if not workspace_id or not anomaly_type:
-                logger.warning(f"Missing parameters: workspace_id={workspace_id}, anomaly_type={anomaly_type}")
-                return jsonify({"type": "error", "error": "Workspace ID and anomaly type are required."}), 400 
-
-            # Ensure Vanna is initialized
-            initialized, error = ensure_vanna_initialized(self, workspace_id)
-            if not initialized:
-                logger.error(f"Vanna initialization failed: {error}")
-                return jsonify({"type": "error", "error": error}), 400
-
-            # Fetch workspace metadata
-            workspace = get_workspace_metadata(self, workspace_id)
-            if not workspace:
-                logger.error(f"Workspace not found: ID={workspace_id}")
-                return jsonify({"type": "error", "error": "Workspace not found."}), 404
-
-            # Get anomaly configuration
-            try:
-                anomalies = json.loads(workspace.get("anomalies", "[]"))
-            except json.JSONDecodeError as e:
-                logger.error(f"Failed to parse anomalies for workspace {workspace_id}: {str(e)}")
-                return jsonify({"type": "error", "error": "Invalid anomaly configurations format."}), 500
-
-            anomaly = next((a for a in anomalies if a['type'] == anomaly_type), None)
-
-                                          
-            if not anomaly:
-                logger.error(f"Anomaly type {anomaly_type} not found in workspace {workspace_id}")
-                return jsonify({"type": "error", "error": f"Anomaly type {anomaly_type} not found."}), 404
-
-            if not anomaly.get('enabled', True):
-                logger.warning(f"Anomaly type {anomaly_type} is disabled in workspace {workspace_id}")
-                return jsonify({"type": "error", "error": f"Anomaly type {anomaly_type} is disabled."}), 400
-
-            logger.info(f"Anomaly configuration for {anomaly_type}: {anomaly}")
-
-            try:
-                # Step 1: Fetch data using the SQL query
-                df = vn.run_sql(anomaly['sql_query'])
-                logger.info(f"Raw data from SQL query for {anomaly_type}:\n{df}")
-                if df.empty:
-                    logger.warning(f"SQL query returned no results for {anomaly_type}")
-                    return jsonify({"type": "success", "results": []}), 200
-
-                # Step 2: Preprocess data
-                algorithm = anomaly.get('algorithm')
-                parameters = anomaly.get('parameters', {})
-                target = parameters.get('target')
-                features = parameters.get('features', [])
-                
-                # Replace NaN with None for JSON compatibility
-                df = df.replace({np.nan: None})
-                # Convert datetime columns to strings
-                for col in df.columns:
-                    if pd.api.types.is_datetime64_any_dtype(df[col]):
-                        df[col] = df[col].astype(str)
-
-                # Initialize result_df to store all data
-                result_df = df.copy()
-
-                # Step 3: Apply anomaly detection logic based on algorithm
-                if algorithm == 'z_score':
-                    if not target:
-                        logger.error(f"No target specified for z_score in {anomaly_type}")
-                        return jsonify({"type": "error", "error": f"No target column specified for z_score anomaly {anomaly_type}."}), 400
-                    if target not in df.columns:
-                        logger.error(f"Target column {target} not found in data for {anomaly_type}")
-                        return jsonify({"type": "error", "error": f"Target column {target} not found in query results for {anomaly_type}."}), 400
-                    threshold = float(parameters.get('threshold', 2.0))
-                    mean = df[target].mean()
-                    std = df[target].std()
-                    if std == 0:
-                        logger.error(f"Standard deviation is zero for {target} in {anomaly_type}")
-                        return jsonify({"type": "error", "error": f"Standard deviation is zero for {target}, cannot compute z-score."}), 400
-                    result_df['z_score'] = (df[target] - mean) / std
-                    result_df['is_anomaly'] = result_df['z_score'].abs() > threshold
-                    # Do not filter, keep all rows
-                    result_df = result_df[df.columns.tolist() + ['z_score', 'is_anomaly']]
-
-                elif algorithm == 'isolation_forest':
-                    if not features or not all(f in df.columns for f in features):
-                        logger.error(f"Invalid or missing features {features} for {anomaly_type}")
-                        return jsonify({"type": "error", "error": f"Invalid or missing features {features} for isolation_forest anomaly {anomaly_type}."}), 400
-                    contamination = float(parameters.get('contamination', 0.1))
-                    model = IsolationForest(contamination=contamination, random_state=42)
-                    X = df[features].values
-                    result_df['is_anomaly'] = model.fit_predict(X) == -1
-                    result_df['anomaly_score'] = model.score_samples(X)
-                    # Do not filter, keep all rows
-                    result_df = result_df[df.columns.tolist() + ['anomaly_score', 'is_anomaly']]
-
-                elif algorithm == 'dbscan':
-                    if not features or not all(f in df.columns for f in features):
-                        logger.error(f"Invalid or missing features {features} for {anomaly_type}")
-                        return jsonify({"type": "error", "error": f"Invalid or missing features {features} for dbscan anomaly {anomaly_type}."}), 400
-                    eps = float(parameters.get('eps', 0.5))
-                    min_samples = int(parameters.get('min_samples', 5))
-                    model = DBSCAN(eps=eps, min_samples=min_samples)
-                    X = df[features].values
-                    labels = model.fit_predict(X)
-                    result_df['is_anomaly'] = labels == -1
-                    # Do not filter, keep all rows
-                    result_df = result_df[df.columns.tolist() + ['is_anomaly']]
-
-                elif algorithm == 'custom':
-                    rule = parameters.get('rule')
-                    if not rule:
-                        logger.error(f"No rule provided for custom anomaly {anomaly_type}")
-                        return jsonify({"type": "error", "error": f"No rule specified for custom anomaly {anomaly_type}."}), 400
-                    try:
-                        if rule.startswith('SELECT'):
-                            result_df = vn.run_sql(rule)
-                            result_df['is_anomaly'] = True
-                            # Need to merge with original df to include normal data
-                            original_df = df.copy()
-                            original_df['is_anomaly'] = False
-                            result_df = pd.concat([original_df, result_df]).drop_duplicates().reset_index(drop=True)
-                        else:
-                            result_df['is_anomaly'] = df.eval(rule)
-                        # Do not filter, keep all rows
-                        result_df = result_df[df.columns.tolist() + ['is_anomaly']]
-                    except Exception as e:
-                        logger.error(f"Failed to apply custom rule '{rule}' for {anomaly_type}: {str(e)}")
-                        return jsonify({"type": "error", "error": f"Failed to apply custom rule for {anomaly_type}: {str(e)}"}), 400
-
-                # Convert DataFrame to list of dicts for JSON response
-                result = result_df.to_dict(orient='records')
-                logger.info(f"Returning {len(result)} rows (including {len(result_df[result_df['is_anomaly']])} anomalies) for {anomaly_type}")
-                return jsonify({"type": "success", "results": result})
-
-            except Exception as e:
-                logger.error(f"Error running anomaly {anomaly_type}: {str(e)}", exc_info=True)
-                return jsonify({"type": "error", "error": f"Error running anomaly detection: {str(e)}"}), 500
-        @self.flask_app.route('/api/v0/run_prediction', methods=['GET'])
-        def run_prediction():
+        def _run_prediction_config(workspace_id, prediction_type=None, config=None):
+            """
+            Runs a prediction config and returns (body, status). Either looks one
+            up by prediction_type (existing, saved config — the original
+            run_prediction behavior) or, when config is given directly, runs that
+            config as-is without requiring it to be saved first — same rationale
+            as _run_anomaly_config above.
+            """
             global vn
-            workspace_id = request.args.get('workspace_id')
-            prediction_type = request.args.get('prediction_type')
+            if config is None:
+                # Validate input parameters
+                if not workspace_id or not prediction_type:
+                    return {"type": "error", "error": "Workspace ID and prediction type are required."}, 400
 
-            # Validate input parameters
-            if not workspace_id or not prediction_type:
-                return jsonify({"type": "error", "error": "Workspace ID and prediction type are required."}), 400 
+                # Ensure Vanna is initialized
+                initialized, error = ensure_vanna_initialized(self, workspace_id)
+                if not initialized:
+                    return {"type": "error", "error": error}, 400
 
-            # Ensure Vanna is initialized
-            initialized, error = ensure_vanna_initialized(self, workspace_id)
-            if not initialized:
-                return jsonify({"type": "error", "error": error}), 400
+                # Fetch workspace metadata
+                workspace = get_workspace_metadata(self, workspace_id)
+                if not workspace:
+                    return {"type": "error", "error": "Workspace not found."}, 404
 
-            # Fetch workspace metadata
-            workspace = get_workspace_metadata(self, workspace_id)
-            if not workspace:
-                return jsonify({"type": "error", "error": "Workspace not found."}), 404
+                # Get prediction configuration
+                predictions = json.loads(workspace.get("predictions", "[]"))
+                prediction = next((p for p in predictions if p['type'] == prediction_type), None)
+                if not prediction:
+                    return {"type": "error", "error": f"Prediction type {prediction_type} not found."}, 404
 
-            # Get prediction configuration
-            predictions = json.loads(workspace.get("predictions", "[]"))
-            prediction = next((p for p in predictions if p['type'] == prediction_type), None)
-            if not prediction:
-                return jsonify({"type": "error", "error": f"Prediction type {prediction_type} not found."}), 404
-
-            if not prediction.get('enabled', True):
-                return jsonify({"type": "error", "error": f"Prediction type {prediction_type} is disabled."}), 400
+                if not prediction.get('enabled', True):
+                    return {"type": "error", "error": f"Prediction type {prediction_type} is disabled."}, 400
+            else:
+                prediction = config
 
             try:
                 # Step 1: Fetch historical data using the SQL query
                 df = vn.run_sql(prediction['sql_query'])
                 logger.info(f"Raw data from SQL query:\n{df}")
                 if df.empty:
-                    return jsonify({"type": "error", "error": "SQL query returned no results."}), 400
+                    return {"type": "error", "error": "SQL query returned no results."}, 400
+
+                truncated = len(df) > _MAX_ANALYSIS_ROWS
+                if truncated:
+                    logger.warning(
+                        f"Prediction {prediction_type}: query returned {len(df)} rows, "
+                        f"truncating to {_MAX_ANALYSIS_ROWS} to avoid hanging."
+                    )
+                    df = df.head(_MAX_ANALYSIS_ROWS)
 
                 # Step 2: Preprocess data based on prediction parameters
                 algorithm = prediction.get('algorithm')
@@ -9740,7 +10555,7 @@ class VannaFlaskApp(VannaFlaskAPI):
                 # Step 3: Apply prediction logic based on algorithm
                 if algorithm == 'mean':
                     if not target or target not in df.columns:
-                        return jsonify({"type": "error", "error": "Target column missing or invalid."}), 400
+                        return {"type": "error", "error": "Target column missing or invalid."}, 400
                     if prediction_type == 'price_trend':
                         # Custom logic for price trend prediction
                         avg_price_df = df.groupby('item_number', as_index=False)[target].mean()
@@ -9758,13 +10573,13 @@ class VannaFlaskApp(VannaFlaskAPI):
 
                 elif algorithm == 'standard_deviation':
                     if not target or target not in df.columns:
-                        return jsonify({"type": "error", "error": "Target column missing or invalid."}), 400
+                        return {"type": "error", "error": "Target column missing or invalid."}, 400
                     std_value = df[target].std()
                     result_df[f'predicted_{target}_std'] = std_value  # Add std as a column
 
                 elif algorithm == 'linear_regression':
                     if not features or not target or not all(f in df.columns for f in features) or target not in df.columns:
-                        return jsonify({"type": "error", "error": "Invalid features or target column."}), 400
+                        return {"type": "error", "error": "Invalid features or target column."}, 400
                     X = df[features]
                     y = df[target]
                     model = LinearRegression()
@@ -9773,7 +10588,7 @@ class VannaFlaskApp(VannaFlaskAPI):
 
                 elif algorithm == 'logistic_regression':
                     if not features or not target or not all(f in df.columns for f in features) or target not in df.columns:
-                        return jsonify({"type": "error", "error": "Invalid features or target column."}), 400
+                        return {"type": "error", "error": "Invalid features or target column."}, 400
                     X = df[features]
                     y = df[target]
                     model = LogisticRegression()
@@ -9783,12 +10598,26 @@ class VannaFlaskApp(VannaFlaskAPI):
 
                 # Convert DataFrame to list of dicts for JSON response
                 result = result_df.to_dict(orient='records')
-                return jsonify({"type": "success", "df": result})
+                body = {"type": "success", "df": result}
+                if truncated:
+                    body["truncated"] = True
+                    body["truncated_note"] = (
+                        f"Note: this check's query returned more than {_MAX_ANALYSIS_ROWS} rows — "
+                        f"results below are based on the first {_MAX_ANALYSIS_ROWS} only."
+                    )
+                return body, 200
 
             except Exception as e:
                 logger.error(f"Error running prediction {prediction_type}: {str(e)}")
-                return jsonify({"type": "error", "error": f"Error running prediction: {str(e)}"}), 500
-            
+                return {"type": "error", "error": f"Error running prediction: {str(e)}"}, 500
+
+        @self.flask_app.route('/api/v0/run_prediction', methods=['GET'])
+        def run_prediction():
+            workspace_id = request.args.get('workspace_id')
+            prediction_type = request.args.get('prediction_type')
+            body, status = _run_prediction_config(workspace_id, prediction_type)
+            return jsonify(body), status
+
 
 
              ############################# aiagents ######################################
@@ -10502,7 +11331,8 @@ class VannaFlaskApp(VannaFlaskAPI):
 
 
         @self.flask_app.route('/api/list_users', methods=['GET'])
-        def list_users():
+        @self.requires_auth
+        def list_users(user: any = None):
             try:
                 results = self.users_collection.get()
                 if not results or not results.get("ids"):
@@ -12116,6 +12946,11 @@ class VannaFlaskApp(VannaFlaskAPI):
         workspace_id: str = None,  # explicit override — required for callers with
                                     # no active Flask request/session (e.g. a
                                     # scheduled agent firing on a background thread)
+        parent_question_id: str = None,  # follow-up's parent, for the FAQ/history
+                                    # sidebar's grouping — persisted here so it
+                                    # survives a fresh session reload (see
+                                    # fetch_user_documents_for_user), not just the
+                                    # in-memory cache
     ):
         """
         Logs or updates user activity in the 'users' table using question_id as the primary key.
@@ -12141,6 +12976,7 @@ class VannaFlaskApp(VannaFlaskAPI):
         model_name     = (model_name or "")[:100]
         user_id        = user_id or None
         detected_language = detected_language or "en"
+        parent_question_id = (parent_question_id or None)
 
         token_count         = int(token_count or 0)
         input_tokens        = int(input_tokens or 0)
@@ -12200,7 +13036,8 @@ class VannaFlaskApp(VannaFlaskAPI):
                             output_tokens       = ?,
                             cached_input_tokens = ?,
                             cost_usd            = ?,
-                            model_name          = ?
+                            model_name          = ?,
+                            parent_question_id  = ?
                         WHERE question_id = ?
                     """
                     cursor.execute(update_query, (
@@ -12220,6 +13057,7 @@ class VannaFlaskApp(VannaFlaskAPI):
                         cached_input_tokens,
                         cost_usd,
                         model_name,
+                        parent_question_id,
                         question_id
                     ))
                     logger.info(f"Updated existing user activity record for question_id={question_id}", extra={"admin": True})
@@ -12232,8 +13070,8 @@ class VannaFlaskApp(VannaFlaskAPI):
                             workspace_name, workspace_id, timestamp,
                             user_role, user_id, detected_language,
                             token_count, input_tokens, output_tokens,
-                            cached_input_tokens, cost_usd, model_name
-                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                            cached_input_tokens, cost_usd, model_name, parent_question_id
+                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """
                     cursor.execute(insert_query, (
                         question_id,
@@ -12252,7 +13090,8 @@ class VannaFlaskApp(VannaFlaskAPI):
                         output_tokens,
                         cached_input_tokens,
                         cost_usd,
-                        model_name
+                        model_name,
+                        parent_question_id
                     ))
                     logger.info(f"Inserted new user activity record for question_id={question_id}", extra={"admin": True})
 

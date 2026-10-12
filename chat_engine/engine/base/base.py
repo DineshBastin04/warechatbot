@@ -692,7 +692,8 @@ class VannaBase(ABC):
         """
         Single LLM call that decides whether a raw chat message (no "/" prefix
         required) should be handled as a scheduling/condition request (->
-        extract_schedule_request) or an ordinary data question (-> generate_sql).
+        extract_schedule_request), a prediction/anomaly-check request (->
+        match_analysis_config), or an ordinary data question (-> generate_sql).
 
         Deliberately a separate, tiny call rather than reusing
         extract_schedule_request's own "ok" field for this: extract_schedule_request's
@@ -702,43 +703,62 @@ class VannaBase(ABC):
         Like classify_intent, this is a UX router, not a security boundary — a
         misclassification just sends the message down the "wrong" existing pipeline,
         which handles it via its own normal validation (extract_schedule_request
-        itself sets "ok": false for a non-schedule message that slips through, and
-        generate_sql just fails to produce useful SQL for a schedule message that
-        slips through).
+        itself sets "ok": false for a non-schedule message that slips through,
+        match_analysis_config returns "matched": false with nothing forced, and
+        generate_sql just fails to produce useful SQL for a message that needed
+        one of the other two pipelines).
 
         Returns:
-            "schedule" if the message is asking to schedule, remind, notify, or
-            watch for a condition; otherwise "query".
+            "schedule" if the message is about scheduling, reminding, notifying,
+            or watching for a condition; "prediction" if it's asking for a
+            forward-looking estimate or an abnormal/outlier-pattern check;
+            otherwise "query".
         """
         if not text or not text.strip():
             return "query"
 
         system_prompt = (
             "Classify the user's message into exactly one category. Respond with "
-            'ONLY the single word "schedule" or "query" — no punctuation, no '
-            "explanation.\n\n"
+            'ONLY the single word "schedule", "prediction", or "query" — no '
+            "punctuation, no explanation.\n\n"
             "Judge by what the message is ABOUT, not by matching it against fixed "
             "phrases — apply this test to whatever wording appears, including "
             "wording never shown to you before:\n"
             '- "query" = the message specifies NEW data or business criteria to '
-            "look up. It could be answered by writing a fresh SQL query against "
-            "the data.\n"
+            "look up, about the CURRENT or PAST state of the data. It could be "
+            "answered by writing a fresh SQL query against the data as-is.\n"
             '- "schedule" = the message is instead about HOW, WHEN, or WHETHER an '
             "answer reaches the user — sending/delivering it (even once, even "
             "with no time stated at all), repeating it on a cadence, or watching "
-            "for a condition/threshold/event over time. It does NOT introduce a "
-            "new data question — it's about managing delivery of one.\n\n"
-            "If unsure, ask: does this message tell me what to look up, or does "
-            "it tell me to do something with an answer (send/deliver/repeat/"
-            "watch it)? The former is \"query\"; the latter is \"schedule\", no "
-            "matter which verb (send, email, text, remind, notify, alert, ping, "
-            "keep me posted, watch, ...) or how much timing detail it includes.\n\n"
+            "for a condition/threshold/event over time — OR the message is about "
+            "viewing, listing, or managing scheduled agents that ALREADY exist "
+            "(asking what's currently scheduled, or asking to stop/cancel one), "
+            "even though that isn't itself about timing a new delivery. Either "
+            "way it does NOT introduce a new data question — it's about the "
+            "delivery/scheduling mechanism itself, not about looking up data.\n"
+            '- "prediction" = the message asks for something that plain current-'
+            "state data can't answer directly: a forward-looking estimate/"
+            "forecast/likelihood of a future or typical value, OR a check for "
+            "abnormal/outlier/unusual records (an anomaly check) — as opposed to "
+            "looking up records that already meet a stated, concrete condition.\n\n"
+            "If unsure between \"query\" and \"prediction\": does the message ask "
+            "what a value IS/WAS (query), or what it's LIKELY TO BE, or whether "
+            "something is UNUSUAL/ABNORMAL compared to the normal pattern "
+            "(prediction)? If unsure between \"query\" and \"schedule\": does the "
+            "message tell me what to look up (query), or does it tell me to do "
+            "something with an answer, or ask about the scheduling/delivery "
+            "system itself — send/deliver/repeat/watch/list/stop it (schedule)?\n\n"
             "A few illustrations only — do not treat this as the complete list, "
             'reason from the test above for anything else: "remind me every '
             'Monday at 9am", "email me this report daily", "notify me when '
             'inventory drops below 100", "send this to me", "text this to my '
-            'manager" -> schedule. "show me sales by region", "how many orders '
-            'shipped today" -> query.'
+            'manager", "what are my scheduled questions", "show my schedules", '
+            '"list what I have scheduled", "stop schedule abc123" -> schedule. '
+            '"predict which orders are at risk of missing '
+            'SLA", "forecast next month\'s demand", "any unusual inventory '
+            'movement this week", "flag outlier orders" -> prediction. "show me '
+            'sales by region", "how many orders shipped today", "which orders '
+            'are currently below 100 units" -> query.'
         )
 
         messages = [
@@ -756,7 +776,195 @@ class VannaBase(ABC):
 
         self.log(title="Message Route Classification Response", message=response_text)
 
-        return "schedule" if "schedule" in response_text.strip().lower() else "query"
+        response_lower = response_text.strip().lower()
+        if "schedule" in response_lower:
+            return "schedule"
+        if "prediction" in response_lower:
+            return "prediction"
+        return "query"
+
+    def match_analysis_config(self, question: str, configs: list, tables: list, **kwargs) -> dict:
+        """
+        Single LLM call that decides, for a message already routed here by
+        classify_message_route == "prediction", whether one of this workspace's
+        EXISTING saved prediction/anomaly configs answers it, or — if not —
+        what kind of new check it would take and which real table to build it
+        against.
+
+        Args:
+            question: the raw user message.
+            configs: this workspace's enabled prediction+anomaly configs,
+                flattened by the caller into
+                [{"kind": "prediction"|"anomaly", "type": str, "name": str,
+                  "table": str, "justification": str}, ...].
+            tables: real table names that exist in the connected database (so a
+                proposed new check is never built against a table that doesn't
+                exist) — e.g. from a plain INFORMATION_SCHEMA.TABLES query.
+
+        Like classify_intent/classify_message_route, this is a UX router, not a
+        security boundary: a misidentified "matched" type is caught by the
+        caller cross-checking it against the actual `configs` list below, and a
+        bad "suggested_table" is caught by cross-checking `tables` — neither
+        value is trusted blindly.
+
+        Returns a dict:
+            {"matched": True, "kind": "prediction"|"anomaly", "type": "<existing config's type>"}
+            or
+            {"matched": False, "kind": "prediction"|"anomaly", "suggested_table": str | None}
+        """
+        fallback = {"matched": False, "kind": "prediction", "suggested_table": tables[0] if tables else None}
+        if not question or not question.strip():
+            return fallback
+
+        configs_desc = "\n".join(
+            f"- kind={c.get('kind')}, type={c.get('type')}, name={c.get('name')!r}, "
+            f"table={c.get('table')!r}, about: {(c.get('justification') or '')[:200]}"
+            for c in (configs or [])
+        ) or "(no prediction/anomaly checks configured yet in this workspace)"
+        tables_desc = ", ".join(tables) if tables else "(no tables known)"
+
+        system_prompt = (
+            "The user's message has already been identified as a prediction or "
+            "anomaly-check request — you are not deciding whether it's that kind "
+            "of question, only which specific check answers it.\n\n"
+            "Respond with ONLY a single JSON object (no prose, no markdown fences), "
+            "matching exactly:\n"
+            '{"matched": true or false, "kind": "prediction" or "anomaly", '
+            '"type": "<the matching check\'s exact type, only if matched>", '
+            '"suggested_table": "<a table name copied exactly from the list below, only if not matched>"}\n\n'
+            "Existing configured checks in this workspace:\n"
+            f"{configs_desc}\n\n"
+            "If one of them genuinely answers the user's question — same table/"
+            "topic/intent, not just a loose keyword overlap — set matched:true "
+            "and copy its exact type string.\n\n"
+            "Otherwise set matched:false, and decide \"kind\": is the user asking "
+            "to estimate/forecast a future or typical value (\"prediction\"), or "
+            "to find unusual/outlier/abnormal records (\"anomaly\")? Then pick "
+            "the single most relevant table for that from this list of tables "
+            "that actually exist in the connected database — copy the name "
+            "exactly, never invent one:\n"
+            f"{tables_desc}"
+        )
+
+        messages = [
+            self.system_message(system_prompt),
+            self.user_message(question),
+        ]
+
+        self.log(title="Analysis Config Match Prompt", message=system_prompt)
+        llm_response_tuple = self.submit_prompt(messages, **kwargs)
+
+        if isinstance(llm_response_tuple, tuple) and len(llm_response_tuple) in (2, 5):
+            response_text = llm_response_tuple[0]
+        else:
+            response_text = str(llm_response_tuple)
+
+        self.log(title="Analysis Config Match Response", message=response_text)
+
+        parsed = self._parse_json_response(response_text)
+        if not parsed:
+            return fallback
+
+        kind = parsed.get("kind") if parsed.get("kind") in ("prediction", "anomaly") else "prediction"
+
+        if parsed.get("matched"):
+            cfg_type = parsed.get("type")
+            if any(c.get("kind") == kind and c.get("type") == cfg_type for c in (configs or [])):
+                return {"matched": True, "kind": kind, "type": cfg_type}
+            # Claimed a match but named a config that isn't actually in the
+            # provided list — don't trust it, fall through to "generate new".
+
+        suggested_table = parsed.get("suggested_table")
+        if suggested_table not in (tables or []):
+            suggested_table = tables[0] if tables else None
+        return {"matched": False, "kind": kind, "suggested_table": suggested_table}
+
+    def suggest_query_clarification(self, question: str, tables: list, **kwargs) -> dict:
+        """
+        Single LLM call used when generate_sql couldn't produce a query — it hit
+        its own anti-hallucination guard and returned the literal "Insufficient
+        data for query." because no trained example/documentation covers this
+        question's shape. Rather than dead-ending there, this decides HOW to
+        respond: ask a short clarifying question that could plausibly narrow the
+        request down to something answerable, or — if the question isn't
+        plausibly about anything in this database at all — say so plainly,
+        since no amount of back-and-forth will conjure data that doesn't exist.
+
+        Args:
+            question: the raw user question that failed to generate SQL.
+            tables: real table names that exist in the connected database (same
+                INFORMATION_SCHEMA.TABLES source used by match_analysis_config),
+                so the model reasons about what's actually here, not what a
+                typical warehouse schema might have.
+
+        Same trust level as classify_message_route/match_analysis_config — a UX
+        aid, not a security boundary. The eventual retried question still goes
+        through the exact same generate_sql path (and its own validation) as
+        every other question; this function only decides what to ask the user.
+
+        Returns a dict:
+            {"ask_user": True, "clarifying_question": "<short question>"}
+            or
+            {"ask_user": False, "reason": "<short plain-English explanation>"}
+        """
+        fallback = {
+            "ask_user": False,
+            "reason": "I don't have a trained example for that kind of question yet — "
+                      "ask your admin to add one, or try rephrasing with more specific detail.",
+        }
+        if not question or not question.strip():
+            return fallback
+
+        tables_desc = ", ".join(tables) if tables else "(no tables known)"
+
+        system_prompt = (
+            "A user asked a data question that a text-to-SQL system could not "
+            "answer, because no trained example or documentation covers this "
+            "shape of question yet. Your job is NOT to write SQL — it's to "
+            "decide how to respond to the user.\n\n"
+            f"Real tables that exist in this database: {tables_desc}\n\n"
+            "Reason about whether the user's question is plausibly about data "
+            "in one of these tables, just phrased in a way the system couldn't "
+            "ground yet — e.g. a business term that likely maps to a real "
+            "table/column, or a question missing one concrete detail (a date "
+            "range, a status, which specific item/order/customer they mean). "
+            "If so, ask ONE short, concrete clarifying question that would "
+            "help narrow it down to something answerable — never a vague "
+            "'can you clarify?', always something specific enough to act on.\n\n"
+            "If instead the question isn't plausibly about anything in this "
+            "table list at all (e.g. it asks about a concept this system has "
+            "no data for, like payroll hours or weather), asking more "
+            "questions won't help — say so plainly instead, don't pretend a "
+            "clarifying question would fix it.\n\n"
+            "Respond with ONLY a single JSON object (no prose, no markdown "
+            "fences), matching exactly:\n"
+            '{"ask_user": true or false, '
+            '"clarifying_question": "<short question, only if ask_user is true>", '
+            '"reason": "<short plain-English reason, only if ask_user is false>"}'
+        )
+
+        messages = [
+            self.system_message(system_prompt),
+            self.user_message(question),
+        ]
+
+        self.log(title="Query Clarification Suggestion Prompt", message=system_prompt)
+        llm_response_tuple = self.submit_prompt(messages, **kwargs)
+
+        if isinstance(llm_response_tuple, tuple) and len(llm_response_tuple) in (2, 5):
+            response_text = llm_response_tuple[0]
+        else:
+            response_text = str(llm_response_tuple)
+
+        self.log(title="Query Clarification Suggestion Response", message=response_text)
+
+        parsed = self._parse_json_response(response_text)
+        if not parsed:
+            return fallback
+
+        if parsed.get("ask_user") and parsed.get("clarifying_question"):
+            return {"ask_user": True, "clarifying_question": parsed["clarifying_question"]}
+        return {"ask_user": False, "reason": parsed.get("reason") or fallback["reason"]}
 
     def extract_schedule_request(
         self,
@@ -785,7 +993,6 @@ class VannaBase(ABC):
                                           # doesn't restate a question (e.g. "send
                                           # me this weekly") — caller resolves it
                                           # from the preceding chat turn instead.
-          "channel": "chat" | "email",
           "email_address": str | None,   # only set if a raw address was stated inline
           "email_labels": [str],         # names from known_email_labels the text referred
                                           # to (or the literal "all"); the expected path
@@ -843,7 +1050,6 @@ class VannaBase(ABC):
             '  "question": "<the data question being asked, in English, or null if the\n'
             '               message is a follow-up that only refers back to prior results\n'
             '               (e.g. \\"this\\", \\"this data\\", \\"it\\") without restating one>",\n'
-            '  "channel": "chat" or "email",\n'
             '  "email_address": "<a raw email address if one was stated inline, else null>",\n'
             '  "email_labels": ["<registered label(s) the text referred to, or \\"all\\">"],\n'
             '  "schedules": [\n'
@@ -965,7 +1171,7 @@ class VannaBase(ABC):
         parsed = self._parse_json_response(response_text)
         if parsed is None:
             return {
-                "ok": False, "question": None, "channel": "chat", "email_address": None,
+                "ok": False, "question": None, "email_address": None,
                 "email_labels": [], "schedules": [], "ambiguous": [],
                 "error": "Could not understand that as a scheduling request — please rephrase.",
             }
@@ -1000,7 +1206,6 @@ class VannaBase(ABC):
         return {
             "ok": ok,
             "question": parsed.get("question") or None,
-            "channel": parsed.get("channel") if parsed.get("channel") in ("chat", "email") else "chat",
             "email_address": parsed.get("email_address") or None,
             "email_labels": email_labels,
             "schedules": schedules,
@@ -1027,6 +1232,24 @@ class VannaBase(ABC):
             return json.loads(candidate)
         except (ValueError, TypeError):
             return None
+
+    def _strip_json_fence(self, text: str) -> str:
+        """
+        Strips a ```json ... ``` or ``` ... ``` markdown fence around a JSON
+        payload, if present, and returns the inner text unchanged otherwise.
+
+        Unlike _parse_json_response above (which only looks for a fenced/bare
+        JSON *object*, `{...}`), this doesn't assume object-vs-array — it just
+        removes the fence wrapper so a plain json.loads() can parse whatever's
+        inside, object or array. Models commonly wrap JSON output in markdown
+        fences even when explicitly asked for raw JSON; a direct json.loads()
+        on the fenced text fails outright (seen live: get_prediction_suggestions
+        silently falling back to a generic, schema-blind default every time for
+        this exact reason).
+        """
+        text = (text or "").strip()
+        fenced = re.search(r"```(?:json)?\s*(.*?)\s*```", text, re.DOTALL | re.IGNORECASE)
+        return fenced.group(1) if fenced else text
 
     def is_write_sql_valid(self, sql: str, whitelist: dict) -> Tuple[bool, str]:
         """
@@ -1497,7 +1720,7 @@ class VannaBase(ABC):
             self.submit_prompt(messages, **kwargs)
 
         try:
-            parsed_suggestions = json.loads(suggestions)
+            parsed_suggestions = json.loads(self._strip_json_fence(suggestions))
             if not isinstance(parsed_suggestions, list):
                 parsed_suggestions = [parsed_suggestions]
 
@@ -1601,7 +1824,7 @@ class VannaBase(ABC):
 
         # Ensure suggestions is a JSON string containing a list
         try:
-            parsed_suggestions = json.loads(suggestions)
+            parsed_suggestions = json.loads(self._strip_json_fence(suggestions))
             if not isinstance(parsed_suggestions, list):
                 parsed_suggestions = [parsed_suggestions]
 
@@ -1638,10 +1861,23 @@ class VannaBase(ABC):
         Returns:
             list: List of anomaly detection configuration dictionaries.
         """
-        # Extract columns and relationships from documentation
+        # Extract columns and relationships from documentation — same shape
+        # caveat as _generate_fallback_predictions above: flatten whether
+        # doc_list is the documented flat list or the Dict[str, List[dict]]
+        # get_table_documentation actually returns.
+        flat_docs = []
+        if isinstance(doc_list, dict):
+            for docs in doc_list.values():
+                if isinstance(docs, list):
+                    flat_docs.extend(docs)
+        elif isinstance(doc_list, list):
+            flat_docs = doc_list
+
         columns = []
         related_tables = []
-        for doc in doc_list:
+        for doc in flat_docs:
+            if not isinstance(doc, dict):
+                continue
             content = doc.get("content", "")
             if "columns" in content.lower():
                 try:
@@ -1723,10 +1959,26 @@ class VannaBase(ABC):
         Returns:
             list: List of prediction configuration dictionaries.
         """
-        # Extract columns and relationships from documentation
+        # Extract columns and relationships from documentation. doc_list can be
+        # either the flat list this method's signature documents, or the
+        # Dict[str, List[dict]] shape get_table_documentation actually returns
+        # (table name -> its matched doc entries) — flatten either way instead
+        # of assuming a shape, since iterating a dict yields its string keys,
+        # not doc dicts, and crashes the very next line (`doc.get(...)` on a
+        # str) whenever documentation IS found for the table.
+        flat_docs = []
+        if isinstance(doc_list, dict):
+            for docs in doc_list.values():
+                if isinstance(docs, list):
+                    flat_docs.extend(docs)
+        elif isinstance(doc_list, list):
+            flat_docs = doc_list
+
         columns = []
         related_tables = []
-        for doc in doc_list:
+        for doc in flat_docs:
+            if not isinstance(doc, dict):
+                continue
             content = doc.get("content", "")
             if "columns" in content.lower():
                 try:

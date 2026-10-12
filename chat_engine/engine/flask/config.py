@@ -2322,6 +2322,7 @@ function previewSqlQuery() {
                         return;
                     }
                     const agents = data.agents || [];
+                    window._scheduledAgentsCache = agents;
                     if (!agents.length) {
                         listEl.innerHTML = '<p style="color:#888;">No scheduled agents in this workspace yet.</p>';
                         return;
@@ -2339,6 +2340,7 @@ function previewSqlQuery() {
                                     <th style="padding:6px;">Question</th>
                                     <th style="padding:6px;">Schedule</th>
                                     <th style="padding:6px;">Channel</th>
+                                    <th style="padding:6px;">Recipients</th>
                                     <th style="padding:6px;">Status</th>
                                     <th style="padding:6px;">Runs</th>
                                     <th style="padding:6px; min-width:90px;"></th>
@@ -2354,6 +2356,13 @@ function previewSqlQuery() {
                                         <td style="padding:6px; max-width:260px;">${(a.display_question || '').replace(/</g, '&lt;')}</td>
                                         <td style="padding:6px;">${a.description || ''}</td>
                                         <td style="padding:6px;">${a.channel || ''}</td>
+                                        <td style="padding:6px; width:220px; max-width:220px; overflow-wrap:break-word;" id="recipients-cell-${a.schedule_id}">
+                                            ${a.channel === 'email' && (a.email_recipients && a.email_recipients.length)
+                                                ? `<div style="overflow-wrap:break-word;">${a.email_recipients.join(', ')}</div>
+                                                   <div style="margin-top:6px;"><button class="test" onclick="editScheduledAgentRecipientsUI('${workspaceId}', '${a.schedule_id}')">Edit</button></div>`
+                                                : `<div><span style="color:#e74c3c;">unassigned</span></div>
+                                                   <div style="margin-top:6px;"><button class="test" onclick="editScheduledAgentRecipientsUI('${workspaceId}', '${a.schedule_id}')">Assign</button></div>`}
+                                        </td>
                                         <td style="padding:6px;">
                                             <span style="color:${a.enabled ? '#2e7d32' : '#e74c3c'};">
                                                 ${a.enabled ? 'enabled' : 'stopped'}
@@ -2437,6 +2446,59 @@ function previewSqlQuery() {
                     loadScheduledAgents(workspaceId);
                 })
                 .catch(err => console.error("Failed to delete scheduled agent:", err));
+        }
+
+        function editScheduledAgentRecipientsUI(workspaceId, scheduleId) {
+            const cell = document.getElementById(`recipients-cell-${scheduleId}`);
+            if (!cell) return;
+            const agent = (window._scheduledAgentsCache || []).find(a => a.schedule_id === scheduleId);
+            const current = new Set((agent && agent.email_recipients) || []);
+            cell.innerHTML = '<span style="color:#888;">Loading recipients…</span>';
+
+            fetch(`/api/v0/get_workspace_email_config?workspace_id=${workspaceId}`)
+                .then(res => res.json())
+                .then(data => {
+                    const registered = data.emails || [];
+                    if (!registered.length) {
+                        cell.innerHTML = '<span style="color:#e74c3c;">No registered recipients — add some under Email Config first.</span>';
+                        return;
+                    }
+                    cell.innerHTML = `
+                        <div style="display:flex; flex-direction:column; gap:4px; max-width:220px; overflow-wrap:break-word;">
+                            ${registered.map(e => `
+                                <label style="font-weight:normal; word-break:break-word;">
+                                    <input type="checkbox" class="recipient-checkbox-${scheduleId}" value="${e.address}" ${current.has(e.address) ? 'checked' : ''}>
+                                    ${e.label} (${e.address})
+                                </label>
+                            `).join('')}
+                            <div style="margin-top:6px;">
+                                <button class="test" onclick="saveScheduledAgentRecipientsUI('${workspaceId}', '${scheduleId}')">Save</button>
+                                <button class="test" onclick="loadScheduledAgents('${workspaceId}')">Cancel</button>
+                            </div>
+                        </div>
+                    `;
+                })
+                .catch(err => { cell.innerHTML = `<span style="color:#e74c3c;">Failed to load: ${err}</span>`; });
+        }
+
+        function saveScheduledAgentRecipientsUI(workspaceId, scheduleId) {
+            const checked = Array.from(document.querySelectorAll(`.recipient-checkbox-${scheduleId}:checked`)).map(cb => cb.value);
+            fetch('/api/v0/scheduled_agents/update_recipients', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ workspace_id: workspaceId, schedule_id: scheduleId, email_recipients: checked }),
+            })
+                .then(res => res.json())
+                .then(data => {
+                    const resultEl = document.getElementById('scheduled-agents-result');
+                    if (data.type === "error") {
+                        if (resultEl) { resultEl.textContent = data.error; resultEl.style.color = "#e74c3c"; }
+                        return;
+                    }
+                    if (resultEl) { resultEl.textContent = ""; }
+                    loadScheduledAgents(workspaceId);
+                })
+                .catch(err => console.error("Failed to update recipients:", err));
         }
 
 let currentPredictions = [];
@@ -4652,6 +4714,7 @@ function displayPredictionResults(predictionType, results) {
                                         <li onclick="showAgents('${workspace.id}')"><i class="fas fa-envelope"></i>Query Agents</li>
                                         <li onclick="showResetDevicesAgent('${workspace.id}')"><i class="fas fa-sync-alt"></i>Reset Devices Agent</li>
                                         <li onclick="showUnpickAgent('${workspace.id}')"><i class="fas fa-undo-alt"></i>Unpick Agent</li>
+                                        <li onclick="showWarehousePerfAgent('${workspace.id}')"><i class="fas fa-warehouse"></i>Warehouse Performance</li>
 
                                         <div class="sub-section-label">Workspace Admin</div>
                                         <li onclick="showDBConfig('${workspace.id}')"><i class="fas fa-server"></i>DB Config</li>
@@ -9798,6 +9861,8 @@ function downloadDeviceResetLogs(format) {
 }
 
     </script>
+    <!-- Warehouse Performance Agent dashboard (served separately so it never passes through Jinja) -->
+    <script src="/api/v0/warehouse_perf/dashboard.js"></script>
 </body>
 </html>
 """

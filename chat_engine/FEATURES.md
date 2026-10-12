@@ -134,3 +134,16 @@ A second, smaller RAG pipeline, separate from the main text-to-SQL knowledge bas
 
 - Swagger/OpenAPI docs are auto-registered (Flasgger) — check `/apidocs` for a live API reference.
 - A debug WebSocket (`/api/v0/log`) streams internal logs to connected clients when the app runs with `debug=True` — a developer tool, not for end users.
+
+## 16. Warehouse Performance Intelligence Agent
+
+An automatic, zero-configuration, read-only agent (`engine/warehouse_perf/`) that runs for **every** workspace on the
+existing scheduled-agents scheduler. It discovers usable operational data in the workspace's own warehouse database,
+builds same-weekday/equal-elapsed baselines, flags statistically unusual deterioration, drills down to the warehouse,
+process and hour where it happened, and produces an executive report — emailed to the workspace's saved Email Config
+recipients when a significant deterioration is found. V1 uses internal data only (no weather/traffic).
+Three agents share the work: the **Monitor** (what changed, where, when), the **Investigator** (checks staffing, work per
+person, exceptions, stock problems, reversals, demand, order size and the data feed in the records for those hours) and
+the **Advisor** (ranks the likely causes, lists what was ruled out, and writes specific actions).
+Dashboard: *Manage Agents → Warehouse Performance* or `/warehouse-performance`; chat: `/warehouse report`.
+Design, methodology, security model and deployment risks: [docs/warehouse_performance_agent.md](docs/warehouse_performance_agent.md).
