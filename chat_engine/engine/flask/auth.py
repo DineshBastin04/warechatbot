@@ -223,7 +223,8 @@ class BasicAuth(AuthInterface):
     def _debug_users_collection(self):
         """Log contents of users collection for debugging."""
         results = self.users_collection.get()
-        logger.info(f"Users in ChromaDB collection: {results['metadatas']}", extra={"admin": True})
+        usernames = [m.get("username") for m in (results.get("metadatas") or [])]
+        logger.info(f"Users in ChromaDB collection: {usernames}", extra={"admin": True})
 
     def get_user(self, flask_request) -> any:
         username = session.get('username')
@@ -273,7 +274,7 @@ class BasicAuth(AuthInterface):
                 user_record = None
                 if results.get("metadatas"):
                     user_record = results["metadatas"][0]
-                    logger.info(f"Found user record for {username}: {user_record}", extra={"admin": True})
+                    logger.info(f"Found user record for {username} (role={user_record.get('role')})", extra={"admin": True})
                     logger.info(f"Logged User: {username}", extra={"user": True})
                 else:
                     logger.warning(f"No user record found for username: {username}", extra={"admin": True})
@@ -289,7 +290,7 @@ class BasicAuth(AuthInterface):
                     workspace_valid = user_record.get("workspace_valid", False)
                     if not workspace_valid and role not in ("superadmin", "admin"):
                         try:
-                            ws_data = self.client.get_collection("workspaces").get()
+                            ws_data = self.workspace_collection.get()
                             ws_names = [md.get("name", "") for md in (ws_data.get("metadatas") or [])]
                             ws_ids   = ws_data.get("ids") or []
                             if stored_workspace and (stored_workspace in ws_names or stored_workspace in ws_ids):
@@ -302,17 +303,7 @@ class BasicAuth(AuthInterface):
                         logger.warning(f"Workspace not valid for user {username}", extra={"admin": True})
                         logger.warning(f"Workspace not valid for user {username}", extra={"user": True})
                         return render_template('login.html', error="User is restricted. Please contact admin.")
-                    user_id = self._get_userid(username)
-                    session['username'] = username
-                    session['user_id'] = user_id
-                    # cache.refresh_cache_for_user(user_id)
-                    # logger.info(f"Cache updated: {cache}")
-                    session['role'] = role
-                    login_time = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-                    session['login_time'] = login_time
-                    logger.info(f"Session details from auth.py: \nusername:{username}\nuser_id:{user_id}\nrole:{role}\nlogin_time:{login_time}", extra={"session":True})
-                    logger.info(f"User {username} authenticated with role {role} Login time {login_time}", extra={"admin": True})
-                    logger.info(f"User {username} authenticated with role {role} Login time {login_time}", extra={"user": True})
+                    self.establish_session(username, role)
 
                     try:
                         if role == "superadmin":
@@ -340,6 +331,20 @@ class BasicAuth(AuthInterface):
 
         logger.info("Rendering login page for GET request")
         return render_template('login.html')
+
+    def establish_session(self, username, role, user_id=None):
+        """Start a logged-in session. Shared by the password login and Teams SSO."""
+        user_id = user_id or self._get_userid(username)
+        session.clear()
+        session['username'] = username
+        session['user_id'] = user_id
+        session['role'] = role
+        login_time = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+        session['login_time'] = login_time
+        logger.info(f"Session details from auth.py: \nusername:{username}\nuser_id:{user_id}\nrole:{role}\nlogin_time:{login_time}", extra={"session":True})
+        logger.info(f"User {username} authenticated with role {role} Login time {login_time}", extra={"admin": True})
+        logger.info(f"User {username} authenticated with role {role} Login time {login_time}", extra={"user": True})
+        return user_id
 
     def callback_handler(self, flask_request) -> str:
         logger.info("Handling callback, redirecting to login", extra={"admin": True})

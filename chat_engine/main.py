@@ -96,4 +96,5 @@ from engine.flask.__init__ import VannaFlaskApp
 
 vanna_app = VannaFlaskApp()
 app = vanna_app.flask_app
-serve(app, host="127.0.0.1", port=8084, threads=8)
+# HOST/PORT: keep 127.0.0.1 when a tunnel or reverse proxy fronts the app.
+serve(app, host=os.environ.get("HOST", "127.0.0.1"), port=int(os.environ.get("PORT", "8084")), threads=8)

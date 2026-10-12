@@ -1361,7 +1361,7 @@ class VannaBase(ABC):
         last_question = re.sub(r"'''|\\n", '', last_question)  # Clean input
         question_query = f"The followup question {new_question}, previous question {last_question} and it's sql {schema}"
         logging.info(f"rewritten question {question_query}")
-        doc_list = self.get_similar_question_sql(question_query, training_data_type="documentation", **kwargs)
+        doc_list = self.get_similar_question_sql(question_query, training_data_type="documentation", keyword_text=new_question, **kwargs)
         logging.info(f"rewritten documentation {doc_list}")
         if doc_list is not None:
             prompt = [
@@ -1509,7 +1509,9 @@ class VannaBase(ABC):
 
         # Retrieval of relevant documentation
         question_query = f"{question} and its query {sql}" if sql else question
-        doc_list = self.get_similar_question_sql(question_query, training_data_type="documentation", **kwargs)
+        # keyword_text: glossary/table matching runs on the question alone, not
+        # question+SQL (see ChromaDB_VectorStore.get_similar_question_sql).
+        doc_list = self.get_similar_question_sql(question_query, training_data_type="documentation", keyword_text=question, **kwargs)
         logger.info(f"Documentation retrieved for summary: {len(doc_list)} items")
 
         # ────────────────────────────────────────────────
