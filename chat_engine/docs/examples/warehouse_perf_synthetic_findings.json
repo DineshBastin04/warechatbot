@@ -1,0 +1,2641 @@
+{
+  "_note": "SYNTHETIC DATA \u2014 generated for testing/demo, not real warehouse activity.",
+  "schema_version": 1,
+  "workspace": {
+    "workspace_id": "00000000-0000-4000-8000-00000000demo",
+    "name": "Synthetic Demo",
+    "display_name": "Synthetic Demo",
+    "db_configured": true,
+    "primary_database": "WMS_DB",
+    "secondary_database": null,
+    "llm_type": null,
+    "llm_model": null,
+    "timezone": "Asia/Kolkata"
+  },
+  "generated_at": "2026-09-24T13:30:00+05:30",
+  "status": "ok",
+  "period": {
+    "type": "today_so_far",
+    "date": "2026-09-24",
+    "start": "00:00",
+    "end": "13:00",
+    "elapsed_hours": 13,
+    "label": "today 2026-09-24, 00:00\u201313:00"
+  },
+  "metrics": [
+    {
+      "metric_id": "transactions",
+      "label": "Warehouse transactions",
+      "unit": "transactions",
+      "direction": "higher_is_better",
+      "source_table": "dbo.t_tran_log",
+      "columns_used": [
+        "start_tran_date",
+        "start_tran_time",
+        "wh_id",
+        "tran_type"
+      ],
+      "status": "ok",
+      "actual": 1376.0,
+      "baseline": 1380.0,
+      "baseline_mean": 1382.6,
+      "baseline_std": 37.64,
+      "baseline_min": 1326.0,
+      "baseline_max": 1423.0,
+      "n_comparable": 5,
+      "abs_diff": -4.0,
+      "pct_diff": -0.29,
+      "z_score": -0.18,
+      "classification": "normal_variation",
+      "basis": "0.2 standard deviations below the mean of 5 comparable periods",
+      "period_date": "2026-09-24",
+      "period_hours": 13,
+      "note": null,
+      "baseline_method": "same_weekday",
+      "baseline_method_text": "median of the same weekday in previous weeks, over the same hours",
+      "comparables": [
+        {
+          "date": "2026-09-17",
+          "value": 1423.0
+        },
+        {
+          "date": "2026-09-10",
+          "value": 1410.0
+        },
+        {
+          "date": "2026-09-03",
+          "value": 1374.0
+        },
+        {
+          "date": "2026-08-27",
+          "value": 1380.0
+        },
+        {
+          "date": "2026-08-20",
+          "value": 1326.0
+        }
+      ],
+      "previous_day": {
+        "date": "2026-09-23",
+        "value": 1290.0,
+        "pct_diff": 6.67
+      },
+      "trend": {
+        "direction": "flat",
+        "points": 14,
+        "slope_per_day": -6.04,
+        "weekly_change_pct": -1.11,
+        "t_stat": -0.16,
+        "basis": "linear trend over the last 14 complete operating days"
+      },
+      "hourly": [
+        {
+          "hour": 0,
+          "actual": 0.0,
+          "baseline": 0.0
+        },
+        {
+          "hour": 1,
+          "actual": 0.0,
+          "baseline": 0.0
+        },
+        {
+          "hour": 2,
+          "actual": 0.0,
+          "baseline": 0.0
+        },
+        {
+          "hour": 3,
+          "actual": 0.0,
+          "baseline": 0.0
+        },
+        {
+          "hour": 4,
+          "actual": 0.0,
+          "baseline": 0.0
+        },
+        {
+          "hour": 5,
+          "actual": 0.0,
+          "baseline": 0.0
+        },
+        {
+          "hour": 6,
+          "actual": 8.0,
+          "baseline": 7.0
+        },
+        {
+          "hour": 7,
+          "actual": 50.0,
+          "baseline": 39.0
+        },
+        {
+          "hour": 8,
+          "actual": 102.0,
+          "baseline": 92.0
+        },
+        {
+          "hour": 9,
+          "actual": 157.0,
+          "baseline": 164.0
+        },
+        {
+          "hour": 10,
+          "actual": 258.0,
+          "baseline": 266.0
+        },
+        {
+          "hour": 11,
+          "actual": 375.0,
+          "baseline": 370.0
+        },
+        {
+          "hour": 12,
+          "actual": 426.0,
+          "baseline": 449.0
+        }
+      ],
+      "degradation_window": null,
+      "by_warehouse": [
+        {
+          "actual": 389.0,
+          "baseline": 460.0,
+          "baseline_mean": 462.6,
+          "baseline_std": 10.64,
+          "baseline_min": 450.0,
+          "baseline_max": 479.0,
+          "n_comparable": 5,
+          "abs_diff": -71.0,
+          "pct_diff": -15.43,
+          "z_score": -6.91,
+          "classification": "significant_deterioration",
+          "basis": "6.9 standard deviations below the mean of 5 comparable periods",
+          "key": "WH-B",
+          "shortfall": 71.0,
+          "share_of_shortfall_pct": 100.0
+        },
+        {
+          "actual": 598.0,
+          "baseline": 585.0,
+          "baseline_mean": 574.6,
+          "baseline_std": 30.78,
+          "baseline_min": 533.0,
+          "baseline_max": 613.0,
+          "n_comparable": 5,
+          "abs_diff": 13.0,
+          "pct_diff": 2.22,
+          "z_score": 0.76,
+          "classification": "normal_variation",
+          "basis": "0.8 standard deviations above the mean of 5 comparable periods",
+          "key": "WH-A",
+          "shortfall": 0.0,
+          "share_of_shortfall_pct": 0.0
+        },
+        {
+          "actual": 389.0,
+          "baseline": 345.0,
+          "baseline_mean": 345.4,
+          "baseline_std": 12.46,
+          "baseline_min": 329.0,
+          "baseline_max": 364.0,
+          "n_comparable": 5,
+          "abs_diff": 44.0,
+          "pct_diff": 12.75,
+          "z_score": 3.5,
+          "classification": "improvement",
+          "basis": "3.5 standard deviations above the mean of 5 comparable periods",
+          "key": "WH-C",
+          "shortfall": 0.0,
+          "share_of_shortfall_pct": 0.0
+        }
+      ],
+      "by_process": [
+        {
+          "actual": 246.0,
+          "baseline": 278.0,
+          "baseline_mean": 277.0,
+          "baseline_std": 8.46,
+          "baseline_min": 263.0,
+          "baseline_max": 285.0,
+          "n_comparable": 5,
+          "abs_diff": -32.0,
+          "pct_diff": -11.51,
+          "z_score": -3.67,
+          "classification": "significant_deterioration",
+          "basis": "3.7 standard deviations below the mean of 5 comparable periods",
+          "key": "Ship (204)",
+          "shortfall": 32.0,
+          "share_of_shortfall_pct": 74.42
+        },
+        {
+          "actual": 306.0,
+          "baseline": 317.0,
+          "baseline_mean": 316.0,
+          "baseline_std": 13.82,
+          "baseline_min": 297.0,
+          "baseline_max": 335.0,
+          "n_comparable": 5,
+          "abs_diff": -11.0,
+          "pct_diff": -3.47,
+          "z_score": -0.72,
+          "classification": "normal_variation",
+          "basis": "0.7 standard deviations below the mean of 5 comparable periods",
+          "key": "Load (203)",
+          "shortfall": 11.0,
+          "share_of_shortfall_pct": 25.58
+        },
+        {
+          "actual": 389.0,
+          "baseline": 375.0,
+          "baseline_mean": 375.0,
+          "baseline_std": 8.49,
+          "baseline_min": 363.0,
+          "baseline_max": 383.0,
+          "n_comparable": 5,
+          "abs_diff": 14.0,
+          "pct_diff": 3.73,
+          "z_score": 1.65,
+          "classification": "normal_variation",
+          "basis": "1.6 standard deviations above the mean of 5 comparable periods",
+          "key": "Pack (202)",
+          "shortfall": 0.0,
+          "share_of_shortfall_pct": 0.0
+        },
+        {
+          "actual": 435.0,
+          "baseline": 414.0,
+          "baseline_mean": 414.6,
+          "baseline_std": 8.44,
+          "baseline_min": 403.0,
+          "baseline_max": 425.0,
+          "n_comparable": 5,
+          "abs_diff": 21.0,
+          "pct_diff": 5.07,
+          "z_score": 2.42,
+          "classification": "improvement",
+          "basis": "2.4 standard deviations above the mean of 5 comparable periods",
+          "key": "Pick (201)",
+          "shortfall": 0.0,
+          "share_of_shortfall_pct": 0.0
+        }
+      ],
+      "by_warehouse_process": {
+        "WH-A": [
+          {
+            "actual": 118.0,
+            "baseline": 119.0,
+            "baseline_mean": 114.8,
+            "baseline_std": 6.38,
+            "baseline_min": 106.0,
+            "baseline_max": 120.0,
+            "n_comparable": 5,
+            "abs_diff": -1.0,
+            "pct_diff": -0.84,
+            "z_score": 0.5,
+            "classification": "normal_variation",
+            "basis": "0.5 standard deviations above the mean of 5 comparable periods",
+            "key": "Ship (204)",
+            "shortfall": 1.0,
+            "share_of_shortfall_pct": 100.0
+          },
+          {
+            "actual": 161.0,
+            "baseline": 158.0,
+            "baseline_mean": 155.2,
+            "baseline_std": 7.79,
+            "baseline_min": 145.0,
+            "baseline_max": 165.0,
+            "n_comparable": 5,
+            "abs_diff": 3.0,
+            "pct_diff": 1.9,
+            "z_score": 0.74,
+            "classification": "normal_variation",
+            "basis": "0.7 standard deviations above the mean of 5 comparable periods",
+            "key": "Pack (202)",
+            "shortfall": 0.0,
+            "share_of_shortfall_pct": 0.0
+          },
+          {
+            "actual": 137.0,
+            "baseline": 132.0,
+            "baseline_mean": 131.8,
+            "baseline_std": 8.29,
+            "baseline_min": 121.0,
+            "baseline_max": 144.0,
+            "n_comparable": 5,
+            "abs_diff": 5.0,
+            "pct_diff": 3.79,
+            "z_score": 0.63,
+            "classification": "normal_variation",
+            "basis": "0.6 standard deviations above the mean of 5 comparable periods",
+            "key": "Load (203)",
+            "shortfall": 0.0,
+            "share_of_shortfall_pct": 0.0
+          },
+          {
+            "actual": 182.0,
+            "baseline": 175.0,
+            "baseline_mean": 172.8,
+            "baseline_std": 8.96,
+            "baseline_min": 161.0,
+            "baseline_max": 184.0,
+            "n_comparable": 5,
+            "abs_diff": 7.0,
+            "pct_diff": 4.0,
+            "z_score": 1.03,
+            "classification": "normal_variation",
+            "basis": "1.0 standard deviations above the mean of 5 comparable periods",
+            "key": "Pick (201)",
+            "shortfall": 0.0,
+            "share_of_shortfall_pct": 0.0
+          }
+        ],
+        "WH-B": [
+          {
+            "actual": 49.0,
+            "baseline": 93.0,
+            "baseline_mean": 93.0,
+            "baseline_std": 3.32,
+            "baseline_min": 88.0,
+            "baseline_max": 96.0,
+            "n_comparable": 5,
+            "abs_diff": -44.0,
+            "pct_diff": -47.31,
+            "z_score": -13.27,
+            "classification": "significant_deterioration",
+            "basis": "13.3 standard deviations below the mean of 5 comparable periods",
+            "key": "Ship (204)",
+            "shortfall": 44.0,
+            "share_of_shortfall_pct": 60.27
+          },
+          {
+            "actual": 81.0,
+            "baseline": 104.0,
+            "baseline_mean": 105.6,
+            "baseline_std": 3.78,
+            "baseline_min": 101.0,
+            "baseline_max": 110.0,
+            "n_comparable": 5,
+            "abs_diff": -23.0,
+            "pct_diff": -22.12,
+            "z_score": -6.51,
+            "classification": "significant_deterioration",
+            "basis": "6.5 standard deviations below the mean of 5 comparable periods",
+            "key": "Load (203)",
+            "shortfall": 23.0,
+            "share_of_shortfall_pct": 31.51
+          },
+          {
+            "actual": 123.0,
+            "baseline": 126.0,
+            "baseline_mean": 125.6,
+            "baseline_std": 3.65,
+            "baseline_min": 121.0,
+            "baseline_max": 131.0,
+            "n_comparable": 5,
+            "abs_diff": -3.0,
+            "pct_diff": -2.38,
+            "z_score": -0.71,
+            "classification": "normal_variation",
+            "basis": "0.7 standard deviations below the mean of 5 comparable periods",
+            "key": "Pack (202)",
+            "shortfall": 3.0,
+            "share_of_shortfall_pct": 4.11
+          },
+          {
+            "actual": 136.0,
+            "baseline": 139.0,
+            "baseline_mean": 138.4,
+            "baseline_std": 3.51,
+            "baseline_min": 134.0,
+            "baseline_max": 143.0,
+            "n_comparable": 5,
+            "abs_diff": -3.0,
+            "pct_diff": -2.16,
+            "z_score": -0.68,
+            "classification": "normal_variation",
+            "basis": "0.7 standard deviations below the mean of 5 comparable periods",
+            "key": "Pick (201)",
+            "shortfall": 3.0,
+            "share_of_shortfall_pct": 4.11
+          }
+        ],
+        "WH-C": [
+          {
+            "actual": 105.0,
+            "baseline": 94.0,
+            "baseline_mean": 94.2,
+            "baseline_std": 3.96,
+            "baseline_min": 89.0,
+            "baseline_max": 99.0,
+            "n_comparable": 5,
+            "abs_diff": 11.0,
+            "pct_diff": 11.7,
+            "z_score": 2.73,
+            "classification": "improvement",
+            "basis": "2.7 standard deviations above the mean of 5 comparable periods",
+            "key": "Pack (202)",
+            "shortfall": 0.0,
+            "share_of_shortfall_pct": null
+          },
+          {
+            "actual": 88.0,
+            "baseline": 78.0,
+            "baseline_mean": 78.6,
+            "baseline_std": 3.91,
+            "baseline_min": 75.0,
+            "baseline_max": 84.0,
+            "n_comparable": 5,
+            "abs_diff": 10.0,
+            "pct_diff": 12.82,
+            "z_score": 2.4,
+            "classification": "improvement",
+            "basis": "2.4 standard deviations above the mean of 5 comparable periods",
+            "key": "Load (203)",
+            "shortfall": 0.0,
+            "share_of_shortfall_pct": null
+          },
+          {
+            "actual": 79.0,
+            "baseline": 69.0,
+            "baseline_mean": 69.2,
+            "baseline_std": 2.28,
+            "baseline_min": 67.0,
+            "baseline_max": 72.0,
+            "n_comparable": 5,
+            "abs_diff": 10.0,
+            "pct_diff": 14.49,
+            "z_score": 4.3,
+            "classification": "improvement",
+            "basis": "4.3 standard deviations above the mean of 5 comparable periods",
+            "key": "Ship (204)",
+            "shortfall": 0.0,
+            "share_of_shortfall_pct": null
+          },
+          {
+            "actual": 117.0,
+            "baseline": 102.0,
+            "baseline_mean": 103.4,
+            "baseline_std": 4.98,
+            "baseline_min": 98.0,
+            "baseline_max": 110.0,
+            "n_comparable": 5,
+            "abs_diff": 15.0,
+            "pct_diff": 14.71,
+            "z_score": 2.73,
+            "classification": "improvement",
+            "basis": "2.7 standard deviations above the mean of 5 comparable periods",
+            "key": "Pick (201)",
+            "shortfall": 0.0,
+            "share_of_shortfall_pct": null
+          }
+        ]
+      }
+    },
+    {
+      "metric_id": "units_moved",
+      "label": "Units moved",
+      "unit": "units",
+      "direction": "higher_is_better",
+      "source_table": "dbo.t_tran_log",
+      "columns_used": [
+        "start_tran_date",
+        "start_tran_time",
+        "tran_qty",
+        "wh_id",
+        "tran_type"
+      ],
+      "status": "ok",
+      "actual": 1995.0,
+      "baseline": 1887.0,
+      "baseline_mean": 1850.0,
+      "baseline_std": 84.78,
+      "baseline_min": 1729.0,
+      "baseline_max": 1935.0,
+      "n_comparable": 5,
+      "abs_diff": 108.0,
+      "pct_diff": 5.72,
+      "z_score": 1.71,
+      "classification": "normal_variation",
+      "basis": "1.7 standard deviations above the mean of 5 comparable periods",
+      "period_date": "2026-09-24",
+      "period_hours": 13,
+      "note": null,
+      "baseline_method": "same_weekday",
+      "baseline_method_text": "median of the same weekday in previous weeks, over the same hours",
+      "comparables": [
+        {
+          "date": "2026-09-17",
+          "value": 1935.0
+        },
+        {
+          "date": "2026-09-10",
+          "value": 1902.0
+        },
+        {
+          "date": "2026-09-03",
+          "value": 1887.0
+        },
+        {
+          "date": "2026-08-27",
+          "value": 1729.0
+        },
+        {
+          "date": "2026-08-20",
+          "value": 1797.0
+        }
+      ],
+      "previous_day": {
+        "date": "2026-09-23",
+        "value": 1788.0,
+        "pct_diff": 11.58
+      },
+      "trend": {
+        "direction": "flat",
+        "points": 14,
+        "slope_per_day": -3.33,
+        "weekly_change_pct": -0.54,
+        "t_stat": -0.08,
+        "basis": "linear trend over the last 14 complete operating days"
+      },
+      "hourly": [
+        {
+          "hour": 0,
+          "actual": 0.0,
+          "baseline": 0.0
+        },
+        {
+          "hour": 1,
+          "actual": 0.0,
+          "baseline": 0.0
+        },
+        {
+          "hour": 2,
+          "actual": 0.0,
+          "baseline": 0.0
+        },
+        {
+          "hour": 3,
+          "actual": 0.0,
+          "baseline": 0.0
+        },
+        {
+          "hour": 4,
+          "actual": 0.0,
+          "baseline": 0.0
+        },
+        {
+          "hour": 5,
+          "actual": 0.0,
+          "baseline": 0.0
+        },
+        {
+          "hour": 6,
+          "actual": 32.0,
+          "baseline": 13.0
+        },
+        {
+          "hour": 7,
+          "actual": 79.0,
+          "baseline": 81.0
+        },
+        {
+          "hour": 8,
+          "actual": 172.0,
+          "baseline": 153.0
+        },
+        {
+          "hour": 9,
+          "actual": 246.0,
+          "baseline": 252.0
+        },
+        {
+          "hour": 10,
+          "actual": 356.0,
+          "baseline": 365.0
+        },
+        {
+          "hour": 11,
+          "actual": 509.0,
+          "baseline": 478.0
+        },
+        {
+          "hour": 12,
+          "actual": 601.0,
+          "baseline": 506.0
+        }
+      ],
+      "degradation_window": null,
+      "by_warehouse": [
+        {
+          "actual": 655.0,
+          "baseline": 614.0,
+          "baseline_mean": 618.6,
+          "baseline_std": 23.81,
+          "baseline_min": 587.0,
+          "baseline_max": 652.0,
+          "n_comparable": 5,
+          "abs_diff": 41.0,
+          "pct_diff": 6.68,
+          "z_score": 1.53,
+          "classification": "normal_variation",
+          "basis": "1.5 standard deviations above the mean of 5 comparable periods",
+          "key": "WH-B",
+          "shortfall": 0.0,
+          "share_of_shortfall_pct": null
+        },
+        {
+          "actual": 780.0,
+          "baseline": 730.0,
+          "baseline_mean": 758.8,
+          "baseline_std": 56.98,
+          "baseline_min": 697.0,
+          "baseline_max": 829.0,
+          "n_comparable": 5,
+          "abs_diff": 50.0,
+          "pct_diff": 6.85,
+          "z_score": 0.37,
+          "classification": "normal_variation",
+          "basis": "0.4 standard deviations above the mean of 5 comparable periods",
+          "key": "WH-A",
+          "shortfall": 0.0,
+          "share_of_shortfall_pct": null
+        },
+        {
+          "actual": 560.0,
+          "baseline": 464.0,
+          "baseline_mean": 472.6,
+          "baseline_std": 33.92,
+          "baseline_min": 440.0,
+          "baseline_max": 520.0,
+          "n_comparable": 5,
+          "abs_diff": 96.0,
+          "pct_diff": 20.69,
+          "z_score": 2.58,
+          "classification": "improvement",
+          "basis": "2.6 standard deviations above the mean of 5 comparable periods",
+          "key": "WH-C",
+          "shortfall": 0.0,
+          "share_of_shortfall_pct": null
+        }
+      ],
+      "by_process": [
+        {
+          "actual": 1995.0,
+          "baseline": 1887.0,
+          "baseline_mean": 1850.0,
+          "baseline_std": 84.78,
+          "baseline_min": 1729.0,
+          "baseline_max": 1935.0,
+          "n_comparable": 5,
+          "abs_diff": 108.0,
+          "pct_diff": 5.72,
+          "z_score": 1.71,
+          "classification": "normal_variation",
+          "basis": "1.7 standard deviations above the mean of 5 comparable periods",
+          "key": "Pick (201)",
+          "shortfall": 0.0,
+          "share_of_shortfall_pct": null
+        }
+      ],
+      "by_warehouse_process": {
+        "WH-A": [
+          {
+            "actual": 780.0,
+            "baseline": 730.0,
+            "baseline_mean": 758.8,
+            "baseline_std": 56.98,
+            "baseline_min": 697.0,
+            "baseline_max": 829.0,
+            "n_comparable": 5,
+            "abs_diff": 50.0,
+            "pct_diff": 6.85,
+            "z_score": 0.37,
+            "classification": "normal_variation",
+            "basis": "0.4 standard deviations above the mean of 5 comparable periods",
+            "key": "Pick (201)",
+            "shortfall": 0.0,
+            "share_of_shortfall_pct": null
+          }
+        ],
+        "WH-B": [
+          {
+            "actual": 655.0,
+            "baseline": 614.0,
+            "baseline_mean": 618.6,
+            "baseline_std": 23.81,
+            "baseline_min": 587.0,
+            "baseline_max": 652.0,
+            "n_comparable": 5,
+            "abs_diff": 41.0,
+            "pct_diff": 6.68,
+            "z_score": 1.53,
+            "classification": "normal_variation",
+            "basis": "1.5 standard deviations above the mean of 5 comparable periods",
+            "key": "Pick (201)",
+            "shortfall": 0.0,
+            "share_of_shortfall_pct": null
+          }
+        ],
+        "WH-C": [
+          {
+            "actual": 560.0,
+            "baseline": 464.0,
+            "baseline_mean": 472.6,
+            "baseline_std": 33.92,
+            "baseline_min": 440.0,
+            "baseline_max": 520.0,
+            "n_comparable": 5,
+            "abs_diff": 96.0,
+            "pct_diff": 20.69,
+            "z_score": 2.58,
+            "classification": "improvement",
+            "basis": "2.6 standard deviations above the mean of 5 comparable periods",
+            "key": "Pick (201)",
+            "shortfall": 0.0,
+            "share_of_shortfall_pct": null
+          }
+        ]
+      }
+    },
+    {
+      "metric_id": "orders_received",
+      "label": "Orders received",
+      "unit": "orders",
+      "direction": "neutral",
+      "source_table": "dbo.t_order",
+      "columns_used": [
+        "order_date",
+        "order_number",
+        "wh_id"
+      ],
+      "status": "ok",
+      "actual": 531.0,
+      "baseline": 510.0,
+      "baseline_mean": 509.8,
+      "baseline_std": 8.07,
+      "baseline_min": 500.0,
+      "baseline_max": 520.0,
+      "n_comparable": 5,
+      "abs_diff": 21.0,
+      "pct_diff": 4.12,
+      "z_score": 2.63,
+      "classification": "normal_variation",
+      "basis": "2.6 standard deviations above the mean of 5 comparable periods",
+      "period_date": "2026-09-24",
+      "period_hours": 13,
+      "note": null,
+      "baseline_method": "same_weekday",
+      "baseline_method_text": "median of the same weekday in previous weeks, over the same hours",
+      "comparables": [
+        {
+          "date": "2026-09-17",
+          "value": 520.0
+        },
+        {
+          "date": "2026-09-10",
+          "value": 515.0
+        },
+        {
+          "date": "2026-09-03",
+          "value": 504.0
+        },
+        {
+          "date": "2026-08-27",
+          "value": 510.0
+        },
+        {
+          "date": "2026-08-20",
+          "value": 500.0
+        }
+      ],
+      "previous_day": {
+        "date": "2026-09-23",
+        "value": 474.0,
+        "pct_diff": 12.03
+      },
+      "trend": {
+        "direction": "flat",
+        "points": 14,
+        "slope_per_day": -1.51,
+        "weekly_change_pct": -1.11,
+        "t_stat": -0.16,
+        "basis": "linear trend over the last 14 complete operating days"
+      },
+      "hourly": [
+        {
+          "hour": 0,
+          "actual": 0.0,
+          "baseline": 0.0
+        },
+        {
+          "hour": 1,
+          "actual": 0.0,
+          "baseline": 0.0
+        },
+        {
+          "hour": 2,
+          "actual": 0.0,
+          "baseline": 0.0
+        },
+        {
+          "hour": 3,
+          "actual": 0.0,
+          "baseline": 0.0
+        },
+        {
+          "hour": 4,
+          "actual": 0.0,
+          "baseline": 0.0
+        },
+        {
+          "hour": 5,
+          "actual": 0.0,
+          "baseline": 0.0
+        },
+        {
+          "hour": 6,
+          "actual": 14.0,
+          "baseline": 12.0
+        },
+        {
+          "hour": 7,
+          "actual": 26.0,
+          "baseline": 26.0
+        },
+        {
+          "hour": 8,
+          "actual": 47.0,
+          "baseline": 45.0
+        },
+        {
+          "hour": 9,
+          "actual": 74.0,
+          "baseline": 70.0
+        },
+        {
+          "hour": 10,
+          "actual": 102.0,
+          "baseline": 98.0
+        },
+        {
+          "hour": 11,
+          "actual": 126.0,
+          "baseline": 123.0
+        },
+        {
+          "hour": 12,
+          "actual": 142.0,
+          "baseline": 136.0
+        }
+      ],
+      "degradation_window": null,
+      "by_warehouse": [
+        {
+          "actual": 224.0,
+          "baseline": 209.0,
+          "baseline_mean": 209.8,
+          "baseline_std": 6.34,
+          "baseline_min": 202.0,
+          "baseline_max": 218.0,
+          "n_comparable": 5,
+          "abs_diff": 15.0,
+          "pct_diff": 7.18,
+          "z_score": 2.24,
+          "classification": "above_normal",
+          "basis": "2.2 standard deviations above the mean of 5 comparable periods",
+          "key": "WH-A"
+        },
+        {
+          "actual": 163.0,
+          "baseline": 172.0,
+          "baseline_mean": 172.0,
+          "baseline_std": 3.24,
+          "baseline_min": 168.0,
+          "baseline_max": 177.0,
+          "n_comparable": 5,
+          "abs_diff": -9.0,
+          "pct_diff": -5.23,
+          "z_score": -2.78,
+          "classification": "below_normal",
+          "basis": "2.8 standard deviations below the mean of 5 comparable periods",
+          "key": "WH-B"
+        },
+        {
+          "actual": 144.0,
+          "baseline": 130.0,
+          "baseline_mean": 128.0,
+          "baseline_std": 3.74,
+          "baseline_min": 124.0,
+          "baseline_max": 132.0,
+          "n_comparable": 5,
+          "abs_diff": 14.0,
+          "pct_diff": 10.77,
+          "z_score": 4.28,
+          "classification": "above_normal",
+          "basis": "4.3 standard deviations above the mean of 5 comparable periods",
+          "key": "WH-C"
+        }
+      ]
+    },
+    {
+      "metric_id": "orders_picked",
+      "label": "Orders picked",
+      "unit": "orders",
+      "direction": "higher_is_better",
+      "source_table": "dbo.t_order",
+      "columns_used": [
+        "picked_date",
+        "order_number",
+        "wh_id"
+      ],
+      "status": "ok",
+      "actual": 435.0,
+      "baseline": 414.0,
+      "baseline_mean": 414.6,
+      "baseline_std": 8.44,
+      "baseline_min": 403.0,
+      "baseline_max": 425.0,
+      "n_comparable": 5,
+      "abs_diff": 21.0,
+      "pct_diff": 5.07,
+      "z_score": 2.42,
+      "classification": "improvement",
+      "basis": "2.4 standard deviations above the mean of 5 comparable periods",
+      "period_date": "2026-09-24",
+      "period_hours": 13,
+      "note": null,
+      "baseline_method": "same_weekday",
+      "baseline_method_text": "median of the same weekday in previous weeks, over the same hours",
+      "comparables": [
+        {
+          "date": "2026-09-17",
+          "value": 420.0
+        },
+        {
+          "date": "2026-09-10",
+          "value": 425.0
+        },
+        {
+          "date": "2026-09-03",
+          "value": 414.0
+        },
+        {
+          "date": "2026-08-27",
+          "value": 411.0
+        },
+        {
+          "date": "2026-08-20",
+          "value": 403.0
+        }
+      ],
+      "previous_day": {
+        "date": "2026-09-23",
+        "value": 392.0,
+        "pct_diff": 10.97
+      },
+      "trend": {
+        "direction": "flat",
+        "points": 14,
+        "slope_per_day": -1.51,
+        "weekly_change_pct": -1.11,
+        "t_stat": -0.16,
+        "basis": "linear trend over the last 14 complete operating days"
+      },
+      "hourly": [
+        {
+          "hour": 0,
+          "actual": 0.0,
+          "baseline": 0.0
+        },
+        {
+          "hour": 1,
+          "actual": 0.0,
+          "baseline": 0.0
+        },
+        {
+          "hour": 2,
+          "actual": 0.0,
+          "baseline": 0.0
+        },
+        {
+          "hour": 3,
+          "actual": 0.0,
+          "baseline": 0.0
+        },
+        {
+          "hour": 4,
+          "actual": 0.0,
+          "baseline": 0.0
+        },
+        {
+          "hour": 5,
+          "actual": 0.0,
+          "baseline": 0.0
+        },
+        {
+          "hour": 6,
+          "actual": 7.0,
+          "baseline": 4.0
+        },
+        {
+          "hour": 7,
+          "actual": 18.0,
+          "baseline": 17.0
+        },
+        {
+          "hour": 8,
+          "actual": 39.0,
+          "baseline": 37.0
+        },
+        {
+          "hour": 9,
+          "actual": 56.0,
+          "baseline": 52.0
+        },
+        {
+          "hour": 10,
+          "actual": 77.0,
+          "baseline": 80.0
+        },
+        {
+          "hour": 11,
+          "actual": 111.0,
+          "baseline": 109.0
+        },
+        {
+          "hour": 12,
+          "actual": 127.0,
+          "baseline": 117.0
+        }
+      ],
+      "degradation_window": null,
+      "by_warehouse": [
+        {
+          "actual": 136.0,
+          "baseline": 139.0,
+          "baseline_mean": 138.4,
+          "baseline_std": 3.51,
+          "baseline_min": 134.0,
+          "baseline_max": 143.0,
+          "n_comparable": 5,
+          "abs_diff": -3.0,
+          "pct_diff": -2.16,
+          "z_score": -0.68,
+          "classification": "normal_variation",
+          "basis": "0.7 standard deviations below the mean of 5 comparable periods",
+          "key": "WH-B",
+          "shortfall": 3.0,
+          "share_of_shortfall_pct": 100.0
+        },
+        {
+          "actual": 182.0,
+          "baseline": 175.0,
+          "baseline_mean": 172.8,
+          "baseline_std": 8.96,
+          "baseline_min": 161.0,
+          "baseline_max": 184.0,
+          "n_comparable": 5,
+          "abs_diff": 7.0,
+          "pct_diff": 4.0,
+          "z_score": 1.03,
+          "classification": "normal_variation",
+          "basis": "1.0 standard deviations above the mean of 5 comparable periods",
+          "key": "WH-A",
+          "shortfall": 0.0,
+          "share_of_shortfall_pct": 0.0
+        },
+        {
+          "actual": 117.0,
+          "baseline": 102.0,
+          "baseline_mean": 103.4,
+          "baseline_std": 4.98,
+          "baseline_min": 98.0,
+          "baseline_max": 110.0,
+          "n_comparable": 5,
+          "abs_diff": 15.0,
+          "pct_diff": 14.71,
+          "z_score": 2.73,
+          "classification": "improvement",
+          "basis": "2.7 standard deviations above the mean of 5 comparable periods",
+          "key": "WH-C",
+          "shortfall": 0.0,
+          "share_of_shortfall_pct": 0.0
+        }
+      ]
+    },
+    {
+      "metric_id": "orders_packed",
+      "label": "Orders packed",
+      "unit": "orders",
+      "direction": "higher_is_better",
+      "source_table": "dbo.t_order",
+      "columns_used": [
+        "packed_date",
+        "order_number",
+        "wh_id"
+      ],
+      "status": "ok",
+      "actual": 389.0,
+      "baseline": 375.0,
+      "baseline_mean": 375.0,
+      "baseline_std": 8.49,
+      "baseline_min": 363.0,
+      "baseline_max": 383.0,
+      "n_comparable": 5,
+      "abs_diff": 14.0,
+      "pct_diff": 3.73,
+      "z_score": 1.65,
+      "classification": "normal_variation",
+      "basis": "1.6 standard deviations above the mean of 5 comparable periods",
+      "period_date": "2026-09-24",
+      "period_hours": 13,
+      "note": null,
+      "baseline_method": "same_weekday",
+      "baseline_method_text": "median of the same weekday in previous weeks, over the same hours",
+      "comparables": [
+        {
+          "date": "2026-09-17",
+          "value": 383.0
+        },
+        {
+          "date": "2026-09-10",
+          "value": 383.0
+        },
+        {
+          "date": "2026-09-03",
+          "value": 371.0
+        },
+        {
+          "date": "2026-08-27",
+          "value": 375.0
+        },
+        {
+          "date": "2026-08-20",
+          "value": 363.0
+        }
+      ],
+      "previous_day": {
+        "date": "2026-09-23",
+        "value": 350.0,
+        "pct_diff": 11.14
+      },
+      "trend": {
+        "direction": "flat",
+        "points": 14,
+        "slope_per_day": -1.51,
+        "weekly_change_pct": -1.11,
+        "t_stat": -0.16,
+        "basis": "linear trend over the last 14 complete operating days"
+      },
+      "hourly": [
+        {
+          "hour": 0,
+          "actual": 0.0,
+          "baseline": 0.0
+        },
+        {
+          "hour": 1,
+          "actual": 0.0,
+          "baseline": 0.0
+        },
+        {
+          "hour": 2,
+          "actual": 0.0,
+          "baseline": 0.0
+        },
+        {
+          "hour": 3,
+          "actual": 0.0,
+          "baseline": 0.0
+        },
+        {
+          "hour": 4,
+          "actual": 0.0,
+          "baseline": 0.0
+        },
+        {
+          "hour": 5,
+          "actual": 0.0,
+          "baseline": 0.0
+        },
+        {
+          "hour": 6,
+          "actual": 1.0,
+          "baseline": 2.0
+        },
+        {
+          "hour": 7,
+          "actual": 17.0,
+          "baseline": 11.0
+        },
+        {
+          "hour": 8,
+          "actual": 28.0,
+          "baseline": 28.0
+        },
+        {
+          "hour": 9,
+          "actual": 43.0,
+          "baseline": 46.0
+        },
+        {
+          "hour": 10,
+          "actual": 76.0,
+          "baseline": 68.0
+        },
+        {
+          "hour": 11,
+          "actual": 111.0,
+          "baseline": 100.0
+        },
+        {
+          "hour": 12,
+          "actual": 113.0,
+          "baseline": 114.0
+        }
+      ],
+      "degradation_window": {
+        "start": "09:00",
+        "end": "10:00",
+        "ongoing": false,
+        "adverse_hours": 1,
+        "gap": 3.0
+      },
+      "by_warehouse": [
+        {
+          "actual": 123.0,
+          "baseline": 126.0,
+          "baseline_mean": 125.6,
+          "baseline_std": 3.65,
+          "baseline_min": 121.0,
+          "baseline_max": 131.0,
+          "n_comparable": 5,
+          "abs_diff": -3.0,
+          "pct_diff": -2.38,
+          "z_score": -0.71,
+          "classification": "normal_variation",
+          "basis": "0.7 standard deviations below the mean of 5 comparable periods",
+          "key": "WH-B",
+          "shortfall": 3.0,
+          "share_of_shortfall_pct": 100.0
+        },
+        {
+          "actual": 161.0,
+          "baseline": 158.0,
+          "baseline_mean": 155.2,
+          "baseline_std": 7.79,
+          "baseline_min": 145.0,
+          "baseline_max": 165.0,
+          "n_comparable": 5,
+          "abs_diff": 3.0,
+          "pct_diff": 1.9,
+          "z_score": 0.74,
+          "classification": "normal_variation",
+          "basis": "0.7 standard deviations above the mean of 5 comparable periods",
+          "key": "WH-A",
+          "shortfall": 0.0,
+          "share_of_shortfall_pct": 0.0
+        },
+        {
+          "actual": 105.0,
+          "baseline": 94.0,
+          "baseline_mean": 94.2,
+          "baseline_std": 3.96,
+          "baseline_min": 89.0,
+          "baseline_max": 99.0,
+          "n_comparable": 5,
+          "abs_diff": 11.0,
+          "pct_diff": 11.7,
+          "z_score": 2.73,
+          "classification": "improvement",
+          "basis": "2.7 standard deviations above the mean of 5 comparable periods",
+          "key": "WH-C",
+          "shortfall": 0.0,
+          "share_of_shortfall_pct": 0.0
+        }
+      ]
+    },
+    {
+      "metric_id": "orders_loaded",
+      "label": "Orders loaded",
+      "unit": "orders",
+      "direction": "higher_is_better",
+      "source_table": "dbo.t_order",
+      "columns_used": [
+        "loaded_date",
+        "order_number",
+        "wh_id"
+      ],
+      "status": "ok",
+      "actual": 306.0,
+      "baseline": 317.0,
+      "baseline_mean": 316.0,
+      "baseline_std": 13.82,
+      "baseline_min": 297.0,
+      "baseline_max": 335.0,
+      "n_comparable": 5,
+      "abs_diff": -11.0,
+      "pct_diff": -3.47,
+      "z_score": -0.72,
+      "classification": "normal_variation",
+      "basis": "0.7 standard deviations below the mean of 5 comparable periods",
+      "period_date": "2026-09-24",
+      "period_hours": 13,
+      "note": null,
+      "baseline_method": "same_weekday",
+      "baseline_method_text": "median of the same weekday in previous weeks, over the same hours",
+      "comparables": [
+        {
+          "date": "2026-09-17",
+          "value": 335.0
+        },
+        {
+          "date": "2026-09-10",
+          "value": 320.0
+        },
+        {
+          "date": "2026-09-03",
+          "value": 311.0
+        },
+        {
+          "date": "2026-08-27",
+          "value": 317.0
+        },
+        {
+          "date": "2026-08-20",
+          "value": 297.0
+        }
+      ],
+      "previous_day": {
+        "date": "2026-09-23",
+        "value": 296.0,
+        "pct_diff": 3.38
+      },
+      "trend": {
+        "direction": "flat",
+        "points": 14,
+        "slope_per_day": -1.51,
+        "weekly_change_pct": -1.11,
+        "t_stat": -0.16,
+        "basis": "linear trend over the last 14 complete operating days"
+      },
+      "hourly": [
+        {
+          "hour": 0,
+          "actual": 0.0,
+          "baseline": 0.0
+        },
+        {
+          "hour": 1,
+          "actual": 0.0,
+          "baseline": 0.0
+        },
+        {
+          "hour": 2,
+          "actual": 0.0,
+          "baseline": 0.0
+        },
+        {
+          "hour": 3,
+          "actual": 0.0,
+          "baseline": 0.0
+        },
+        {
+          "hour": 4,
+          "actual": 0.0,
+          "baseline": 0.0
+        },
+        {
+          "hour": 5,
+          "actual": 0.0,
+          "baseline": 0.0
+        },
+        {
+          "hour": 6,
+          "actual": 0.0,
+          "baseline": 0.0
+        },
+        {
+          "hour": 7,
+          "actual": 10.0,
+          "baseline": 6.0
+        },
+        {
+          "hour": 8,
+          "actual": 18.0,
+          "baseline": 19.0
+        },
+        {
+          "hour": 9,
+          "actual": 38.0,
+          "baseline": 34.0
+        },
+        {
+          "hour": 10,
+          "actual": 54.0,
+          "baseline": 58.0
+        },
+        {
+          "hour": 11,
+          "actual": 89.0,
+          "baseline": 83.0
+        },
+        {
+          "hour": 12,
+          "actual": 97.0,
+          "baseline": 116.0
+        }
+      ],
+      "degradation_window": {
+        "start": "10:00",
+        "end": "11:00",
+        "ongoing": false,
+        "adverse_hours": 1,
+        "gap": 4.0
+      },
+      "by_warehouse": [
+        {
+          "actual": 81.0,
+          "baseline": 104.0,
+          "baseline_mean": 105.6,
+          "baseline_std": 3.78,
+          "baseline_min": 101.0,
+          "baseline_max": 110.0,
+          "n_comparable": 5,
+          "abs_diff": -23.0,
+          "pct_diff": -22.12,
+          "z_score": -6.51,
+          "classification": "significant_deterioration",
+          "basis": "6.5 standard deviations below the mean of 5 comparable periods",
+          "key": "WH-B",
+          "shortfall": 23.0,
+          "share_of_shortfall_pct": 100.0
+        },
+        {
+          "actual": 137.0,
+          "baseline": 132.0,
+          "baseline_mean": 131.8,
+          "baseline_std": 8.29,
+          "baseline_min": 121.0,
+          "baseline_max": 144.0,
+          "n_comparable": 5,
+          "abs_diff": 5.0,
+          "pct_diff": 3.79,
+          "z_score": 0.63,
+          "classification": "normal_variation",
+          "basis": "0.6 standard deviations above the mean of 5 comparable periods",
+          "key": "WH-A",
+          "shortfall": 0.0,
+          "share_of_shortfall_pct": 0.0
+        },
+        {
+          "actual": 88.0,
+          "baseline": 78.0,
+          "baseline_mean": 78.6,
+          "baseline_std": 3.91,
+          "baseline_min": 75.0,
+          "baseline_max": 84.0,
+          "n_comparable": 5,
+          "abs_diff": 10.0,
+          "pct_diff": 12.82,
+          "z_score": 2.4,
+          "classification": "improvement",
+          "basis": "2.4 standard deviations above the mean of 5 comparable periods",
+          "key": "WH-C",
+          "shortfall": 0.0,
+          "share_of_shortfall_pct": 0.0
+        }
+      ]
+    },
+    {
+      "metric_id": "orders_dispatched",
+      "label": "Orders dispatched",
+      "unit": "orders",
+      "direction": "higher_is_better",
+      "source_table": "dbo.t_order",
+      "columns_used": [
+        "ship_date",
+        "order_number",
+        "wh_id"
+      ],
+      "status": "ok",
+      "actual": 246.0,
+      "baseline": 278.0,
+      "baseline_mean": 277.0,
+      "baseline_std": 8.46,
+      "baseline_min": 263.0,
+      "baseline_max": 285.0,
+      "n_comparable": 5,
+      "abs_diff": -32.0,
+      "pct_diff": -11.51,
+      "z_score": -3.67,
+      "classification": "significant_deterioration",
+      "basis": "3.7 standard deviations below the mean of 5 comparable periods",
+      "period_date": "2026-09-24",
+      "period_hours": 13,
+      "note": null,
+      "baseline_method": "same_weekday",
+      "baseline_method_text": "median of the same weekday in previous weeks, over the same hours",
+      "comparables": [
+        {
+          "date": "2026-09-17",
+          "value": 285.0
+        },
+        {
+          "date": "2026-09-10",
+          "value": 282.0
+        },
+        {
+          "date": "2026-09-03",
+          "value": 278.0
+        },
+        {
+          "date": "2026-08-27",
+          "value": 277.0
+        },
+        {
+          "date": "2026-08-20",
+          "value": 263.0
+        }
+      ],
+      "previous_day": {
+        "date": "2026-09-23",
+        "value": 252.0,
+        "pct_diff": -2.38
+      },
+      "trend": {
+        "direction": "flat",
+        "points": 14,
+        "slope_per_day": -1.51,
+        "weekly_change_pct": -1.11,
+        "t_stat": -0.16,
+        "basis": "linear trend over the last 14 complete operating days"
+      },
+      "hourly": [
+        {
+          "hour": 0,
+          "actual": 0.0,
+          "baseline": 0.0
+        },
+        {
+          "hour": 1,
+          "actual": 0.0,
+          "baseline": 0.0
+        },
+        {
+          "hour": 2,
+          "actual": 0.0,
+          "baseline": 0.0
+        },
+        {
+          "hour": 3,
+          "actual": 0.0,
+          "baseline": 0.0
+        },
+        {
+          "hour": 4,
+          "actual": 0.0,
+          "baseline": 0.0
+        },
+        {
+          "hour": 5,
+          "actual": 0.0,
+          "baseline": 0.0
+        },
+        {
+          "hour": 6,
+          "actual": 0.0,
+          "baseline": 0.0
+        },
+        {
+          "hour": 7,
+          "actual": 5.0,
+          "baseline": 3.0
+        },
+        {
+          "hour": 8,
+          "actual": 17.0,
+          "baseline": 14.0
+        },
+        {
+          "hour": 9,
+          "actual": 20.0,
+          "baseline": 25.0
+        },
+        {
+          "hour": 10,
+          "actual": 51.0,
+          "baseline": 56.0
+        },
+        {
+          "hour": 11,
+          "actual": 64.0,
+          "baseline": 76.0
+        },
+        {
+          "hour": 12,
+          "actual": 89.0,
+          "baseline": 103.0
+        }
+      ],
+      "degradation_window": {
+        "start": "09:00",
+        "end": "13:00",
+        "ongoing": true,
+        "adverse_hours": 4,
+        "gap": 36.0
+      },
+      "by_warehouse": [
+        {
+          "actual": 49.0,
+          "baseline": 93.0,
+          "baseline_mean": 93.0,
+          "baseline_std": 3.32,
+          "baseline_min": 88.0,
+          "baseline_max": 96.0,
+          "n_comparable": 5,
+          "abs_diff": -44.0,
+          "pct_diff": -47.31,
+          "z_score": -13.27,
+          "classification": "significant_deterioration",
+          "basis": "13.3 standard deviations below the mean of 5 comparable periods",
+          "key": "WH-B",
+          "shortfall": 44.0,
+          "share_of_shortfall_pct": 97.78
+        },
+        {
+          "actual": 118.0,
+          "baseline": 119.0,
+          "baseline_mean": 114.8,
+          "baseline_std": 6.38,
+          "baseline_min": 106.0,
+          "baseline_max": 120.0,
+          "n_comparable": 5,
+          "abs_diff": -1.0,
+          "pct_diff": -0.84,
+          "z_score": 0.5,
+          "classification": "normal_variation",
+          "basis": "0.5 standard deviations above the mean of 5 comparable periods",
+          "key": "WH-A",
+          "shortfall": 1.0,
+          "share_of_shortfall_pct": 2.22
+        },
+        {
+          "actual": 79.0,
+          "baseline": 69.0,
+          "baseline_mean": 69.2,
+          "baseline_std": 2.28,
+          "baseline_min": 67.0,
+          "baseline_max": 72.0,
+          "n_comparable": 5,
+          "abs_diff": 10.0,
+          "pct_diff": 14.49,
+          "z_score": 4.3,
+          "classification": "improvement",
+          "basis": "4.3 standard deviations above the mean of 5 comparable periods",
+          "key": "WH-C",
+          "shortfall": 0.0,
+          "share_of_shortfall_pct": 0.0
+        }
+      ]
+    },
+    {
+      "metric_id": "pending_orders",
+      "label": "Pending orders (backlog)",
+      "unit": "orders",
+      "direction": "lower_is_better",
+      "source_table": "dbo.t_order",
+      "columns_used": [
+        "ship_date",
+        "order_date",
+        "order_number",
+        "wh_id"
+      ],
+      "status": "ok",
+      "actual": 285.0,
+      "baseline": 233.0,
+      "baseline_mean": 232.8,
+      "baseline_std": 4.15,
+      "baseline_min": 226.0,
+      "baseline_max": 237.0,
+      "n_comparable": 5,
+      "abs_diff": 52.0,
+      "pct_diff": 22.32,
+      "z_score": 12.59,
+      "classification": "significant_deterioration",
+      "basis": "12.6 standard deviations above the mean of 5 comparable periods",
+      "period_date": "2026-09-24",
+      "period_hours": 13,
+      "baseline_method": "same_weekday",
+      "baseline_method_text": "pending orders at 13:00 on comparable days (median of the same weekday in previous weeks, over the same hours)",
+      "comparables": [
+        {
+          "date": "2026-09-17",
+          "value": 235.0
+        },
+        {
+          "date": "2026-09-10",
+          "value": 233.0
+        },
+        {
+          "date": "2026-09-03",
+          "value": 226.0
+        },
+        {
+          "date": "2026-08-27",
+          "value": 233.0
+        },
+        {
+          "date": "2026-08-20",
+          "value": 237.0
+        }
+      ],
+      "as_of": "2026-09-24T13:00",
+      "note": "Counts orders created in the 30 days before each point in time that had no dispatched timestamp yet at that time.",
+      "previous_day": {
+        "date": "2026-09-23",
+        "value": 222.0,
+        "pct_diff": 28.38
+      },
+      "by_warehouse": [
+        {
+          "actual": 114.0,
+          "baseline": 79.0,
+          "baseline_mean": 79.0,
+          "baseline_std": 1.87,
+          "baseline_min": 76.0,
+          "baseline_max": 81.0,
+          "n_comparable": 5,
+          "abs_diff": 35.0,
+          "pct_diff": 44.3,
+          "z_score": 18.71,
+          "classification": "significant_deterioration",
+          "basis": "18.7 standard deviations above the mean of 5 comparable periods",
+          "key": "WH-B",
+          "shortfall": 35.0,
+          "share_of_shortfall_pct": 67.31
+        },
+        {
+          "actual": 65.0,
+          "baseline": 58.0,
+          "baseline_mean": 58.8,
+          "baseline_std": 2.05,
+          "baseline_min": 57.0,
+          "baseline_max": 61.0,
+          "n_comparable": 5,
+          "abs_diff": 7.0,
+          "pct_diff": 12.07,
+          "z_score": 3.03,
+          "classification": "significant_deterioration",
+          "basis": "3.0 standard deviations above the mean of 5 comparable periods",
+          "key": "WH-C",
+          "shortfall": 7.0,
+          "share_of_shortfall_pct": 13.46
+        },
+        {
+          "actual": 106.0,
+          "baseline": 96.0,
+          "baseline_mean": 95.0,
+          "baseline_std": 3.0,
+          "baseline_min": 90.0,
+          "baseline_max": 98.0,
+          "n_comparable": 5,
+          "abs_diff": 10.0,
+          "pct_diff": 10.42,
+          "z_score": 3.67,
+          "classification": "significant_deterioration",
+          "basis": "3.7 standard deviations above the mean of 5 comparable periods",
+          "key": "WH-A",
+          "shortfall": 10.0,
+          "share_of_shortfall_pct": 19.23
+        }
+      ],
+      "current_status_breakdown": [
+        {
+          "status": "PACKED",
+          "orders": 106.0
+        },
+        {
+          "status": "RELEASED",
+          "orders": 91.0
+        },
+        {
+          "status": "LOADED",
+          "orders": 68.0
+        },
+        {
+          "status": "PICKED",
+          "orders": 45.0
+        }
+      ]
+    },
+    {
+      "metric_id": "processing_time",
+      "label": "Order processing time",
+      "unit": "minutes",
+      "direction": "lower_is_better",
+      "source_table": "dbo.t_order",
+      "columns_used": [
+        "ship_date",
+        "order_date",
+        "order_number",
+        "wh_id"
+      ],
+      "status": "ok",
+      "actual": 101.68,
+      "baseline": 104.66,
+      "baseline_mean": 103.76,
+      "baseline_std": 2.37,
+      "baseline_min": 100.51,
+      "baseline_max": 106.28,
+      "n_comparable": 5,
+      "abs_diff": -2.98,
+      "pct_diff": -2.85,
+      "z_score": -0.88,
+      "classification": "normal_variation",
+      "basis": "0.9 standard deviations below the mean of 5 comparable periods",
+      "period_date": "2026-09-24",
+      "period_hours": 13,
+      "note": null,
+      "baseline_method": "same_weekday",
+      "baseline_method_text": "median of the same weekday in previous weeks, over the same hours",
+      "comparables": [
+        {
+          "date": "2026-09-17",
+          "value": 100.51
+        },
+        {
+          "date": "2026-09-10",
+          "value": 104.66
+        },
+        {
+          "date": "2026-09-03",
+          "value": 102.13
+        },
+        {
+          "date": "2026-08-27",
+          "value": 105.2
+        },
+        {
+          "date": "2026-08-20",
+          "value": 106.28
+        }
+      ],
+      "previous_day": {
+        "date": "2026-09-23",
+        "value": 103.47,
+        "pct_diff": -1.73
+      },
+      "trend": {
+        "direction": "flat",
+        "points": 14,
+        "slope_per_day": 0.08,
+        "weekly_change_pct": 0.5,
+        "t_stat": 1.83,
+        "basis": "linear trend over the last 14 complete operating days"
+      },
+      "hourly": [
+        {
+          "hour": 0,
+          "actual": null,
+          "baseline": null
+        },
+        {
+          "hour": 1,
+          "actual": null,
+          "baseline": null
+        },
+        {
+          "hour": 2,
+          "actual": null,
+          "baseline": null
+        },
+        {
+          "hour": 3,
+          "actual": null,
+          "baseline": null
+        },
+        {
+          "hour": 4,
+          "actual": null,
+          "baseline": null
+        },
+        {
+          "hour": 5,
+          "actual": null,
+          "baseline": null
+        },
+        {
+          "hour": 6,
+          "actual": null,
+          "baseline": null
+        },
+        {
+          "hour": 7,
+          "actual": 85.6,
+          "baseline": 78.8
+        },
+        {
+          "hour": 8,
+          "actual": 90.71,
+          "baseline": 95.43
+        },
+        {
+          "hour": 9,
+          "actual": 99.0,
+          "baseline": 101.56
+        },
+        {
+          "hour": 10,
+          "actual": 105.53,
+          "baseline": 104.12
+        },
+        {
+          "hour": 11,
+          "actual": 102.89,
+          "baseline": 104.09
+        },
+        {
+          "hour": 12,
+          "actual": 102.21,
+          "baseline": 104.78
+        }
+      ],
+      "degradation_window": {
+        "start": "07:00",
+        "end": "08:00",
+        "ongoing": false,
+        "adverse_hours": 1,
+        "gap": 6.8
+      },
+      "by_warehouse": [
+        {
+          "actual": 102.32,
+          "baseline": 101.92,
+          "baseline_mean": 101.44,
+          "baseline_std": 3.7,
+          "baseline_min": 95.93,
+          "baseline_max": 104.87,
+          "n_comparable": 5,
+          "abs_diff": 0.4,
+          "pct_diff": 0.4,
+          "z_score": 0.24,
+          "classification": "normal_variation",
+          "basis": "0.2 standard deviations above the mean of 5 comparable periods",
+          "key": "WH-A"
+        },
+        {
+          "actual": 103.42,
+          "baseline": 106.06,
+          "baseline_mean": 104.83,
+          "baseline_std": 4.13,
+          "baseline_min": 97.64,
+          "baseline_max": 107.94,
+          "n_comparable": 5,
+          "abs_diff": -2.64,
+          "pct_diff": -2.49,
+          "z_score": -0.34,
+          "classification": "normal_variation",
+          "basis": "0.3 standard deviations below the mean of 5 comparable periods",
+          "key": "WH-C"
+        },
+        {
+          "actual": 97.35,
+          "baseline": 106.93,
+          "baseline_mean": 105.87,
+          "baseline_std": 3.12,
+          "baseline_min": 101.48,
+          "baseline_max": 108.63,
+          "n_comparable": 5,
+          "abs_diff": -9.58,
+          "pct_diff": -8.96,
+          "z_score": -2.73,
+          "classification": "improvement",
+          "basis": "2.7 standard deviations below the mean of 5 comparable periods",
+          "key": "WH-B"
+        }
+      ]
+    }
+  ],
+  "unavailable": [],
+  "data_sources": [
+    {
+      "kind": "activity",
+      "table": "dbo.t_tran_log",
+      "rows_in_lookback": 115145,
+      "latest_record": "2026-09-24T13:29:58",
+      "warehouse_column": "wh_id",
+      "process_column": "tran_type",
+      "timestamp": {
+        "column": "start_tran_date",
+        "time_column": "start_tran_time",
+        "granularity": "hour"
+      },
+      "stages": null,
+      "dimensions": {}
+    },
+    {
+      "kind": "orders",
+      "table": "dbo.t_order",
+      "rows_in_lookback": 28671,
+      "latest_record": "2026-09-24T13:29:13.487424",
+      "warehouse_column": "wh_id",
+      "process_column": null,
+      "timestamp": null,
+      "stages": {
+        "created": "order_date",
+        "picked": "picked_date",
+        "packed": "packed_date",
+        "loaded": "loaded_date",
+        "dispatched": "ship_date"
+      },
+      "dimensions": {
+        "category": "order_category"
+      }
+    }
+  ],
+  "discovery_notes": [],
+  "limitations": [
+    "Pending orders (backlog): Counts orders created in the 30 days before each point in time that had no dispatched timestamp yet at that time.",
+    "Units moved counts tran_qty for picking transaction types only (Pick (201)), so each unit is counted once. Moves, replenishment, put-away, loading, reversals and adjustments are excluded. Shipping types are not added, to avoid counting picked units a second time.",
+    "Order counts are distinct per hour and summed, so an order that reaches the same stage in two different hours is counted twice.",
+    "Timestamps are read as the warehouse's local time (Asia/Kolkata).",
+    "No external data (weather, traffic, transport, events) is used; causes outside the warehouse database cannot be assessed."
+  ],
+  "evidence": {
+    "internal": {
+      "source": "workspace warehouse database",
+      "items": [
+        {
+          "kind": "observed",
+          "statement": "Warehouse transactions: 1,376 transactions today up to 13:00.",
+          "metric_id": "transactions",
+          "scope": {}
+        },
+        {
+          "kind": "observed",
+          "statement": "Units moved: 1,995 units today up to 13:00.",
+          "metric_id": "units_moved",
+          "scope": {}
+        },
+        {
+          "kind": "observed",
+          "statement": "Orders received: 531 orders today up to 13:00.",
+          "metric_id": "orders_received",
+          "scope": {}
+        },
+        {
+          "kind": "observed",
+          "statement": "Orders picked: 435 orders today up to 13:00.",
+          "metric_id": "orders_picked",
+          "scope": {}
+        },
+        {
+          "kind": "observed",
+          "statement": "Orders packed: 389 orders today up to 13:00.",
+          "metric_id": "orders_packed",
+          "scope": {}
+        },
+        {
+          "kind": "observed",
+          "statement": "Orders loaded: 306 orders today up to 13:00.",
+          "metric_id": "orders_loaded",
+          "scope": {}
+        },
+        {
+          "kind": "observed",
+          "statement": "Orders dispatched: 246 orders today up to 13:00.",
+          "metric_id": "orders_dispatched",
+          "scope": {}
+        },
+        {
+          "kind": "observed",
+          "statement": "Order processing time: 102 minutes today up to 13:00.",
+          "metric_id": "processing_time",
+          "scope": {}
+        },
+        {
+          "kind": "observed",
+          "statement": "Pending orders (backlog): 285 orders today up to 13:00.",
+          "metric_id": "pending_orders",
+          "scope": {}
+        },
+        {
+          "kind": "calculated",
+          "statement": "Orders dispatched is \u221211.5% against a baseline of 278 orders (median of the same weekday in previous weeks, over the same hours, 5 comparable periods).",
+          "metric_id": "orders_dispatched",
+          "scope": {}
+        },
+        {
+          "kind": "anomaly",
+          "statement": "Orders dispatched is 3.7 standard deviations below its historical mean for this window \u2014 significant deterioration.",
+          "metric_id": "orders_dispatched",
+          "scope": {}
+        },
+        {
+          "kind": "anomaly",
+          "statement": "Pending orders (backlog) also shows significant deterioration (+22.3%).",
+          "metric_id": "pending_orders",
+          "scope": {}
+        },
+        {
+          "kind": "calculated",
+          "statement": "Warehouse WH-B accounts for 98% of the total dispatch shortfall (\u221247.3% against its own baseline).",
+          "metric_id": "orders_dispatched",
+          "scope": {
+            "warehouse": "WH-B"
+          }
+        },
+        {
+          "kind": "calculated",
+          "statement": "Other warehouses: WH-A \u22120.8%, WH-C +14.5%.",
+          "metric_id": "orders_dispatched",
+          "scope": {}
+        },
+        {
+          "kind": "calculated",
+          "statement": "Within warehouse WH-B, order stage changes against baseline: dispatch \u221247.3%, loading \u221222.1%, packing \u22122.4%, picking \u22122.2%.",
+          "metric_id": "orders_dispatched",
+          "scope": {
+            "warehouse": "WH-B"
+          }
+        },
+        {
+          "kind": "calculated",
+          "statement": "The largest observed decline in warehouse WH-B is in dispatch (\u221247.3%).",
+          "metric_id": "orders_dispatched",
+          "scope": {
+            "warehouse": "WH-B"
+          }
+        },
+        {
+          "kind": "calculated",
+          "statement": "Hourly comparison for warehouse WH-B: dispatch has been on the adverse side of its hourly baseline from 09:00 and still is.",
+          "metric_id": "orders_dispatched",
+          "scope": {
+            "warehouse": "WH-B"
+          }
+        },
+        {
+          "kind": "calculated",
+          "statement": "By category in warehouse WH-B: 'Parcel' accounts for 44% of the shortfall (\u221264.5%).",
+          "metric_id": "orders_dispatched",
+          "scope": {
+            "warehouse": "WH-B",
+            "dimension": "category"
+          }
+        },
+        {
+          "kind": "inference",
+          "statement": "Pending orders are +22.3% against their baseline, which is consistent with orders accumulating rather than a drop in demand. This is an interpretation, not a verified cause.",
+          "metric_id": "pending_orders",
+          "scope": {}
+        },
+        {
+          "kind": "unknown",
+          "statement": "The available warehouse data shows a significant dispatch decline concentrated in warehouse WH-B, beginning around 09:00, but the available data is insufficient to determine the underlying cause.",
+          "metric_id": "orders_dispatched",
+          "scope": {}
+        }
+      ]
+    },
+    "external": [],
+    "correlation": null
+  },
+  "demand_adjustments": [],
+  "freshness_warnings": [],
+  "overall": {
+    "classification": "significant_deterioration",
+    "performance_index_pct": 1.28,
+    "metrics_evaluated": 8,
+    "basis": "median of the performance metrics' % changes against their baselines, signed so that negative is worse; the classification is the most severe individual metric classification"
+  },
+  "changes": [
+    {
+      "metric_id": "pending_orders",
+      "label": "Pending orders (backlog)",
+      "unit": "orders",
+      "actual": 285.0,
+      "baseline": 233.0,
+      "abs_diff": 52.0,
+      "pct_diff": 22.32,
+      "z_score": 12.59,
+      "classification": "significant_deterioration",
+      "direction": "up",
+      "favourable": false,
+      "freshness_warning": false,
+      "demand_adjusted": false
+    },
+    {
+      "metric_id": "orders_dispatched",
+      "label": "Orders dispatched",
+      "unit": "orders",
+      "actual": 246.0,
+      "baseline": 278.0,
+      "abs_diff": -32.0,
+      "pct_diff": -11.51,
+      "z_score": -3.67,
+      "classification": "significant_deterioration",
+      "direction": "down",
+      "favourable": false,
+      "freshness_warning": false,
+      "demand_adjusted": false
+    },
+    {
+      "metric_id": "orders_picked",
+      "label": "Orders picked",
+      "unit": "orders",
+      "actual": 435.0,
+      "baseline": 414.0,
+      "abs_diff": 21.0,
+      "pct_diff": 5.07,
+      "z_score": 2.42,
+      "classification": "improvement",
+      "direction": "up",
+      "favourable": true,
+      "freshness_warning": false,
+      "demand_adjusted": false
+    },
+    {
+      "metric_id": "orders_received",
+      "label": "Orders received",
+      "unit": "orders",
+      "actual": 531.0,
+      "baseline": 510.0,
+      "abs_diff": 21.0,
+      "pct_diff": 4.12,
+      "z_score": 2.63,
+      "classification": "normal_variation",
+      "direction": "up",
+      "favourable": null,
+      "freshness_warning": false,
+      "demand_adjusted": false
+    },
+    {
+      "metric_id": "units_moved",
+      "label": "Units moved",
+      "unit": "units",
+      "actual": 1995.0,
+      "baseline": 1887.0,
+      "abs_diff": 108.0,
+      "pct_diff": 5.72,
+      "z_score": 1.71,
+      "classification": "normal_variation",
+      "direction": "up",
+      "favourable": true,
+      "freshness_warning": false,
+      "demand_adjusted": false
+    },
+    {
+      "metric_id": "orders_packed",
+      "label": "Orders packed",
+      "unit": "orders",
+      "actual": 389.0,
+      "baseline": 375.0,
+      "abs_diff": 14.0,
+      "pct_diff": 3.73,
+      "z_score": 1.65,
+      "classification": "normal_variation",
+      "direction": "up",
+      "favourable": true,
+      "freshness_warning": false,
+      "demand_adjusted": false
+    },
+    {
+      "metric_id": "processing_time",
+      "label": "Order processing time",
+      "unit": "minutes",
+      "actual": 101.68,
+      "baseline": 104.66,
+      "abs_diff": -2.98,
+      "pct_diff": -2.85,
+      "z_score": -0.88,
+      "classification": "normal_variation",
+      "direction": "down",
+      "favourable": true,
+      "freshness_warning": false,
+      "demand_adjusted": false
+    },
+    {
+      "metric_id": "orders_loaded",
+      "label": "Orders loaded",
+      "unit": "orders",
+      "actual": 306.0,
+      "baseline": 317.0,
+      "abs_diff": -11.0,
+      "pct_diff": -3.47,
+      "z_score": -0.72,
+      "classification": "normal_variation",
+      "direction": "down",
+      "favourable": false,
+      "freshness_warning": false,
+      "demand_adjusted": false
+    },
+    {
+      "metric_id": "transactions",
+      "label": "Warehouse transactions",
+      "unit": "transactions",
+      "actual": 1376.0,
+      "baseline": 1380.0,
+      "abs_diff": -4.0,
+      "pct_diff": -0.29,
+      "z_score": -0.18,
+      "classification": "normal_variation",
+      "direction": "down",
+      "favourable": false,
+      "freshness_warning": false,
+      "demand_adjusted": false
+    }
+  ],
+  "drilldown": {
+    "status": "deterioration_found",
+    "headline_metric": {
+      "metric_id": "orders_dispatched",
+      "label": "Orders dispatched",
+      "actual": 246.0,
+      "baseline": 278.0,
+      "pct_diff": -11.51,
+      "z_score": -3.67,
+      "classification": "significant_deterioration",
+      "unit": "orders",
+      "baseline_method": "median of the same weekday in previous weeks, over the same hours"
+    },
+    "metric_ranking": [
+      {
+        "metric_id": "orders_dispatched",
+        "label": "Orders dispatched",
+        "pct_diff": -11.51,
+        "z_score": -3.67,
+        "classification": "significant_deterioration",
+        "freshness_warning": false
+      },
+      {
+        "metric_id": "pending_orders",
+        "label": "Pending orders (backlog)",
+        "pct_diff": 22.32,
+        "z_score": 12.59,
+        "classification": "significant_deterioration",
+        "freshness_warning": false
+      }
+    ],
+    "warehouse": {
+      "name": "WH-B",
+      "share_of_shortfall_pct": 97.78,
+      "concentrated": true,
+      "pct_diff": -47.31,
+      "classification": "significant_deterioration",
+      "comparison": [
+        {
+          "name": "WH-B",
+          "actual": 49.0,
+          "baseline": 93.0,
+          "pct_diff": -47.31,
+          "z_score": -13.27,
+          "classification": "significant_deterioration",
+          "share_of_shortfall_pct": 97.78,
+          "oriented_pct": -47.31
+        },
+        {
+          "name": "WH-A",
+          "actual": 118.0,
+          "baseline": 119.0,
+          "pct_diff": -0.84,
+          "z_score": 0.5,
+          "classification": "normal_variation",
+          "share_of_shortfall_pct": 2.22,
+          "oriented_pct": -0.84
+        },
+        {
+          "name": "WH-C",
+          "actual": 79.0,
+          "baseline": 69.0,
+          "pct_diff": 14.49,
+          "z_score": 4.3,
+          "classification": "improvement",
+          "share_of_shortfall_pct": 0.0,
+          "oriented_pct": 14.49
+        }
+      ]
+    },
+    "process": {
+      "scope": "WH-B",
+      "kind": "order stage",
+      "comparison": [
+        {
+          "name": "dispatch",
+          "actual": 49.0,
+          "baseline": 93.0,
+          "pct_diff": -47.31,
+          "z_score": -13.27,
+          "classification": "significant_deterioration",
+          "share_of_shortfall_pct": 97.78,
+          "oriented_pct": -47.31,
+          "metric_id": "orders_dispatched"
+        },
+        {
+          "name": "loading",
+          "actual": 81.0,
+          "baseline": 104.0,
+          "pct_diff": -22.12,
+          "z_score": -6.51,
+          "classification": "significant_deterioration",
+          "share_of_shortfall_pct": 100.0,
+          "oriented_pct": -22.12,
+          "metric_id": "orders_loaded"
+        },
+        {
+          "name": "packing",
+          "actual": 123.0,
+          "baseline": 126.0,
+          "pct_diff": -2.38,
+          "z_score": -0.71,
+          "classification": "normal_variation",
+          "share_of_shortfall_pct": 100.0,
+          "oriented_pct": -2.38,
+          "metric_id": "orders_packed"
+        },
+        {
+          "name": "picking",
+          "actual": 136.0,
+          "baseline": 139.0,
+          "pct_diff": -2.16,
+          "z_score": -0.68,
+          "classification": "normal_variation",
+          "share_of_shortfall_pct": 100.0,
+          "oriented_pct": -2.16,
+          "metric_id": "orders_picked"
+        }
+      ],
+      "primary": "dispatch",
+      "primary_is_significant": true
+    },
+    "time_window": {
+      "scope": "WH-B",
+      "start": "09:00",
+      "end": "13:00",
+      "ongoing": true,
+      "adverse_hours": 4,
+      "hourly": [
+        {
+          "hour": 0,
+          "actual": 0.0,
+          "baseline": 0.0
+        },
+        {
+          "hour": 1,
+          "actual": 0.0,
+          "baseline": 0.0
+        },
+        {
+          "hour": 2,
+          "actual": 0.0,
+          "baseline": 0.0
+        },
+        {
+          "hour": 3,
+          "actual": 0.0,
+          "baseline": 0.0
+        },
+        {
+          "hour": 4,
+          "actual": 0.0,
+          "baseline": 0.0
+        },
+        {
+          "hour": 5,
+          "actual": 0.0,
+          "baseline": 0.0
+        },
+        {
+          "hour": 6,
+          "actual": 0.0,
+          "baseline": 0.0
+        },
+        {
+          "hour": 7,
+          "actual": 2.0,
+          "baseline": 1.0
+        },
+        {
+          "hour": 8,
+          "actual": 4.0,
+          "baseline": 4.0
+        },
+        {
+          "hour": 9,
+          "actual": 4.0,
+          "baseline": 9.0
+        },
+        {
+          "hour": 10,
+          "actual": 9.0,
+          "baseline": 21.0
+        },
+        {
+          "hour": 11,
+          "actual": 11.0,
+          "baseline": 25.0
+        },
+        {
+          "hour": 12,
+          "actual": 19.0,
+          "baseline": 34.0
+        }
+      ]
+    },
+    "dimensions": [
+      {
+        "dimension": "category",
+        "column": "order_category",
+        "scope": "WH-B",
+        "top": [
+          {
+            "name": "Parcel",
+            "actual": 11.0,
+            "baseline": 31.0,
+            "pct_diff": -64.52,
+            "z_score": -7.44,
+            "classification": "significant_deterioration",
+            "share_of_shortfall_pct": 44.44,
+            "oriented_pct": -64.52
+          },
+          {
+            "name": "Bulk",
+            "actual": 16.0,
+            "baseline": 31.0,
+            "pct_diff": -48.39,
+            "z_score": -11.66,
+            "classification": "significant_deterioration",
+            "share_of_shortfall_pct": 33.33,
+            "oriented_pct": -48.39
+          },
+          {
+            "name": "Cold",
+            "actual": 22.0,
+            "baseline": 32.0,
+            "pct_diff": -31.25,
+            "z_score": -10.51,
+            "classification": "significant_deterioration",
+            "share_of_shortfall_pct": 22.22,
+            "oriented_pct": -31.25
+          }
+        ]
+      }
+    ],
+    "context": [
+      "Pending orders are +22.3% against their baseline, which is consistent with orders accumulating rather than a drop in demand. This is an interpretation, not a verified cause."
+    ],
+    "conclusion": "The available warehouse data shows a significant dispatch decline concentrated in warehouse WH-B, beginning around 09:00, but the available data is insufficient to determine the underlying cause.",
+    "recommendations": [
+      "Review dispatch activity in warehouse WH-B from 09:00 onward (today up to 13:00).",
+      "Check category 'Parcel' in warehouse WH-B, which accounts for 44% of the shortfall.",
+      "Review the pending-order queue in warehouse WH-B; pending orders are +22.3% against baseline.",
+      "Confirm with the operations team what changed operationally; the database alone cannot establish the cause."
+    ]
+  },
+  "kpis": {
+    "units_moved": {
+      "metric_id": "units_moved",
+      "label": "Units moved",
+      "unit": "units",
+      "value": 1995.0,
+      "baseline": 1887.0,
+      "pct_diff": 5.72,
+      "classification": "normal_variation",
+      "status": "ok",
+      "reason": null,
+      "freshness_warning": false
+    },
+    "orders_dispatched": {
+      "metric_id": "orders_dispatched",
+      "label": "Orders dispatched",
+      "unit": "orders",
+      "value": 246.0,
+      "baseline": 278.0,
+      "pct_diff": -11.51,
+      "classification": "significant_deterioration",
+      "status": "ok",
+      "reason": null,
+      "freshness_warning": false
+    },
+    "pending_orders": {
+      "metric_id": "pending_orders",
+      "label": "Pending orders (backlog)",
+      "unit": "orders",
+      "value": 285.0,
+      "baseline": 233.0,
+      "pct_diff": 22.32,
+      "classification": "significant_deterioration",
+      "status": "ok",
+      "reason": null,
+      "freshness_warning": false
+    },
+    "overall": {
+      "label": "Overall performance",
+      "value": 1.28,
+      "unit": "%",
+      "classification": "significant_deterioration"
+    }
+  }
+}

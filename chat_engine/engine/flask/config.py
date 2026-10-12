@@ -4714,6 +4714,7 @@ function displayPredictionResults(predictionType, results) {
                                         <li onclick="showAgents('${workspace.id}')"><i class="fas fa-envelope"></i>Query Agents</li>
                                         <li onclick="showResetDevicesAgent('${workspace.id}')"><i class="fas fa-sync-alt"></i>Reset Devices Agent</li>
                                         <li onclick="showUnpickAgent('${workspace.id}')"><i class="fas fa-undo-alt"></i>Unpick Agent</li>
+                                        <li onclick="showWarehousePerfAgent('${workspace.id}')"><i class="fas fa-warehouse"></i>Warehouse Performance</li>
 
                                         <div class="sub-section-label">Workspace Admin</div>
                                         <li onclick="showDBConfig('${workspace.id}')"><i class="fas fa-server"></i>DB Config</li>
@@ -9819,6 +9820,8 @@ function downloadDeviceResetLogs(format) {
 }
 
     </script>
+    <!-- Warehouse Performance Agent dashboard (served separately so it never passes through Jinja) -->
+    <script src="/api/v0/warehouse_perf/dashboard.js"></script>
 </body>
 </html>
 """

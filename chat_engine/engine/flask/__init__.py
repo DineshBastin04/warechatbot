@@ -98,6 +98,7 @@ from .auth import AuthInterface, NoAuth, BasicAuth
 from .config import index_template
 from .prediction_page import prediction_template
 from .anomaly_page import anomaly_template
+from ..warehouse_perf import create_warehouse_perf
 
 import io, uuid, logging
 from typing import Dict, Any, Optional
@@ -1345,7 +1346,7 @@ def _rows_to_csv(rows):
     return out.getvalue()
 
 # Send email using SMTP (e.g., Gmail)
-def _send_email_smtp(recipients, subject, body, rows, filename, cfg):
+def _send_email_smtp(recipients, subject, body, rows, filename, cfg, html=None, inline_images=None, extra_attachments=None):
     if not recipients:
         return False
 
@@ -1359,7 +1360,29 @@ def _send_email_smtp(recipients, subject, body, rows, filename, cfg):
     msg["From"] = SMTP_FROM
     msg["To"] = ", ".join(recipients)
     msg["Subject"] = subject
-    msg.attach(MIMEText(body, "plain", "utf-8"))
+    if html:
+        # multipart/related( multipart/alternative(plain, html), inline images by Content-ID )
+        from email.mime.image import MIMEImage
+        related = MIMEMultipart("related")
+        alternative = MIMEMultipart("alternative")
+        alternative.attach(MIMEText(body, "plain", "utf-8"))
+        alternative.attach(MIMEText(html, "html", "utf-8"))
+        related.attach(alternative)
+        for cid, data in inline_images or []:
+            img = MIMEImage(data, _subtype="png")
+            img.add_header("Content-ID", f"<{cid}>")
+            img.add_header("Content-Disposition", "inline", filename=f"{cid}.png")
+            related.attach(img)
+        msg.attach(related)
+    else:
+        msg.attach(MIMEText(body, "plain", "utf-8"))
+    for att_name, att_mime, att_data in extra_attachments or []:
+        maintype, _, subtype = (att_mime or "application/octet-stream").partition("/")
+        extra_part = MIMEBase(maintype, subtype or "octet-stream")
+        extra_part.set_payload(att_data)
+        encoders.encode_base64(extra_part)
+        extra_part.add_header("Content-Disposition", f'attachment; filename="{att_name}"')
+        msg.attach(extra_part)
 
     csv_data = _rows_to_csv(rows)
     if csv_data:
@@ -1383,7 +1406,7 @@ def _send_email_smtp(recipients, subject, body, rows, filename, cfg):
 
 
 # Send email using Microsoft Graph API (Outlook)
-def _send_email_outlook_graph(recipients, subject, body, rows, filename, cfg):
+def _send_email_outlook_graph(recipients, subject, body, rows, filename, cfg, html=None, inline_images=None, extra_attachments=None):
     outlook = cfg["outlook"]
 
     # 1) Get access token
@@ -1414,13 +1437,30 @@ def _send_email_outlook_graph(recipients, subject, body, rows, filename, cfg):
             ).decode("utf-8")
         })
 
+    for cid, data in inline_images or []:
+        attachments.append({
+            "@odata.type": "#microsoft.graph.fileAttachment",
+            "name": f"{cid}.png",
+            "contentType": "image/png",
+            "contentBytes": base64.b64encode(data).decode("utf-8"),
+            "isInline": True,
+            "contentId": cid,
+        })
+    for att_name, att_mime, att_data in extra_attachments or []:
+        attachments.append({
+            "@odata.type": "#microsoft.graph.fileAttachment",
+            "name": att_name,
+            "contentType": att_mime or "application/octet-stream",
+            "contentBytes": base64.b64encode(att_data).decode("utf-8"),
+        })
+
     # 3) Build mail payload
     mail = {
         "message": {
             "subject": subject,
             "body": {
-                "contentType": "Text",
-                "content": body
+                "contentType": "HTML" if html else "Text",
+                "content": html if html else body
             },
             "toRecipients": [
                 {"emailAddress": {"address": r}} for r in recipients
@@ -1445,7 +1485,9 @@ def _send_email_outlook_graph(recipients, subject, body, rows, filename, cfg):
 
 
 # Main function to send email based on configured provider
-def _send_email(recipients, subject, body, rows, filename):
+def _send_email(recipients, subject, body, rows, filename, html=None, inline_images=None, extra_attachments=None):
+    # html / inline_images [(content_id, png_bytes)] / extra_attachments [(name, mime, bytes)]
+    # are optional; every existing caller passes none of them and gets the old plain-text email.
     if not recipients:
         return False
 
@@ -1462,12 +1504,14 @@ def _send_email(recipients, subject, body, rows, filename):
         # keys on cfg (set by save_feedback_config) — _send_email_smtp expects
         # them there, not inside the nested cfg["gmail"] sub-object.
         return _send_email_smtp(
-            recipients, subject, body, rows, filename, cfg
+            recipients, subject, body, rows, filename, cfg,
+            html=html, inline_images=inline_images, extra_attachments=extra_attachments
         )
 
     if provider == "outlook":
         return _send_email_outlook_graph(
-            recipients, subject, body, rows, filename, cfg
+            recipients, subject, body, rows, filename, cfg,
+            html=html, inline_images=inline_images, extra_attachments=extra_attachments
         )
 
     raise ValueError(f"Unsupported email provider: {provider}")
@@ -6457,6 +6501,17 @@ class VannaFlaskApp(VannaFlaskAPI):
         logger.info("Scheduled-question agents scheduler started and rebuilt from persisted state.")
         # ============= end scheduled agents infra =============
 
+        # ============= Warehouse Performance Intelligence Agent =============
+        # Automatic, zero-config agent in engine/warehouse_perf (routes under
+        # /api/v0/warehouse_perf/*). Its per-workspace jobs run on the scheduled-agents
+        # scheduler above; it resolves each workspace explicitly and never uses the global
+        # `vn`. Reuses this module's _send_email / load_email_config for delivery. Returns
+        # None (and logs) on any init failure, so it can't stop the app from starting.
+        self.warehouse_perf = create_warehouse_perf(
+            self, send_email=_send_email, load_email_config=load_email_config,
+            scheduler=scheduled_agents_scheduler,
+        )
+
         @self.flask_app.route("/", methods=["GET", "POST"])
         def login():
             return self.auth.login_handler(request)
@@ -9710,6 +9765,12 @@ class VannaFlaskApp(VannaFlaskAPI):
             if not workspace_id or not username:
                 return jsonify({"type": "error", "error": "workspace_id and an authenticated user are required"}), 400
 
+            # "/warehouse ..." belongs to the Warehouse Performance Agent; everything else is unchanged.
+            _wpa = getattr(self, "warehouse_perf", None)
+            if _wpa is not None and _wpa.is_warehouse_command(raw_text):
+                body, status = _wpa.handle_chat(user, workspace_id, raw_text)
+                return jsonify(body), status
+
             body, status = _handle_schedule_message(workspace_id, raw_text, prior_question, username, prior_sql)
             return jsonify(body), status
 
@@ -9738,6 +9799,11 @@ class VannaFlaskApp(VannaFlaskAPI):
                 return jsonify({"type": "error", "error": "workspace_id and an authenticated user are required"}), 400
             if not raw_text:
                 return jsonify({"type": "error", "error": "No message provided"}), 400
+
+            _wpa = getattr(self, "warehouse_perf", None)
+            if _wpa is not None and _wpa.is_warehouse_command(raw_text):
+                body, status = _wpa.handle_chat(user, workspace_id, raw_text)
+                return jsonify(body), status
 
             if raw_text.startswith('/') or _has_pending_clarification(workspace_id, username):
                 body, status = _handle_schedule_message(workspace_id, raw_text, prior_question, username, previous_sql)
