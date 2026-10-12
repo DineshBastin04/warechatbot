@@ -5732,21 +5732,62 @@ function togglePrediction(predictionType, index, workspaceId) {
             contentArea.innerHTML = `
                 <h4>Teams Configuration</h4>
                 <input type="hidden" id="workspaceId" value="${id}">
-                <p>Configure Microsoft Teams integration for this workspace.</p>
+                <p>Let this workspace's users chat with WAI in Microsoft Teams — typed or spoken questions,
+                   scheduled reports and alerts. Users sign in with the <b>Teams email</b> set on their WAI user
+                   (User Management).</p>
 
                 <label class="switch">
                     <input type="checkbox" id="enableTeamsToggle">
                     <span class="slider round"></span>
                 </label>
-                <span style="margin-left: 10px;">Enable Teams Connector</span>
+                <span style="margin-left: 10px;">Enable Teams for this workspace</span>
 
                 <button class="save" onclick="saveTeamsConfig()">Save Configuration</button>
                 <p id="teams-test-result"></p>
+
+                <h4 style="margin-top:24px;">Server setup</h4>
+                <div id="teamsStatus">Loading…</div>
             `;
             contentArea.style.display = 'block';
 
             // Load the configuration immediately
             loadTeamsConfig();
+            loadTeamsStatus();
+        }
+
+        function loadTeamsStatus() {
+            const target = document.getElementById('teamsStatus');
+            fetch('/api/teams/status')
+                .then(response => response.json())
+                .then(s => {
+                    const esc = (v) => String(v == null ? '' : v)
+                        .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+                    const row = (label, value, ok) =>
+                        `<tr><td style="padding:6px 10px;"><b>${label}</b></td>` +
+                        `<td style="padding:6px 10px;">${ok === false ? '⚠️ ' : ''}${esc(value) || '<em>not set</em>'}</td></tr>`;
+                    const missingBot = (s.missing_for_bot || []).join(', ');
+                    const missingTab = (s.missing_for_tab || []).join(', ');
+                    const missingPkg = (s.missing_for_package || []).join(', ');
+                    target.innerHTML = `
+                        <table style="border-collapse:collapse;margin-bottom:12px;">
+                            ${row('Bot', s.bot_running ? 'Running' : (missingBot ? 'Not configured — set ' + missingBot + ' in .env' : 'Not running (check the server log)'), s.bot_running)}
+                            ${row('Voice tab', s.tab_enabled ? (missingTab ? 'Enabled but missing ' + missingTab : 'Enabled') : 'Off — set TEAMS_TAB_ENABLED=true in .env', s.tab_enabled && !missingTab)}
+                            ${row('Bot (Entra app) ID', s.bot_app_id)}
+                            ${row('Tenant ID', s.tenant_id)}
+                            ${row('Messaging endpoint', s.messaging_endpoint)}
+                            ${row('Tab URL', s.tab_url)}
+                            ${row('SSO Application ID URI', s.sso_resource)}
+                        </table>
+                        <p style="font-size:13px;">Set the <b>messaging endpoint</b> on your Azure Bot resource, and the
+                           <b>SSO Application ID URI</b> under "Expose an API" in the Entra app registration.</p>
+                        ${missingPkg
+                            ? `<p style="font-size:13px;">⚠️ Set ${esc(missingPkg)} in .env to build the Teams app package.</p>`
+                            : `<a class="save" style="display:inline-block;text-decoration:none;" href="/api/teams/manifest.zip">Download Teams app package</a>
+                               <p style="font-size:13px;">Give this .zip to your Teams administrator to upload in the Teams admin center
+                               (Manage apps → Upload new app), or upload it yourself if custom app upload is allowed.</p>`}
+                    `;
+                })
+                .catch(error => { target.textContent = 'Could not load Teams server status: ' + error.message; });
         }
 
         function saveTeamsConfig() {

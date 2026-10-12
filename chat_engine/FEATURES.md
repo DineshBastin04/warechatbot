@@ -12,6 +12,12 @@ Three roles: `superadmin`, `admin`, `user`.
 - A plain `user` is pinned to exactly one **workspace** and is rejected at login if that workspace doesn't exist or was deleted.
 - `admin`/`superadmin` aren't workspace-restricted and see admin/superadmin dashboards (`/admin`, `/superadmin`) with cross-workspace management tools.
 - Route-level enforcement is via `requires_auth` (must be logged in) and `requires_role([...])` (must have one of the given roles) decorators.
+- On top of that, a deny-by-default guard (`engine/flask/access_control.py`) runs before every request.
+  - Only the login page, static assets, the Teams endpoints (which authenticate themselves) and logout are public.
+  - Workspace/LLM/DB configuration, training, SQL testing, user management, debug and agent-control routes are admin-only.
+  - Everything else requires a login.
+- Plain users get only a workspace's id and name from `/get_workspace` (never its DB password or API key), and can connect only their own workspace.
+- `/connect-vanna` always builds the connection from the workspace's saved config.
 
 ## 2. Workspaces (multi-tenancy)
 
@@ -97,9 +103,27 @@ Superadmin routes cover user management (create/update/delete, assign role + wor
 
 A second, smaller RAG pipeline, separate from the main text-to-SQL knowledge base: upload Standard Operating Procedure documents, list/delete them, and query them conversationally at `/sop-chat`. Useful for "how do I..." process questions that aren't data questions.
 
-## 13. Microsoft Teams integration
+## 13. Microsoft Teams integration and voice
 
-The chat can be exposed inside MS Teams via the Bot Framework SDK (`/api/messages` webhook). **Constraint to know about**: Teams integration is enforced on only one workspace at a time — enabling it for a new workspace automatically disables it everywhere else.
+`engine/teams/` (Microsoft 365 Agents SDK) exposes the same chat pipeline in Teams. Setup is in [SETUP.md](SETUP.md#microsoft-teams).
+
+- **Bot chat (`/api/messages`).**
+  - Every request's Bot Framework JWT is validated.
+  - Turns run on a background event loop, so slow queries never hit Teams' timeout.
+  - Answers come back as an Adaptive Card: summary, a table of up to 10 rows, and the SQL.
+  - Follow-up questions build on the previous answer (`reset` starts over).
+  - Scheduling works exactly as in the web chat (`/list`, `/stop <id>`, `/email list`, "email … every Monday"). Chat-channel results are pushed back into the user's Teams chat.
+  - Data changes show a confirm card that only admins can execute.
+  - Attached audio files are transcribed and answered.
+- **Tab (`/teams/tab`).**
+  - Teams single sign-on starts a normal WAI session and opens the existing chat UI.
+  - Voice uses server speech: the mic records, stops on silence, and sends the audio to `/api/v0/transcribe`. The question is sent automatically and the answer is read aloud via `/api/v0/speak`.
+  - The same server speech is used in any browser without built-in speech recognition.
+- **Identity.**
+  - Teams users are matched to WAI users by the **Teams email** set in User Management. The first match stores their Entra object id.
+  - Plain users are served in their assigned workspace, which must have Teams enabled.
+  - Several workspaces can have Teams enabled at once.
+- **Admin page.** The Teams Configuration page shows setup status, the messaging endpoint and SSO values, and a **Download Teams app package** button.
 
 ## 14. Interactive admin wizards
 

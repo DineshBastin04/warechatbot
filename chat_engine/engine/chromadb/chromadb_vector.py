@@ -19,7 +19,7 @@ from functools import wraps
 import threading  # NEW: For thread names in logs
 import logging
 import math
-from fuzzywuzzy import fuzz
+from rapidfuzz import fuzz
 import json
 import os
 
@@ -143,6 +143,25 @@ for k, v in raw_table_relevance.items():
 # FINAL: Assign cleaned & safe dictionary
 # ----------------------------------------
 table_relevance = cleaned_table_relevance
+
+
+def _normalize_keyword(text):
+    """Lowercase, collapse whitespace, strip trailing punctuation — the same
+    normalization ChromaDB_VectorStore.normalize_keyword applies to questions."""
+    if not text:
+        return ""
+    normalized = " ".join(text.lower().split())
+    return re.sub(r'[?.!,;]*$', '', normalized).strip()
+
+
+# Keyword matching compares every glossary term and table-relevance keyword
+# against every question, so normalize them once here rather than per question.
+glossary_normalized = [
+    (key, [(term, _normalize_keyword(term)) for term in (entry.get("terms") or [])])
+    for key, entry in glossary.items()
+]
+for _kw_tuple, _table_entry in table_relevance.items():
+    _table_entry["norm_kws"] = [nk for nk in (_normalize_keyword(k) for k in _kw_tuple) if nk]
 
 
 default_ef = embedding_functions.DefaultEmbeddingFunction()
@@ -765,29 +784,24 @@ class ChromaDB_VectorStore(VannaBase):
         """
         SIMPLE normalization for exact matching - preserves original word structure
         """
-        if not text:
-            return ""
-        
-        # Convert to lowercase only
-        normalized = text.lower()
-        
-        # Remove extra whitespace only
-        normalized = ' '.join(normalized.split())
-        
-        # Remove ONLY trailing punctuation (preserves internal punctuation)
-        normalized = re.sub(r'[?.!,;]*$', '', normalized).strip()
-        
-        return normalized
+        return _normalize_keyword(text)
 
     def get_similar_question_sql(
         self,
         question: str,
         workspace: str = None,
         training_data_type: str = None,
+        keyword_text: str = None,
         **kwargs,
     ) -> dict | list:
         """
         Unified retrieval for SQL + Documentation, including domain context.
+
+        keyword_text: the text glossary/table-relevance/query-mapping matching
+        runs against (defaults to `question`). Callers that retrieve with a long
+        composite query — e.g. question + generated SQL for summaries — pass the
+        plain question here: fuzzy-matching every keyword against kilobytes of
+        SQL was taking ~40 s per call and matched SQL tokens, not intent.
 
         Uses:
         - Exact match on SQL dataset (if available)
@@ -810,8 +824,7 @@ class ChromaDB_VectorStore(VannaBase):
         Returns SQL list when training_data_type == "sql".
         """
 
-        import re, ast, asyncio, traceback
-        from fuzzywuzzy import fuzz
+        import re, ast, traceback
         import threading
 
         thread_name = threading.current_thread().name
@@ -856,7 +869,7 @@ class ChromaDB_VectorStore(VannaBase):
                     )
 
             # === STEP 2: NORMALIZE + TOKENIZE ===
-            normalized_question = self.normalize_keyword(question)
+            normalized_question = self.normalize_keyword(keyword_text or question)
             tokens = re.findall(r"\w+", normalized_question)
             token_set = set(tokens)
             bigrams = {" ".join(tokens[i:i + 2]) for i in range(len(tokens) - 1)}
@@ -878,9 +891,8 @@ class ChromaDB_VectorStore(VannaBase):
 
             # === STEP 3: GLOSSARY MATCHING ===
             matched_glossary_keys, matched_keywords = [], []
-            for key, entry in glossary.items():
-                for term in entry.get("terms", []):
-                    nt = self.normalize_keyword(term)
+            for key, terms in glossary_normalized:
+                for term, nt in terms:
                     if (
                         nt in normalized_question
                         or nt in token_set
@@ -913,6 +925,8 @@ class ChromaDB_VectorStore(VannaBase):
                     return t[:-1]
                 return t
 
+            question_token_bases = {_normalize_token(qt) for qt in token_set}
+
             for kw_tuple, table_entry in table_relevance.items():
                 table = table_entry["table"]
                 resolved_db = table_entry.get("db") or primary_db_alias
@@ -931,8 +945,8 @@ class ChromaDB_VectorStore(VannaBase):
                 rule_score = 0.0
                 kw_count = max(len(kws), 1)
 
-                for kw in kws:
-                    norm_kw = self.normalize_keyword(kw)
+                norm_kws = table_entry.get("norm_kws") or [self.normalize_keyword(k) for k in kws]
+                for norm_kw in norm_kws:
                     if not norm_kw:
                         continue
 
@@ -950,8 +964,7 @@ class ChromaDB_VectorStore(VannaBase):
                     token_hits = 0
 
                     for t in kw_tokens:
-                        base = _normalize_token(t)
-                        if any(_normalize_token(qt) == base for qt in token_set):
+                        if _normalize_token(t) in question_token_bases:
                             token_hits += 1
 
                     if token_hits > 1:
@@ -1091,28 +1104,19 @@ class ChromaDB_VectorStore(VannaBase):
             if dbs_present == {secondary_db_alias} and secondary_db_alias:
                 doc_query_kwargs["where"] = {"db": secondary_db_alias}
 
-            async def async_retrieve():
-                sql_task = asyncio.to_thread(
-                    self._submit_to_pool,
-                    self._async_query_collection,
-                    collection,
-                    [query_text],
-                    self.n_results_sql,
-                    **query_kwargs,
-                )
-                doc_task = asyncio.to_thread(
-                    self._submit_to_pool,
-                    self._async_query_collection,
-                    collection,
-                    [query_text],
-                    self.n_results_documentation,
-                    **doc_query_kwargs,
-                )
-                return await asyncio.gather(sql_task, doc_task)
-
+            # Run the SQL and documentation vector queries in parallel on the
+            # thread pool. (This used to go through asyncio.run(), which fails
+            # outright when called from code already running in an event loop —
+            # e.g. the Teams bot — and the failure was swallowed as "no results".)
             sql_results, doc_results = [], []
             try:
-                sql_raw, doc_raw = asyncio.run(async_retrieve())
+                sql_future = self.executor.submit(
+                    self._async_query_collection, collection, [query_text], self.n_results_sql, **query_kwargs
+                )
+                doc_future = self.executor.submit(
+                    self._async_query_collection, collection, [query_text], self.n_results_documentation, **doc_query_kwargs
+                )
+                sql_raw, doc_raw = sql_future.result(timeout=30), doc_future.result(timeout=30)
                 sql_extracted = ChromaDB_VectorStore._extract_documents(sql_raw)
                 doc_extracted = ChromaDB_VectorStore._extract_documents(doc_raw)
                 sql_results = [
