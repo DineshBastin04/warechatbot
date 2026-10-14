@@ -34,3 +34,10 @@ __pycache__/
 # Editor/tooling
 .vscode/
 .claude/
+
+# Fallback written by log_user_activity when the feedback DB insert fails
+# (contains real user questions - never commit)
+user_activity_log_backup.txt
+
+# Teams app packages built for upload (regenerate from the Teams Configuration page)
+wai-teams-app*.zip

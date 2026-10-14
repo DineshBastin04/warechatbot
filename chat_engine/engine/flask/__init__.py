@@ -81,7 +81,7 @@ from .prediction_page import prediction_template
 from .anomaly_page import anomaly_template
 from .vn_registry import VannaRegistry, VnRouter
 from .chat_context import ChatContext, friendly_sql_error
-from .access_control import install_access_control, ADMIN_ROLES
+from .access_control import install_access_control, ADMIN_ROLES, _wants_json, normalize_role
 from ..warehouse_perf import create_warehouse_perf
 
 import io, uuid, logging
@@ -372,6 +372,19 @@ def _ensure_feedback_schema(user_mgmt_config):
             "DRIVER={ODBC Driver 17 for SQL Server};"
             f"SERVER={server_part};DATABASE=master;UID={username};PWD={password};"
         )
+        # A database name can't be a bind parameter — it's an identifier, so it has
+        # to be interpolated. Constrain it to a plain identifier first: the value is
+        # operator-supplied config rather than user input, but nothing downstream
+        # would stop a name containing "]" from closing the brackets and appending
+        # its own statement.
+        if not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]{0,127}", database or ""):
+            logger.warning(
+                f"Feedback DB schema auto-provisioning skipped: {database!r} is not a plain "
+                "identifier (letters, digits and underscore only).",
+                extra={"admin": True},
+            )
+            return
+
         with pyodbc.connect(master_conn_str, timeout=15, autocommit=True) as conn:
             cursor = conn.cursor()
             cursor.execute(f"IF DB_ID(N'{database}') IS NULL CREATE DATABASE [{database}]")
@@ -387,7 +400,14 @@ def _ensure_feedback_schema(user_mgmt_config):
                 IF OBJECT_ID('dbo.users', 'U') IS NULL
                 BEGIN
                     CREATE TABLE dbo.users (
-                        question_id         VARCHAR(100)   NOT NULL PRIMARY KEY,
+                        -- UNIQUEIDENTIFIER, not VARCHAR(100): existing deployments
+                        -- have this column as uniqueidentifier, and the mismatch is
+                        -- what let SQL Server error 8169 ("conversion from a
+                        -- character string to uniqueidentifier failed") reach
+                        -- production unnoticed — a freshly provisioned VARCHAR
+                        -- database accepted the bad value and never reproduced it.
+                        -- Every writer already supplies str(uuid.uuid4()).
+                        question_id         UNIQUEIDENTIFIER NOT NULL PRIMARY KEY,
                         question             NVARCHAR(4000) NULL,
                         sql_query            NVARCHAR(4000) NULL,
                         summary              NVARCHAR(4000) NULL,
@@ -403,9 +423,17 @@ def _ensure_feedback_schema(user_mgmt_config):
                         output_tokens        INT            NULL,
                         cached_input_tokens  INT            NULL,
                         cost_usd             FLOAT          NULL,
-                        model_name           NVARCHAR(100)  NULL
+                        model_name           NVARCHAR(100)  NULL,
+                        parent_question_id   NVARCHAR(100)  NULL
                     )
                 END
+            """)
+            # log_user_activity writes parent_question_id and the history query
+            # reads it, but tables created before it existed don't have it — every
+            # insert then failed and fell back to user_activity_log_backup.txt.
+            cursor.execute("""
+                IF COL_LENGTH('dbo.users', 'parent_question_id') IS NULL
+                    ALTER TABLE dbo.users ADD parent_question_id NVARCHAR(100) NULL
             """)
             cursor.execute("""
                 IF OBJECT_ID('dbo.user_feedback', 'U') IS NULL
@@ -429,6 +457,74 @@ def _ensure_feedback_schema(user_mgmt_config):
             f"Feedback DB schema auto-provisioning skipped (best-effort): {e}",
             extra={"admin": True},
         )
+
+
+# USD per 1M tokens: OpenAI standard-tier list prices. One table for every cost
+# calculation — billing and the agent-suggestion token counter each used to
+# keep their own copy, both well above list price. Keys are matched as the
+# longest prefix of the reported model (dated snapshots like
+# "gpt-4.1-mini-2025-04-14" resolve to "gpt-4.1-mini"). Re-check against
+# https://openai.com/api/pricing when adding a model or if your contract differs.
+MODEL_PRICING = {
+    "gpt-4.1":      {"input": 2.00,  "cached_input": 0.50,   "output": 8.00},
+    "gpt-4.1-mini": {"input": 0.40,  "cached_input": 0.10,   "output": 1.60},
+    "gpt-4.1-nano": {"input": 0.10,  "cached_input": 0.025,  "output": 0.40},
+    "gpt-4o":       {"input": 2.50,  "cached_input": 1.25,   "output": 10.00},
+    "gpt-4o-mini":  {"input": 0.15,  "cached_input": 0.075,  "output": 0.60},
+    "gpt-5":        {"input": 1.25,  "cached_input": 0.125,  "output": 10.00},
+    "gpt-5-mini":   {"input": 0.25,  "cached_input": 0.025,  "output": 2.00},
+    "gpt-5-nano":   {"input": 0.05,  "cached_input": 0.005,  "output": 0.40},
+    "gpt-5.1":      {"input": 1.25,  "cached_input": 0.125,  "output": 10.00},
+    "o3":           {"input": 2.00,  "cached_input": 0.50,   "output": 8.00},
+    "o3-mini":      {"input": 1.10,  "cached_input": 0.55,   "output": 4.40},
+    "o4-mini":      {"input": 1.10,  "cached_input": 0.275,  "output": 4.40},
+    "o1":           {"input": 15.00, "cached_input": 7.50,   "output": 60.00},
+}
+
+
+def compute_cost_usd(normalized_model, input_tokens, output_tokens, cached_input_tokens=0):
+    """Cost of one call. Cached input is billed at its discounted rate, not free;
+    an unknown model costs 0 (logged by the caller's model name, not guessed)."""
+    price = MODEL_PRICING.get(normalized_model)
+    if not price:
+        return 0.0
+    cached = max(0, min(cached_input_tokens or 0, input_tokens or 0))
+    uncached = max(0, (input_tokens or 0) - cached)
+    return round(
+        uncached / 1_000_000 * price["input"]
+        + cached / 1_000_000 * price["cached_input"]
+        + (output_tokens or 0) / 1_000_000 * price["output"],
+        8,
+    )
+
+
+def session_cookie_settings(env):
+    """(Flask config to apply, whether the Teams tab is on without a Secure cookie).
+
+    SESSION_COOKIE_SECURE decides explicitly; unset, it follows TEAMS_TAB_ENABLED.
+    See the call site in VannaFlaskApp.__init__ for why the two are separate.
+    """
+    def _flag(name):
+        return str(env.get(name, "")).strip().lower()
+
+    teams_tab_enabled = _flag("TEAMS_TAB_ENABLED") in ("1", "true", "yes")
+    secure_env = _flag("SESSION_COOKIE_SECURE")
+    if secure_env in ("0", "false", "no"):
+        use_secure = False
+    elif secure_env in ("1", "true", "yes"):
+        use_secure = True
+    else:
+        use_secure = teams_tab_enabled
+
+    if use_secure:
+        config = {
+            "SESSION_COOKIE_SAMESITE": "None",
+            "SESSION_COOKIE_SECURE": True,
+            "SESSION_COOKIE_PARTITIONED": True,
+        }
+    else:
+        config = {}
+    return config, (teams_tab_enabled and not use_secure)
 
 
 TRANSLATE_API_KEY = os.getenv("GOOGLE_TRANSLATE_API_KEY")
@@ -1652,6 +1748,11 @@ class VannaFlaskAPI:
                 user = self.auth.get_user(request)
 
             if not user:
+                # API callers (fetch/XHR) can't follow a redirect to an HTML login
+                # page — they'd parse it as a broken response. Same rule the
+                # access-control layer uses: JSON 401 for them, redirect for pages.
+                if _wants_json(request.path):
+                    return jsonify({"type": "error", "error": "Authentication required"}), 401
                 return redirect(url_for("login"))
 
             # Put user into kwargs only if not present
@@ -1675,10 +1776,14 @@ class VannaFlaskAPI:
                     user = self.auth.get_user(request)
 
                 if not user:
+                    if _wants_json(request.path):  # see requires_auth
+                        return jsonify({"type": "error", "error": "Authentication required"}), 401
                     return redirect(url_for("login"))
 
                 # Prefer role from kwargs/session/user
-                role = kwargs.get("role") or session.get("role") or getattr(user, "role", None) or user.get("role", None)
+                role = normalize_role(
+                    kwargs.get("role") or session.get("role") or getattr(user, "role", None) or user.get("role", None)
+                )
 
                 logger.debug("requires_role check: required=%s role=%s user=%s", allowed_roles, role, getattr(user, "id", None) or user.get("id", None))
 
@@ -1707,13 +1812,18 @@ class VannaFlaskAPI:
     def __init__(
         self,
         #vn: VannaBase,
-        cache: Cache = MemoryCache(),
-        auth: AuthInterface = NoAuth(),
+        cache: Cache = None,
+        auth: AuthInterface = None,
         debug=False,
         allow_llm_to_see_data=False,
         chart=True,
     ):
         global vn
+        # Defaults are built here, not in the signature: a default argument is
+        # evaluated once at import, so merely importing this module started a
+        # cache-eviction thread and (for BasicAuth) wrote users into ChromaDB.
+        cache = cache if cache is not None else MemoryCache()
+        auth = auth if auth is not None else NoAuth()
         """
         Expose a Flask API that can be used to interact with a Vanna instance.
 
@@ -1923,16 +2033,28 @@ class VannaFlaskAPI:
             # message/_handle_prediction_message already self-protect this
             # way; this was the one shared entry point missing it.
             # ────────────────────────────────────────────────
-            workspace_id_for_init = flask.session.get("workspace_id")
+            # Teams/voice callers pass ctx and run on a worker thread with no
+            # Flask request — touching flask.session there raises "Working
+            # outside of request context". Take their workspace from ctx.
+            workspace_id_for_init = ctx.workspace_id if ctx else flask.session.get("workspace_id")
+            if not workspace_id_for_init and not ctx:
+                # No workspace bound in this session yet (fresh login, or a client
+                # that never called /connect-vanna). This used to fall through to a
+                # process-global default — whichever workspace anyone connected last
+                # — and, with none, to an unconfigured instance that crashed with
+                # "'_OpenAIVanna' object has no attribute 'client'". Resolve the
+                # workspace this request names instead, and remember it.
+                workspace_id_for_init = self._workspace_id_from_ref(workspace)
+                if not workspace_id_for_init:
+                    return {"type": "error", "error": f"Workspace '{workspace}' was not found."}, 404
+                user_for_check = self.auth.get_user(flask.request) or {"role": session.get("role")}
+                if not self._user_can_access_workspace(user_for_check, workspace_id_for_init):
+                    return {"type": "error", "error": "You don't have access to this workspace"}, 403
+                session["workspace_id"] = workspace_id_for_init
             if workspace_id_for_init:
                 initialized, init_err = self.ensure_vanna_initialized(workspace_id_for_init)
                 if not initialized:
                     return {"type": "error", "error": init_err}, 400
-            elif vn is None:
-                return {
-                    "type": "error",
-                    "error": "Workspace is not connected yet — reconnect the workspace and try again.",
-                }, 400
 
             # ────────────────────────────────────────────────
             # Resume a pending query clarification, if one is open for this
@@ -1944,7 +2066,7 @@ class VannaFlaskAPI:
             # popped (not just peeked) here since this is the actual consumer.
             # ────────────────────────────────────────────────
             clarification_workspace_id = workspace_id_for_init
-            clarification_username = session.get("username")
+            clarification_username = session_username  # ctx-aware, see top of function
             query_clarification_attempts = 0
             if clarification_workspace_id and clarification_username:
                 clarification_key = f"{clarification_workspace_id}:{clarification_username}"
@@ -2230,9 +2352,12 @@ class VannaFlaskAPI:
             """
             Get the user configuration including enabled agent scenarios.
             """
-            # Security check: ensure requesting user matches username or is admin
+            # Security check: ensure requesting user matches username or is admin.
+            # Compare against ADMIN_ROLES — a bare != "admin" also locked out
+            # superadmins, who outrank admins everywhere else in the app.
             current_user = user # from requires_auth
-            if current_user.get("username") != username and current_user.get("role") != "admin":
+            if (current_user.get("username") != username
+                    and str(current_user.get("role") or "").lower() not in ADMIN_ROLES):
                  return jsonify({"type": "error", "error": "Unauthorized access to user config"}), 403
 
             agent_config = []
@@ -3902,6 +4027,7 @@ class VannaFlaskAPI:
             
 
         @self.flask_app.route("/api/v0/remove_training_data", methods=["POST"])
+        @self.requires_role(list(ADMIN_ROLES))  # on the route too, not only in access_control's list
         @self.requires_auth
         def remove_training_data(user: any):
             """
@@ -3922,13 +4048,24 @@ class VannaFlaskAPI:
                     success:
                       type: boolean
             """
-            # Get id from the JSON body
-            id = flask.request.json.get("id")
+            body = flask.request.get_json(silent=True) or {}
+            id = body.get("id")
 
             if id is None:
                 return jsonify({"type": "error", "error": "No id provided"})
 
-            if vn.remove_training_data(id=id):
+            # SQL/doc entries live in the per-workspace collection, so without a
+            # workspace the vector store can only fail them (-ddl is global).
+            # Take it from the body, else the caller's session workspace (stored
+            # as an id; the collection is keyed by the workspace's name).
+            workspace = body.get("workspace") or body.get("workspace_name")
+            if not workspace and session.get("workspace_id"):
+                meta = get_workspace_metadata(self, session["workspace_id"]) or {}
+                workspace = meta.get("name")
+            if workspace and not self._user_can_access_workspace(user, workspace):
+                return jsonify({"type": "error", "error": "You don't have access to this workspace"}), 403
+
+            if vn.remove_training_data(id=id, workspace=workspace):
                 return jsonify({"success": True})
             else:
                 return jsonify(
@@ -4386,29 +4523,7 @@ class VannaFlaskAPI:
             except Exception:
                 normalized_model = model_name or "unknown"
 
-            # -----------------------------
-            # Pricing table (same as billing)
-            # -----------------------------
-            MODEL_PRICING = {
-                "gpt-4.1": {"input": 5.00, "output": 15.00},
-                "gpt-4.1-mini": {"input": 0.60, "output": 2.40},
-                "gpt-4.1-preview": {"input": 3.00, "output": 10.00},
-                "o3": {"input": 1.00, "output": 3.00},
-                "o1": {"input": 6.00, "output": 18.00},
-                "o1-preview": {"input": 6.00, "output": 18.00},
-                "gpt-5.1": {"input": 1.25, "output": 10.00},
-            }
-
-            price_in = MODEL_PRICING.get(normalized_model, {}).get("input", 0.0)
-            price_out = MODEL_PRICING.get(normalized_model, {}).get("output", 0.0)
-
-            billable_input = max(0, input_tokens - cached_input_tokens)
-
-            cost_usd = round(
-                (billable_input / 1_000_000) * price_in +
-                (output_tokens / 1_000_000) * price_out,
-                8,
-            )
+            cost_usd = compute_cost_usd(normalized_model, input_tokens, output_tokens, cached_input_tokens)
 
             # -----------------------------
             # Metadata keys
@@ -4847,6 +4962,10 @@ class VannaFlaskAPI:
             if not workspace_id or not question_id:
                 return jsonify({"status": "error", "error": "workspace_id and question_id are required"}), 400
 
+            question_id = _canonical_question_id(question_id)
+            if question_id is None:
+                return jsonify({"status": "error", "error": "question_id is not a valid id"}), 400
+
             if rating is not None:
                 try:
                     rating = int(rating)
@@ -4904,6 +5023,10 @@ class VannaFlaskAPI:
             sql          = request.args.get('sql')
 
             if not workspace_id or not question_id:
+                return jsonify({"exists": False})
+
+            question_id = _canonical_question_id(question_id)
+            if question_id is None:
                 return jsonify({"exists": False})
 
             try:
@@ -5129,8 +5252,8 @@ class VannaFlaskApp(VannaFlaskAPI):
     def __init__(
         self,
         #vn: VannaBase,  # Allow `vn` to be None
-        cache: Cache = MemoryCache(),
-        auth: AuthInterface = BasicAuth(),
+        cache: Cache = None,  # MemoryCache() — built below, see VannaFlaskAPI.__init__
+        auth: AuthInterface = None,  # BasicAuth()
         debug=False,
         allow_llm_to_see_data=True,
         logo="http://tychons.com/wp-content/uploads/2025/09/warehouse_logo-2.png",
@@ -5186,6 +5309,8 @@ class VannaFlaskApp(VannaFlaskAPI):
         Returns:
             None
         """
+        cache = cache if cache is not None else MemoryCache()
+        auth = auth if auth is not None else BasicAuth()
         super().__init__(cache, auth, debug, allow_llm_to_see_data, chart, **kwargs)
          
 
@@ -5193,20 +5318,40 @@ class VannaFlaskApp(VannaFlaskAPI):
         # user out on each restart and breaks sessions across a Teams tab reload.
         secret_key = os.environ.get("FLASK_SECRET_KEY", "")
         if not secret_key:
+            # Name the exact file: this aborts startup, so the operator sees no
+            # login page at all and has nothing else to go on.
+            _env_file = os.path.join(
+                os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), ".env"
+            )
             raise RuntimeError(
-                "FLASK_SECRET_KEY is not set. Add a long random value to .env, e.g. "
-                "python -c \"import secrets; print(secrets.token_hex(32))\""
+                f"FLASK_SECRET_KEY is not set — the server cannot start. Add a long random "
+                f"value to {_env_file}, e.g.\n"
+                "    python -c \"import secrets; print(secrets.token_hex(32))\""
             )
         self.flask_app.secret_key = secret_key
 
         # Inside a Teams tab the app runs in a third-party iframe: the session
         # cookie must be SameSite=None; Secure (HTTPS only) to be sent at all,
         # and Partitioned so browsers that block third-party cookies keep it.
-        if os.environ.get("TEAMS_TAB_ENABLED", "").strip().lower() in ("1", "true", "yes"):
-            self.flask_app.config.update(
-                SESSION_COOKIE_SAMESITE="None",
-                SESSION_COOKIE_SECURE=True,
-                SESSION_COOKIE_PARTITIONED=True,
+        #
+        # But a Secure cookie is dropped outright over plain HTTP, and this was
+        # keyed only off TEAMS_TAB_ENABLED — so turning the tab on silently broke
+        # login for anyone reaching the app at http://127.0.0.1:<port>: the POST
+        # validated, the cookie never persisted, and the next request bounced
+        # straight back to the login page with no error shown. SESSION_COOKIE_SECURE
+        # now decides it explicitly, defaulting to the tab setting so HTTPS
+        # deployments are unchanged.
+        _cookie_config, _tab_without_secure = session_cookie_settings(os.environ)
+        self.flask_app.config.update(_cookie_config)
+        if _tab_without_secure:
+            # Both can't be satisfied at once: the tab needs SameSite=None;Secure,
+            # plain HTTP can't carry it. Say so rather than leaving the tab to fail
+            # later with an unexplained empty session.
+            logger.warning(
+                "TEAMS_TAB_ENABLED is on but SESSION_COOKIE_SECURE is disabled — password "
+                "login works over plain HTTP, but the Teams tab will not hold a session. "
+                "Drop SESSION_COOKIE_SECURE from .env (and use the HTTPS URL) before using the tab.",
+                extra={"admin": True},
             )
 
         install_access_control(self.flask_app)
@@ -6608,7 +6753,7 @@ class VannaFlaskApp(VannaFlaskAPI):
             except Exception as e:
                 print("Error fetching Ollama models:", e)
                 local_models = []
-            return local_models, local_models + ["gpt-3.5-turbo", "gpt-4", "gpt-4o", "o3"]
+            return local_models, local_models + ["gpt-4.1-mini", "gpt-4.1", "gpt-3.5-turbo", "gpt-4", "gpt-4o", "o3"]
 
 
 
@@ -6630,7 +6775,11 @@ class VannaFlaskApp(VannaFlaskAPI):
             else:
                 return jsonify({"error": "Workspace not found for user"}), 404
         @self.flask_app.route("/admin", endpoint="admin")
-        @self.requires_role("admin")
+        # list(ADMIN_ROLES), not the bare string "admin": requires_role compares
+        # with == when given a string, so a superadmin — who outranks an admin and
+        # whom access_control already admits here — was being 403'd off the admin
+        # dashboard. Every other admin route uses the list form.
+        @self.requires_role(list(ADMIN_ROLES))
         @self.requires_auth
         def admin(**kwargs):
             """Render the admin dashboard."""
@@ -6643,7 +6792,7 @@ class VannaFlaskApp(VannaFlaskAPI):
             return render_template("superadmin.html")
 
         @self.flask_app.route("/workspace", endpoint="workspace")
-        @self.requires_role("admin")
+        @self.requires_role(list(ADMIN_ROLES))  # see /admin above — excluded superadmin
         @self.requires_auth
         def index(**kwargs):
             """Render index page with available models and last saved config."""
@@ -6873,8 +7022,15 @@ class VannaFlaskApp(VannaFlaskAPI):
 
                 session["workspace_id"] = workspace_id
                 vn.bind_instance(instance)
-                # Legacy fallback for callers with no session workspace.
-                vn.set_default_instance(instance)
+                # No set_default_instance here: that default is process-global and
+                # was never torn down (unlike the thread-local binding above, which
+                # teardown_request clears), so the last person to connect silently
+                # became the fallback workspace for every unbound caller in the
+                # process — the cross-workspace leak this registry exists to prevent.
+                # Legitimate callers are covered: request threads bind here or
+                # resolve via session["workspace_id"], background jobs bind through
+                # ensure_vanna_initialized. Anything left falls through to bare(),
+                # which now logs instead of quietly borrowing someone's workspace.
                 self.vn = vn
 
                 logger.info(
@@ -8316,6 +8472,8 @@ class VannaFlaskApp(VannaFlaskAPI):
 
 
         @self.flask_app.route("/api/v0/train", methods=["POST"])
+        @self.requires_auth
+        @self.requires_role(list(ADMIN_ROLES))
         def add_training_data(user: any = None):
             logger.info(f"Received request from user: {user}")
             data = flask.request.json
@@ -8324,6 +8482,12 @@ class VannaFlaskApp(VannaFlaskAPI):
             workspace_id = data.get("workspace_id")
             if not workspace_id:
                 return jsonify({"error": "Workspace ID is required"}), 400
+
+            # workspace_id is taken straight from the request body, so authenticating
+            # the caller isn't enough — check they may actually write to THIS
+            # workspace. Training data steers generate_sql for everyone in it.
+            if not self._user_can_access_workspace(user, workspace_id):
+                return jsonify({"error": "You don't have access to this workspace"}), 403
 
             try:
                 results = self.workspace_collection.get(ids=[workspace_id])
@@ -11778,7 +11942,7 @@ class VannaFlaskApp(VannaFlaskAPI):
                 client = OpenAI(api_key=api_key)
 
                 response = client.chat.completions.create(
-                    model="gpt-4o-mini",
+                    model="gpt-4.1-mini",  # same model as the rest of the agents
                     messages=[
                         {"role": "system", "content": "You are a helpful SOP assistant."},
                         {"role": "user", "content": prompt}
@@ -12700,6 +12864,23 @@ class VannaFlaskApp(VannaFlaskAPI):
         register_teams(self)
 
 
+    def _workspace_id_from_ref(self, ref):
+        """Workspace id for a reference that may be the id itself, its name or its
+        display name (the chat UI sends the name). None if no workspace matches."""
+        ref = str(ref or "").strip()
+        if not ref:
+            return None
+        try:
+            if self.workspace_collection.get(ids=[ref]).get("ids"):
+                return ref
+            for field in ("name", "display_name"):
+                ids = self.workspace_collection.get(where={field: ref}).get("ids") or []
+                if ids:
+                    return ids[0]
+        except Exception as e:
+            logger.warning(f"_workspace_id_from_ref: lookup failed for {ref!r}: {e}")
+        return None
+
     def _user_can_access_workspace(self, user, workspace_id):
         """Admins/superadmins may use any workspace; a plain user only the one
         assigned to them (stored as the workspace name, or legacy UUID)."""
@@ -12908,20 +13089,15 @@ class VannaFlaskApp(VannaFlaskAPI):
         if not model_name:
             return "unknown"
 
-        name = model_name.lower()
+        name = model_name.strip().lower()
 
-        # Strip version suffixes
-        if name.startswith("o3"):
-            return "o3"
-
-        if name.startswith("o1"):
-            return "o1"
-
-        if name.startswith("gpt-5.1"):
-            return "gpt-5.1"
-
-        if name.startswith("gpt-4.1"):
-            return "gpt-4.1"
+        # Strip dated/version suffixes ("gpt-4.1-mini-2025-04-14" -> "gpt-4.1-mini")
+        # by matching the LONGEST known prefix. Fixed-order startswith checks
+        # matched "gpt-4.1" first, so gpt-4.1-mini was billed at full gpt-4.1
+        # prices (~5x too high) — and every agent here runs on mini.
+        for known in sorted(MODEL_PRICING, key=len, reverse=True):
+            if name == known or name.startswith(known + "-"):
+                return known
 
         return name
 
@@ -12984,7 +13160,7 @@ class VannaFlaskApp(VannaFlaskAPI):
         cached_input_tokens = int(cached_input_tokens or 0)
         cost_usd            = float(cost_usd) if cost_usd is not None else None
 
-        if workspace_id is None:
+        if workspace_id is None and has_request_context():  # Teams turns have no session
             workspace_id = session.get("workspace_id")
         current_time = datetime.now()
 
@@ -13161,27 +13337,7 @@ class VannaFlaskApp(VannaFlaskAPI):
         except Exception:
             normalized_model = model_name or "unknown"
 
-        # Pricing (update as needed when new models arrive)
-        MODEL_PRICING = {
-            "gpt-4.1": {"input": 5.00, "output": 15.00},
-            "gpt-4.1-mini": {"input": 0.60, "output": 2.40},
-            "gpt-4.1-preview": {"input": 3.00, "output": 10.00},
-            "o3": {"input": 1.00, "output": 3.00},
-            "o1": {"input": 6.00, "output": 18.00},
-            "o1-preview": {"input": 6.00, "output": 18.00},
-            "gpt-5.1": {"input": 1.25, "output": 10.00},
-            # add more as needed
-        }
-
-        price_in = MODEL_PRICING.get(normalized_model, {}).get("input", 0.0)
-        price_out = MODEL_PRICING.get(normalized_model, {}).get("output", 0.0)
-
-        billable_input = max(0, input_tokens - cached_input_tokens)
-        cost_usd = round(
-            (billable_input / 1_000_000) * price_in +
-            (output_tokens / 1_000_000) * price_out,
-            8
-        )
+        cost_usd = compute_cost_usd(normalized_model, input_tokens, output_tokens, cached_input_tokens)
 
         conn = None
         cursor = None
@@ -13279,7 +13435,21 @@ def get_workspace_metadata(self, workspace_id):
             except Exception as e:
                 logger.error(f"Error fetching workspace metadata: {str(e)}", exc_info=True)
                 return None
- 
+
+
+def _canonical_question_id(value):
+    """The hyphenated lowercase UUID form of a question id, or None if it isn't one.
+
+    dbo.users.question_id is UNIQUEIDENTIFIER, so a non-UUID that reached the
+    feedback tables would fail with SQL Server error 8169 wherever the two are
+    compared. Every id the server issues is str(uuid4()), so this only rejects
+    malformed client input — and normalises the 32-hex-digit form to match.
+    """
+    try:
+        return str(uuid.UUID(str(value).strip()))
+    except (ValueError, AttributeError, TypeError):
+        return None
+
 
 def load_email_config():
     try:

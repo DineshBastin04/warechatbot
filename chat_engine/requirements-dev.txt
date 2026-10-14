@@ -1,0 +1,14 @@
+# Development/test-only dependencies.
+#
+# The test suite under chat_engine/tests/ shipped with no runner declared
+# anywhere, so a clean checkout could not execute it. These are kept out of
+# requirements.txt so a production install doesn't pull a test framework.
+#
+#   pip install -r requirements.txt -r requirements-dev.txt
+#   pytest tests/ -q
+#
+-r requirements.txt
+
+iniconfig==2.3.1
+pluggy==1.6.0
+pytest==9.1.1

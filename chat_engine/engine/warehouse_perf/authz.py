@@ -29,7 +29,9 @@ def _matches(user_workspace, ctx):
 
 
 def role_of(user):
-    return (user or {}).get("role") if isinstance(user, dict) else getattr(user, "role", None)
+    role = (user or {}).get("role") if isinstance(user, dict) else getattr(user, "role", None)
+    # Lowercased so "Admin" matches ADMIN_ROLES here as it does in access_control.
+    return str(role).strip().lower() if role else role
 
 
 def username_of(user):

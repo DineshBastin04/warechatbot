@@ -132,6 +132,16 @@ class VnRouter:
 
         if self._default is not None:
             return self._default
+
+        # Reaching here means nobody bound an instance and there's no session
+        # workspace, so this caller gets an unconfigured instance. That used to
+        # be masked by a process-global default set from /connect-vanna — i.e. by
+        # silently borrowing whichever workspace connected last. Log it: a hit
+        # here is a real missing bind, not something to paper over.
+        logger.warning(
+            "VnRouter: no bound instance and no session workspace — falling back to the "
+            "bare instance. The caller should bind via ensure_vanna_initialized()."
+        )
         return self._registry.bare()
 
     def __getattr__(self, name):

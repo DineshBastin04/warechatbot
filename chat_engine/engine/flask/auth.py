@@ -7,6 +7,8 @@ import logging
 import hashlib
 from datetime import datetime
 
+from .access_control import normalize_role
+
 logger = logging.getLogger(__name__)
 
 class AuthInterface(ABC):
@@ -188,37 +190,28 @@ class BasicAuth(AuthInterface):
 
 
     def _sync_users_to_db(self):
-        """Sync hardcoded users to ChromaDB users collection."""
+        """Create the built-in users on a fresh install — and only then.
+
+        This used to overwrite existing records on every start, so a changed
+        password for superadmin/admin/user1 silently reverted to the default
+        (admin123/user123) at the next restart, and an admin's edits to their
+        role or workspace were undone too. Existing records are now left alone.
+        """
         for username, user_data in self.users.items():
             existing_user = self.users_collection.get(where={"username": username})
-            if not existing_user.get("metadatas"):
-                logger.info(f"Adding user {username} to ChromaDB", extra={"admin": True})
-                self.users_collection.add(
-                    ids=[username],
-                    metadatas=[{
-                        "username": username,
-                        "password_hash": user_data["password_hash"],
-                        "role": user_data["role"],
-                        "workspace": user_data.get("workspace", "")
-                    }],
-                    documents=[username]
-                )
-            else:
-                logger.info(f"Updating user {username} in ChromaDB", extra={"admin": True})
-                # Preserve existing metadata (like agent_config)
-                current_metadata = existing_user["metadatas"][0]
-                current_metadata.update({
+            if existing_user.get("metadatas"):
+                continue
+            logger.info(f"Adding user {username} to ChromaDB", extra={"admin": True})
+            self.users_collection.add(
+                ids=[username],
+                metadatas=[{
                     "username": username,
                     "password_hash": user_data["password_hash"],
                     "role": user_data["role"],
                     "workspace": user_data.get("workspace", "")
-                })
-                
-                self.users_collection.update(
-                    ids=[username],
-                    metadatas=[current_metadata],
-                    documents=[username]
-                )
+                }],
+                documents=[username]
+            )
 
     def _debug_users_collection(self):
         """Log contents of users collection for debugging."""
@@ -234,7 +227,7 @@ class BasicAuth(AuthInterface):
                 user_record = results["metadatas"][0]
                 return {
                     "username": username,
-                    "role": user_record.get("role", "user"),
+                    "role": normalize_role(user_record.get("role")),
                     "workspace": user_record.get("workspace", "")
                 }
         return None
@@ -282,7 +275,7 @@ class BasicAuth(AuthInterface):
                     return render_template('login.html', error="Invalid username or password")
 
                 if user_record and user_record.get("password_hash") == password_hash:
-                    role = str(user_record.get("role", "user")).lower()
+                    role = normalize_role(user_record.get("role"))
                     stored_workspace = user_record.get("workspace", "")
 
                     # Re-validate workspace live against ChromaDB (accepts name or ID).
@@ -335,6 +328,7 @@ class BasicAuth(AuthInterface):
     def establish_session(self, username, role, user_id=None):
         """Start a logged-in session. Shared by the password login and Teams SSO."""
         user_id = user_id or self._get_userid(username)
+        role = normalize_role(role)
         session.clear()
         session['username'] = username
         session['user_id'] = user_id

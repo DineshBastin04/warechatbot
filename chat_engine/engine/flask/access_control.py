@@ -19,6 +19,16 @@ from flask import jsonify, redirect, request, session, url_for
 
 ADMIN_ROLES = ("admin", "superadmin")
 
+
+def normalize_role(role):
+    """Canonical form of a stored role: trimmed, lowercase, "user" if missing.
+
+    Roles are compared against lowercase constants everywhere, but records can
+    hold "Admin" (hand-edited or from older code) — some checks lowercased and
+    some didn't, so the same user could pass one gate and fail the next.
+    """
+    return str(role or "user").strip().lower() or "user"
+
 PUBLIC_EXACT = {
     "/",
     "/vanna.svg",
@@ -32,7 +42,12 @@ PUBLIC_EXACT = {
 }
 PUBLIC_PREFIXES = ("/assets/", "/static/")
 
-SUPERADMIN_PREFIXES = ("/superadmin",)
+# Exact path plus its subtree, not a bare "/superadmin" prefix — that also
+# swallowed unrelated paths that merely start with the word (e.g. a future
+# "/superadmins_report"). It failed closed, so nothing was exposed, but the
+# match should say what it means.
+SUPERADMIN_EXACT = {"/superadmin"}
+SUPERADMIN_PREFIXES = ("/superadmin/",)
 
 ADMIN_EXACT = {
     "/workspace", "/admin",
@@ -41,6 +56,12 @@ ADMIN_EXACT = {
     "/get_connections", "/delete_connection", "/save_training_data", "/train-model",
     "/api/v0/train_documentation", "/api/v0/edit_training_data",
     "/api/v0/remove_training_data_module", "/get-saved-llms", "/get-ollama-models",
+    # Both were reachable by any logged-in user while every sibling above was
+    # admin-only. Training data steers generate_sql for everyone in a workspace,
+    # and /api/v0/train takes its workspace_id straight from the request body —
+    # so a plain user could write (or delete) the SQL knowledge of a workspace
+    # they don't even belong to.
+    "/api/v0/train", "/api/v0/remove_training_data",
     "/validate-openai-api", "/initialize-vanna", "/api/v0/get_columns",
     "/api/v0/test_sql_query", "/api/v0/get_tables",
     "/save_prediction_config", "/save_anomaly_config", "/delete_prediction_config",
@@ -75,7 +96,7 @@ ADMIN_PREFIXES = (
 def classify_path(path):
     if path in PUBLIC_EXACT or path.startswith(PUBLIC_PREFIXES):
         return "public"
-    if path.startswith(SUPERADMIN_PREFIXES):
+    if path in SUPERADMIN_EXACT or path.startswith(SUPERADMIN_PREFIXES):
         return "superadmin"
     if path in ADMIN_EXACT or path.startswith(ADMIN_PREFIXES):
         return "admin"
@@ -83,12 +104,24 @@ def classify_path(path):
 
 
 def _wants_json(path):
-    return (
-        path.startswith(("/api/", "/_"))
-        or request.method != "GET"
-        or request.is_json
-        or request.accept_mimetypes.best == "application/json"
-    )
+    """Whether an unauthenticated caller should get a 401 body rather than a
+    redirect to the login page.
+
+    This used to treat every non-GET as an API call, which meant a plain browser
+    form submitted on an expired session rendered raw JSON instead of the login
+    page. Method alone can't tell the two apart — a fetch() POST and a form POST
+    look identical — so trust Sec-Fetch-Mode, which browsers set to "navigate"
+    only for real navigations (address bar, link, form submit). Older browsers
+    that don't send it fall back to the previous method check.
+    """
+    if path.startswith(("/api/", "/_")):
+        return True
+    if request.is_json or request.accept_mimetypes.best == "application/json":
+        return True
+    fetch_mode = request.headers.get("Sec-Fetch-Mode")
+    if fetch_mode:
+        return fetch_mode != "navigate"
+    return request.method != "GET"
 
 
 def install_access_control(flask_app):
@@ -104,7 +137,7 @@ def install_access_control(flask_app):
                 return jsonify({"type": "error", "error": "Authentication required"}), 401
             return redirect(url_for("login"))
 
-        role = str(session.get("role") or "user").lower()
+        role = normalize_role(session.get("role"))
         if level == "admin" and role not in ADMIN_ROLES:
             return jsonify({"type": "error", "error": "Permission denied"}), 403
         if level == "superadmin" and role != "superadmin":
