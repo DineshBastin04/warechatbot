@@ -733,18 +733,9 @@ class VannaBase(ABC):
             "for a condition/threshold/event over time — OR the message is about "
             "viewing, listing, or managing scheduled agents that ALREADY exist "
             "(asking what's currently scheduled, or asking to stop/cancel one), "
-            "even though that isn't itself about timing a new delivery.\n"
-            "A message that asks to SEND/FORWARD/SHARE/EMAIL/MAIL/TEXT/NOTIFY/REMIND "
-            "someone (including \"me\"), or is just that bare verb on its own "
-            "(\"forward\", \"send it\"), is ALWAYS \"schedule\", even when it ALSO names the "
-            "data to send (\"send a mail to X on all orders not yet picked\") — the "
-            "scheduling pipeline extracts that data question itself. Only classify "
-            "as \"query\" when nobody is asked to receive anything.\n"
-            "Look-up verbs — WHAT/SHOW/LIST/DISPLAY/FETCH/GET/GIVE/FIND/PULL, alone "
-            "or with \"it\"/\"this\"/\"again\" (\"list\", \"display\", \"fetch it\", "
-            "\"get it again\") — are ALWAYS \"query\": showing data in the chat is "
-            "not delivering it. They are \"schedule\" only when what's listed or "
-            "shown is the scheduled agents/schedules themselves.\n"
+            "even though that isn't itself about timing a new delivery. Either "
+            "way it does NOT introduce a new data question — it's about the "
+            "delivery/scheduling mechanism itself, not about looking up data.\n"
             '- "prediction" = the message asks for something that plain current-'
             "state data can't answer directly: a forward-looking estimate/"
             "forecast/likelihood of a future or typical value, OR a check for "
@@ -761,9 +752,7 @@ class VannaBase(ABC):
             'reason from the test above for anything else: "remind me every '
             'Monday at 9am", "email me this report daily", "notify me when '
             'inventory drops below 100", "send this to me", "text this to my '
-            'manager", "send a mail to suriyan now on orders that have not '
-            'started picking", "generate an email to Akshaya on any orders stuck '
-            'before picking", "what are my scheduled questions", "show my schedules", '
+            'manager", "what are my scheduled questions", "show my schedules", '
             '"list what I have scheduled", "stop schedule abc123" -> schedule. '
             '"predict which orders are at risk of missing '
             'SLA", "forecast next month\'s demand", "any unusual inventory '
