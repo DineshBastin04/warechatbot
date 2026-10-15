@@ -6470,24 +6470,52 @@ Runs {e(schedule_desc)}.</div></td></tr>
                 # resolve it against the SQL it was originally asked against, exactly
                 # as the interactive follow-up branch does. .get() keeps agents created
                 # before this field existed working (they simply have no context).
-                if record.get("context_sql"):
-                    sql_result = vn.generate_sql(
-                        question=record["context_sql"],        # previous context
+                total_tokens = input_tokens = output_tokens = 0
+                model_name = "unknown"
+
+                def _generate(**kwargs):
+                    # Token counts add up across retries so billing covers every call.
+                    nonlocal total_tokens, input_tokens, output_tokens, model_name
+                    sql_result = vn.generate_sql(workspace=record["workspace_name"], **kwargs)
+                    if isinstance(sql_result, tuple) and len(sql_result) == 5:
+                        sql_text, total, inp, out, model_name = sql_result
+                    elif isinstance(sql_result, tuple) and len(sql_result) == 2:
+                        sql_text, total = sql_result
+                        inp = out = 0
+                    else:
+                        sql_text, total, inp, out = sql_result, 0, 0, 0
+                    total_tokens += int(total or 0)
+                    input_tokens += int(inp or 0)
+                    output_tokens += int(out or 0)
+                    return str(sql_text)
+
+                context_sql = record.get("context_sql")
+                if context_sql:
+                    sql = _generate(
+                        question=context_sql,                  # previous context
                         followup_sql=record["question_en"],    # the follow-up itself
-                        workspace=record["workspace_name"],
                     )
                 else:
-                    sql_result = vn.generate_sql(question=record["question_en"], workspace=record["workspace_name"])
-                if isinstance(sql_result, tuple) and len(sql_result) == 5:
-                    sql, total_tokens, input_tokens, output_tokens, model_name = sql_result
-                elif isinstance(sql_result, tuple) and len(sql_result) == 2:
-                    sql, total_tokens = sql_result
-                    input_tokens = output_tokens = 0
-                    model_name = "unknown"
-                else:
-                    sql = str(sql_result)
-                    total_tokens = input_tokens = output_tokens = 0
-                    model_name = "unknown"
+                    sql = _generate(question=record["question_en"])
+
+                # "Send this by mail" right after a chat answer stores that answer's
+                # SQL as context. When the question was already self-contained, the
+                # follow-up prompt (question + whole previous SQL) skews retrieval
+                # toward unrelated tables, and the model answers "Insufficient data
+                # for query." even though the chat answered the same question fine.
+                # Retry it on its own, then fall back to the SQL the user was shown.
+                if context_sql and not vn.is_sql_valid(sql):
+                    logger.warning(
+                        f"Scheduled question {schedule_id}: follow-up generation failed "
+                        f"({sql[:120]!r}) — retrying as a standalone question."
+                    )
+                    sql = _generate(question=record["question_en"])
+                    if not vn.is_sql_valid(sql) and vn.is_sql_valid(context_sql):
+                        logger.warning(
+                            f"Scheduled question {schedule_id}: standalone generation failed too — "
+                            f"running the SQL this agent was created from."
+                        )
+                        sql = context_sql
                 no_training_example = False
                 if not vn.is_sql_valid(sql):
                     if not _is_no_training_example(sql):
