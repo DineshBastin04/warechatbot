@@ -1,8 +1,10 @@
 import json
 import logging
 import asyncio
+import ast
 import os
 import re
+import html as html_escape_lib
 import sqlparse
 import sys
 import uuid
@@ -22,6 +24,7 @@ import io
 from datetime import datetime, timedelta
 from collections import defaultdict
 import hashlib
+from werkzeug.security import generate_password_hash
 from dateutil.relativedelta import relativedelta
 from collections import deque as _deque
 import openai
@@ -499,7 +502,8 @@ def compute_cost_usd(normalized_model, input_tokens, output_tokens, cached_input
 
 
 def session_cookie_settings(env):
-    """(Flask config to apply, whether the Teams tab is on without a Secure cookie).
+    """(Flask config to apply, whether the Teams tab is on without a Secure
+    cookie, whether SESSION_COOKIE_SECURE was left unconfigured entirely).
 
     SESSION_COOKIE_SECURE decides explicitly; unset, it follows TEAMS_TAB_ENABLED.
     See the call site in VannaFlaskApp.__init__ for why the two are separate.
@@ -509,6 +513,7 @@ def session_cookie_settings(env):
 
     teams_tab_enabled = _flag("TEAMS_TAB_ENABLED") in ("1", "true", "yes")
     secure_env = _flag("SESSION_COOKIE_SECURE")
+    secure_unconfigured = secure_env not in ("0", "false", "no", "1", "true", "yes")
     if secure_env in ("0", "false", "no"):
         use_secure = False
     elif secure_env in ("1", "true", "yes"):
@@ -523,8 +528,11 @@ def session_cookie_settings(env):
             "SESSION_COOKIE_PARTITIONED": True,
         }
     else:
-        config = {}
-    return config, (teams_tab_enabled and not use_secure)
+        # SameSite is set explicitly even on the non-Secure path — this used to
+        # be left to Flask's own (version-dependent) default, so a Flask
+        # upgrade could silently change actual browser behavior here.
+        config = {"SESSION_COOKIE_SAMESITE": "Lax"}
+    return config, (teams_tab_enabled and not use_secure), (secure_unconfigured and not use_secure)
 
 
 TRANSLATE_API_KEY = os.getenv("GOOGLE_TRANSLATE_API_KEY")
@@ -1379,11 +1387,28 @@ class MemoryCache(Cache):
     
 
 #for agent mails 
+_CSV_FORMULA_PREFIXES = ("=", "+", "-", "@")
+
+
+def _csv_safe_value(value):
+    """
+    Prefixes a leading '=' / '+' / '-' / '@' with a single quote — Excel's own
+    "treat as text" escape — so a cell sourced from warehouse data (a customer
+    name, address, free-text comment, anything not typed by this app) can
+    never be opened as a live formula ("CSV injection"/"formula injection").
+    Only touches strings; numbers/dates/None pass through unchanged.
+    """
+    if isinstance(value, str) and value.startswith(_CSV_FORMULA_PREFIXES):
+        return "'" + value
+    return value
+
+
 def _rows_to_csv(rows):
     if not rows: return None
     out = io.StringIO()
+    safe_rows = [{k: _csv_safe_value(v) for k, v in row.items()} for row in rows]
     w = csv.DictWriter(out, fieldnames=rows[0].keys())
-    w.writeheader(); w.writerows(rows)
+    w.writeheader(); w.writerows(safe_rows)
     return out.getvalue()
 
 # Send email using SMTP (e.g., Gmail)
@@ -3931,19 +3956,29 @@ class VannaFlaskAPI:
             chart_instructions = flask.request.args.get('chart_instructions')
 
             try:
-                # If chart_instructions is not set then attempt to retrieve the code from the cache
+                # If chart_instructions is not set then attempt to retrieve the spec from the cache.
+                # The cached value here used to be raw Python ("plotly code") executed via exec() —
+                # now it's a JSON-encoded chart spec (see generate_chart_spec/render_chart_figure).
+                # A stale/legacy cache entry (or one written by the saved-"function" flow a few
+                # lines up, which still populates this same field) that isn't valid JSON just
+                # yields spec=None, which render_chart_figure already treats as "no spec" and
+                # falls back to its dtype-based heuristic — never passed anywhere it could be exec'd.
                 if chart_instructions is None or len(chart_instructions) == 0:
-                    code = self.cache.get(id=id, field="plotly_code")
+                    cached_spec = self.cache.get(id=id, field="plotly_code")
+                    try:
+                        spec = json.loads(cached_spec) if cached_spec else None
+                    except (TypeError, ValueError):
+                        spec = None
                 else:
                     question = f"{question}. When generating the chart, use these special instructions: {chart_instructions}"
-                    code = vn.generate_plotly_code(
+                    spec = vn.generate_chart_spec(
                         question=question,
                         sql=sql,
                         df_metadata=f"Running df.dtypes gives:\n {df.dtypes}",
                     )
-                    self.cache.set(id=id, field="plotly_code", value=code)
+                    self.cache.set(id=id, field="plotly_code", value=json.dumps(spec))
 
-                fig = vn.get_plotly_figure(plotly_code=code, df=df, dark_mode=False)
+                fig = vn.render_chart_figure(spec=spec, df=df, dark_mode=False)
                 fig_json = fig.to_json()
 
                 self.cache.set(id=id, field="fig_json", value=fig_json)
@@ -5341,7 +5376,7 @@ class VannaFlaskApp(VannaFlaskAPI):
         # straight back to the login page with no error shown. SESSION_COOKIE_SECURE
         # now decides it explicitly, defaulting to the tab setting so HTTPS
         # deployments are unchanged.
-        _cookie_config, _tab_without_secure = session_cookie_settings(os.environ)
+        _cookie_config, _tab_without_secure, _secure_unconfigured = session_cookie_settings(os.environ)
         self.flask_app.config.update(_cookie_config)
         if _tab_without_secure:
             # Both can't be satisfied at once: the tab needs SameSite=None;Secure,
@@ -5351,6 +5386,17 @@ class VannaFlaskApp(VannaFlaskAPI):
                 "TEAMS_TAB_ENABLED is on but SESSION_COOKIE_SECURE is disabled — password "
                 "login works over plain HTTP, but the Teams tab will not hold a session. "
                 "Drop SESSION_COOKIE_SECURE from .env (and use the HTTPS URL) before using the tab.",
+                extra={"admin": True},
+            )
+        if _secure_unconfigured:
+            # Fine for local/plain-HTTP testing (this is the default so that keeps
+            # working with zero config) but a real deployment reachable over the
+            # network should opt in explicitly — nudge rather than silently leave
+            # the session cookie sniffable over an unencrypted connection.
+            logger.warning(
+                "Session cookie is not marked Secure (SESSION_COOKIE_SECURE is not set "
+                "in .env). Set SESSION_COOKIE_SECURE=true for any deployment reachable "
+                "over the network, not just localhost.",
                 extra={"admin": True},
             )
 
@@ -6255,6 +6301,42 @@ class VannaFlaskApp(VannaFlaskAPI):
                 "Tychons WI"
             )
 
+        # Same palette/table-based layout as the Warehouse Performance Agent's
+        # report emails (engine/warehouse_perf/exec_report.py) so every email
+        # this app sends looks like it came from one product, not several.
+        _SCHED_INK, _SCHED_INK_2, _SCHED_INK_3, _SCHED_LINE, _SCHED_BG = (
+            "#1a1a19", "#52514e", "#76756f", "#e7e6e2", "#f5f5f3"
+        )
+
+        def _scheduled_email_html(kind_label, question, status_label, status_colour, status_icon, main_html, schedule_desc, question_label="You asked"):
+            """
+            Styled HTML counterpart to _scheduled_email_body: table-based, inline
+            styles only, 640px, no scripts/external resources, so it renders
+            consistently across email clients and still reads fine if images/CSS
+            are stripped. Sent as the "html" alternative alongside the plain-text
+            body (the source of truth for Teams delivery and for clients that
+            can't render HTML) — never the only copy of the content.
+
+            `question` and `schedule_desc` are escaped here; `main_html` is
+            caller-built markup (already escaped internally) so it can include
+            paragraphs/line breaks instead of being flattened to one block of text.
+            """
+            e = html_escape_lib.escape
+            return f"""<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width"></head><body style="margin:0;padding:0;background:{_SCHED_BG}">
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:{_SCHED_BG}"><tr><td align="center" style="padding:20px 10px">
+<table role="presentation" width="640" cellpadding="0" cellspacing="0" style="width:100%;max-width:640px;background:#ffffff;border:1px solid {_SCHED_LINE};border-radius:8px;font-family:Segoe UI,Arial,sans-serif">
+<tr><td style="padding:20px 24px 8px"><div style="font-size:12px;color:{_SCHED_INK_3};text-transform:uppercase;letter-spacing:.06em">{e(kind_label)} &middot; Tychons WI</div></td></tr>
+<tr><td style="padding:6px 24px 14px"><table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="border-left:6px solid {status_colour};background:#fafaf8;border-radius:4px"><tr><td style="padding:12px 16px">
+<div style="font-size:13px;font-weight:700;color:{_SCHED_INK}">{status_icon} {e(status_label)}</div></td></tr></table></td></tr>
+<tr><td style="padding:0 24px 6px"><div style="font-size:12px;font-weight:700;color:{_SCHED_INK_3};text-transform:uppercase;letter-spacing:.04em">{e(question_label)}</div>
+<div style="font-size:15px;color:{_SCHED_INK};margin-top:4px;padding:10px 14px;background:#fafaf8;border:1px solid {_SCHED_LINE};border-radius:4px;font-style:italic">&ldquo;{e(question)}&rdquo;</div></td></tr>
+<tr><td style="padding:14px 24px 0;font-size:14px;color:{_SCHED_INK};line-height:1.55">{main_html}</td></tr>
+<tr><td style="padding:20px 24px 22px"><div style="border-top:1px solid {_SCHED_LINE};padding-top:12px;font-size:12px;color:{_SCHED_INK_3};line-height:1.5">
+&#9432; This report was generated automatically by an AI-powered reporting agent — please verify any figures before acting on them.<br>
+Runs {e(schedule_desc)}.</div></td></tr>
+<tr><td style="padding:0 24px 22px;font-size:13px;color:{_SCHED_INK_2}">Regards,<br>Tychons WI</td></tr>
+</table></td></tr></table></body></html>"""
+
         def _scheduled_email_filename(schedule_id):
             # Date/time leads so files sort and scan chronologically in an inbox or
             # download folder; schedule_id stays as a suffix for traceability back
@@ -6459,15 +6541,47 @@ class VannaFlaskApp(VannaFlaskAPI):
 
                 def _deliver(rows):
                     summary_text = _summarize(df)
+                    e = html_escape_lib.escape
+                    # Always lead with the actual question this agent was created to
+                    # answer — display_question, never a link/id/last-seen-message —
+                    # so every email is self-explanatory on its own, without having to
+                    # dig through chat history to know what it's even about.
+                    question_line = f"You asked: {record['display_question']}"
                     if not rows:
-                        # A genuinely executed, valid query that just found nothing —
-                        # distinct wording from the row-count fallback below so this
-                        # reads as "no data found," not as a failure of any kind.
-                        body = f"No data found for: {record['display_question']}"
+                        if no_training_example:
+                            # Not "no data" — the question itself couldn't be understood
+                            # well enough to even run (no trained example covers it). A
+                            # vague/under-specified question looks identical to "nothing
+                            # found" to an unsuspecting recipient unless this is spelled
+                            # out, and the fix (rephrase) is different from "wait for
+                            # data to show up."
+                            status_label, status_colour, status_icon = "Needs a clearer question", "#c98500", "&#9888;"
+                            explain = (
+                                "I wasn't able to understand this well enough to answer it — "
+                                "try recreating this agent with a more specific question (name "
+                                "the exact data, table, or condition you want checked)."
+                            )
+                            body = f"{question_line}\n\n{explain}"
+                            main_html = f"<p style=\"margin:0\">{e(explain)}</p>"
+                        else:
+                            # A genuinely executed, valid query that just found nothing this
+                            # run — distinct wording from the case above so a recurring
+                            # agent's "nothing to report this time" doesn't read as a failure.
+                            status_label, status_colour, status_icon = "No Records Found", "#76756f", "&#9675;"
+                            no_data_text = "No records currently match this request."
+                            body = f"{question_line}\n\n{no_data_text}"
+                            main_html = f"<p style=\"margin:0\">{no_data_text}</p>"
                     elif summary_text:
-                        body = f"{summary_text}\n\n({len(rows)} row(s) attached as CSV.)"
+                        status_label, status_colour, status_icon = "Answered", "#0ca30c", "&#10003;"
+                        body = f"{question_line}\n\n{summary_text}\n\n({len(rows)} row(s) attached as CSV.)"
+                        main_html = (
+                            f"<p style=\"margin:0 0 10px\">{e(summary_text)}</p>"
+                            f"<p style=\"margin:0;color:{_SCHED_INK_3};font-size:13px\">{len(rows)} row(s) attached as CSV.</p>"
+                        )
                     else:
-                        body = f"{len(rows)} row(s) for: {record['display_question']}"
+                        status_label, status_colour, status_icon = "Answered", "#0ca30c", "&#10003;"
+                        body = f"{question_line}\n\n{len(rows)} row(s) found — attached as CSV."
+                        main_html = f"<p style=\"margin:0\">{len(rows)} row(s) found — attached as CSV.</p>"
                     if record.get("channel") == "email" and record.get("email_recipients"):
                         try:
                             _send_email(
@@ -6476,6 +6590,11 @@ class VannaFlaskApp(VannaFlaskAPI):
                                 _scheduled_email_body(body),
                                 rows,
                                 _scheduled_email_filename(schedule_id),
+                                html=_scheduled_email_html(
+                                    "Scheduled Report", record["display_question"],
+                                    status_label, status_colour, status_icon, main_html,
+                                    _describe_schedule(record.get("schedule") or {}),
+                                ),
                             )
                         except Exception as email_exc:
                             logger.exception(f"Scheduled question {schedule_id} email delivery failed: {email_exc}")
@@ -6494,6 +6613,7 @@ class VannaFlaskApp(VannaFlaskAPI):
                         logger.info(f"Scheduled question {schedule_id}: no recipient assigned yet — result not delivered.")
 
                 def _deliver_condition_matches(new_rows, total_matching):
+                    e = html_escape_lib.escape
                     subject = f"[Alert] {record['display_question']}"
                     base_line = (
                         f"{len(new_rows)} new record(s) now match: {record['display_question']} "
@@ -6501,6 +6621,11 @@ class VannaFlaskApp(VannaFlaskAPI):
                     )
                     summary_text = _summarize(pd.DataFrame(new_rows))
                     body = f"{summary_text}\n\n{base_line}" if summary_text else base_line
+                    main_html = (
+                        (f"<p style=\"margin:0 0 10px\">{e(summary_text)}</p>" if summary_text else "")
+                        + f"<p style=\"margin:0\">{len(new_rows)} new record(s) now match "
+                          f"({total_matching} matching in total) — attached as CSV.</p>"
+                    )
                     if record.get("channel") == "email" and record.get("email_recipients"):
                         try:
                             _send_email(
@@ -6509,6 +6634,12 @@ class VannaFlaskApp(VannaFlaskAPI):
                                 _scheduled_email_body(body),
                                 new_rows,
                                 _scheduled_email_filename(schedule_id),
+                                html=_scheduled_email_html(
+                                    "Scheduled Alert", record["display_question"],
+                                    "New match(es) found", "#c98500", "&#9888;", main_html,
+                                    _describe_schedule(record.get("schedule") or {}),
+                                    question_label="Watching for",
+                                ),
                             )
                         except Exception as email_exc:
                             logger.exception(f"Scheduled question {schedule_id} email delivery failed: {email_exc}")
@@ -8970,7 +9101,7 @@ class VannaFlaskApp(VannaFlaskAPI):
                 pending = _pending_schedule_clarifications.get(key)
             return bool(pending) and time.time() - pending.get("created_at", 0) <= _PENDING_CLARIFICATION_TTL_SECONDS
 
-        def _handle_schedule_message(workspace_id, raw_text, prior_question, username, prior_sql=None, ctx=None):
+        def _handle_schedule_message(workspace_id, raw_text, prior_question, username, prior_sql=None, ctx=None, main_question=None):
             """
             Core scheduling/conditional-agent pipeline: fixed literals (list /
             stop <id> / email list) are handled deterministically with no LLM
@@ -8979,6 +9110,16 @@ class VannaFlaskApp(VannaFlaskAPI):
             never staged or downgraded. Shared by slash_command_route ("/"-prefixed
             POST body) and route_message (POST, natural-language dispatch) so both
             entry points run identical logic.
+
+            main_question: the ORIGINAL root question of the current follow-up
+            thread (resolved client-side by walking parent_question_id back to its
+            first question), distinct from prior_question which is just the most
+            recent message. Needed because scheduling a bare follow-up like "show
+            me top 4" stores THAT text as the agent's question — accurate for
+            re-running it (paired with prior_sql as context), but meaningless on
+            its own in a notification email sent days later. None when there is
+            no broader thread (prior_question is already the root) or no caller
+            supplies it (e.g. the Teams channel, which has no thread tracking).
 
             Returns (body_dict, status_code).
             """
@@ -9119,6 +9260,27 @@ class VannaFlaskApp(VannaFlaskAPI):
             first_conditional = next((s for s in schedules if s.get("type") == "conditional"), None)
             extracted_question = extraction.get("question")
             conditional_text = first_conditional.get("condition_text") if first_conditional else None
+
+            # Safety net for extract_schedule_request misreading a bare delivery
+            # command ("send mail now", "email this now") as if the command text
+            # ITSELF were the data question — found live: a schedule created from
+            # "send mail now" stored that literal phrase as display_question, so
+            # every fire tried to run "send mail now" as a question (no trained
+            # example for it, obviously) and every email read "No data found for:
+            # send mail now" instead of answering the real question that was
+            # actually being discussed beforehand. The extraction prompt is
+            # supposed to leave "question" null for a bare follow-up, but an
+            # imperative with no back-reference pronoun ("this"/"it") doesn't
+            # reliably trigger that. When prior_question is available, prefer it
+            # over an "extracted" question that's really just the command restated
+            # with nothing else added.
+            def _norm(s):
+                return re.sub(r'[^a-z0-9]+', '', (s or '').lower())
+            if prior_question and extracted_question:
+                norm_extracted, norm_body = _norm(extracted_question), _norm(body)
+                if norm_extracted and (norm_extracted == norm_body or norm_extracted in norm_body):
+                    extracted_question = None
+
             question_en = extracted_question or conditional_text or prior_question
 
             # When the request only referred back ("send this", "email that") we reuse
@@ -9131,6 +9293,19 @@ class VannaFlaskApp(VannaFlaskAPI):
             if not question_en:
                 return _ask_clarification("What would you like me to send you, or what should I watch for?")
 
+            # question_en stays exactly what's actually re-run at fire time (the
+            # follow-up fragment, resolved against context_sql) — never rewritten
+            # for readability, or generation would be working from different text
+            # than what the user actually asked. display_question is the separate,
+            # human-facing copy everywhere else (subject lines, /list, the "You
+            # asked" box in emails): when this agent was created from mid-thread
+            # follow-up text, prefix it with the thread's original question so a
+            # notification read days later is still self-explanatory instead of
+            # just "show me top 4" with no context.
+            display_question = question_en
+            if context_sql and main_question and _norm(main_question) != _norm(question_en):
+                display_question = f"{main_question} — {question_en}"
+
             if vn.classify_intent(question_en) == "write":
                 return {
                     "type": "error",
@@ -9142,15 +9317,11 @@ class VannaFlaskApp(VannaFlaskAPI):
             # recipient could be resolved, which looked broken (a message with
             # nobody actually assigned to it) and wasn't reliably seen anyway (it
             # only surfaced if the owner happened to have the chat page open at
-            # the right moment — no push/notification exists). Instead: try to
-            # resolve a recipient the same way as before, but when it can't be
-            # resolved cleanly, create the agent UNASSIGNED (no delivery at all)
-            # rather than blocking creation or interrupting with a clarification
-            # round-trip — an admin assigns a real recipient later from the
-            # Scheduled Agents panel. The one exception is a NAMED-but-unknown
-            # recipient ("email this to Bob" when "Bob" isn't registered): that's
-            # a likely typo/mistake worth catching, not mere ambiguity, so it
-            # still asks rather than silently dropping what the user asked for.
+            # the right moment — no push/notification exists). A NAMED-but-unknown
+            # recipient ("email this to Bob" when "Bob" isn't registered) is a
+            # likely typo/mistake worth catching, so that always asks rather than
+            # silently dropping what the user asked for; see the no-recipient-at-all
+            # case below for when nothing was named.
             email_recipients = []
             email_labels = extraction.get("email_labels") or []
             registered_by_label = {e["label"].lower(): e["address"] for e in registered_emails}
@@ -9169,20 +9340,25 @@ class VannaFlaskApp(VannaFlaskAPI):
                 email_recipients = [extraction["email_address"]]
             elif len(registered_emails) == 1:
                 email_recipients = [registered_emails[0]["address"]]
-            # else: no recipient named, and either zero or multiple recipients are
-            # registered — leave email_recipients empty (unassigned) rather than
-            # blocking or asking; assignment happens later in the admin panel.
+            # else: no recipient named at all, and either zero or multiple
+            # recipients are registered — ask who should receive it instead of
+            # silently creating an unassigned agent, below.
 
             # A request from Teams with no explicit email goes back into that same
-            # Teams conversation instead of landing "unassigned" — it already has a
-            # real, reliable delivery target (unlike the old chat-inbox fallback
-            # this replaced; see _deliver_to_teams below).
-            if email_recipients:
-                channel = "email"
-            elif ctx and ctx.channel == "teams" and ctx.teams_aad_id:
-                channel = "teams"
-            else:
-                channel = "unassigned"
+            # Teams conversation instead of needing a recipient asked for — it
+            # already has a real, reliable delivery target (unlike the old
+            # chat-inbox fallback this replaced; see _deliver_to_teams below).
+            is_teams_request = bool(ctx and ctx.channel == "teams" and ctx.teams_aad_id)
+
+            if not email_recipients and not is_teams_request:
+                if registered_emails:
+                    known_list = ", ".join(e["label"] for e in registered_emails)
+                    return _ask_clarification(f"Who should receive this — {known_list}, or another email address?")
+                return _ask_clarification(
+                    "Who should receive this? Give me an email address, or ask your admin to register one first."
+                )
+
+            channel = "email" if email_recipients else "teams"
 
             # The whole read-modify-write cycle below (get -> validate -> persist)
             # runs under the per-workspace lock so it can't lose an update racing a
@@ -9300,7 +9476,7 @@ class VannaFlaskApp(VannaFlaskAPI):
                         "workspace_name": metadata.get("name") or str(workspace_id),
                         "question_en": question_en,
                         "context_sql": context_sql,
-                        "display_question": schedule.get("condition_text") if is_conditional else question_en,
+                        "display_question": schedule.get("condition_text") if is_conditional else display_question,
                         "channel": channel,
                         "teams_aad_id": ctx.teams_aad_id if channel == "teams" else None,
                         "email_recipients": email_recipients,
@@ -9354,7 +9530,7 @@ class VannaFlaskApp(VannaFlaskAPI):
                 schedule_id = c["schedule_id"]
                 if c["is_conditional"]:
                     return (
-                        f"Watching: {schedule.get('condition_text', question_en)}, "
+                        f"Watching: {schedule.get('condition_text', display_question)}, "
                         f"checked every {schedule['seconds']}s. "
                         f"Currently: {c['condition_row_count']} record(s) match. "
                         f"{delivery_note} whenever a NEW record starts matching — "
@@ -9369,10 +9545,10 @@ class VannaFlaskApp(VannaFlaskAPI):
                 )
 
             if not multi:
-                echo = f"{note}{question_en}\n{_describe_created(created[0])}"
+                echo = f"{note}{display_question}\n{_describe_created(created[0])}"
             else:
                 lines = "\n".join(f"{i + 1}. {_describe_created(c)}" for i, c in enumerate(created))
-                echo = f"{note}{question_en} — split into {len(created)} schedules:\n{lines}"
+                echo = f"{note}{display_question} — split into {len(created)} schedules:\n{lines}"
             return {"type": "text", "text": echo}, 200
 
         # Exposed on self so _handle_query_message (a separate closure/scope,
@@ -9459,6 +9635,9 @@ class VannaFlaskApp(VannaFlaskAPI):
             "yes", "y", "yep", "yeah", "sure", "save", "save it", "please save",
             "ok", "okay", "confirm", "do it", "go ahead", "yes please",
         }
+        _NEGATIVE_ANALYSIS_REPLIES = {
+            "no", "n", "nope", "nah", "don't save", "do not save", "skip", "cancel", "no thanks",
+        }
 
         def _handle_prediction_message(workspace_id, raw_text, username):
             """
@@ -9483,6 +9662,38 @@ class VannaFlaskApp(VannaFlaskAPI):
             with _pending_query_clarifications_lock:
                 _pending_query_clarifications.pop(pending_key, None)
 
+            def _fallback_to_query_or(apology_text):
+                """
+                classify_message_route's "prediction" label is a UX router, not
+                proof a forecast/anomaly check is actually what's needed — e.g.
+                "orders at risk of missing their delivery date" reads like the
+                classifier's own prediction example, but is really a concrete,
+                current-state condition (promised_date vs. today, not yet
+                shipped) that a plain trained SQL question can already answer,
+                same as the AI Fix Agent's SLA Risk Radar job. Rather than
+                dead-ending here when the prediction/anomaly pipeline can't
+                build a reliable check, give the ordinary query pipeline a
+                chance at the same raw text before giving up.
+                """
+                try:
+                    query_body, query_status = self._handle_query_message(raw_text, None, workspace_id)
+                except Exception as fallback_exc:
+                    logger.warning(f"Prediction-pipeline fallback to query failed: {fallback_exc}")
+                    return {"type": "text", "text": apology_text}, 200
+                if query_status == 200 and query_body.get("type") == "sql":
+                    return query_body, query_status
+                # The query pipeline didn't produce an answer either (e.g. "Insufficient
+                # data for query.") — on that path _handle_query_message may have just
+                # opened a query clarification for this same user/workspace, inviting a
+                # follow-up reply. We're discarding its result in favor of the apology
+                # below, so that invitation must be discarded too — otherwise the user's
+                # NEXT, completely unrelated message would silently get merged with this
+                # probe's dead-end text (the exact "normal question doesn't answer after
+                # a prediction/anomaly question" failure mode this fallback exists to fix).
+                with _pending_query_clarifications_lock:
+                    _pending_query_clarifications.pop(pending_key, None)
+                return {"type": "text", "text": apology_text}, 200
+
             if pending and time.time() - pending.get("created_at", 0) <= _PENDING_ANALYSIS_CONFIRMATION_TTL_SECONDS:
                 if raw_text.strip().lower() in _AFFIRMATIVE_ANALYSIS_REPLIES:
                     saved = _save_analysis_config(workspace_id, pending["kind"], pending["config"])
@@ -9493,7 +9704,27 @@ class VannaFlaskApp(VannaFlaskAPI):
                                     f"check — you can run it again anytime by asking about it.",
                         }, 200
                     return {"type": "error", "error": "Couldn't save that check — workspace not found."}, 404
-                return {"type": "text", "text": "No problem, I won't save that as a reusable check."}, 200
+                if raw_text.strip().lower() in _NEGATIVE_ANALYSIS_REPLIES:
+                    return {"type": "text", "text": "No problem, I won't save that as a reusable check."}, 200
+                # Not a recognizable yes/no at all — the user didn't answer the save
+                # prompt, they've moved on to something else (e.g. a completely
+                # unrelated follow-up question asked within the same 10-minute
+                # window). Before this fix, that case fell through to the "no"
+                # reply below, silently discarding the user's real question as
+                # an implicit decline for up to 10 minutes. Re-route it fresh
+                # instead, same as the analogous schedule/query "moved on"
+                # discard above.
+                try:
+                    reroute_initialized, _reroute_err = self.ensure_vanna_initialized(workspace_id)
+                    route = vn.classify_message_route(raw_text) if reroute_initialized else "query"
+                except Exception as reroute_exc:
+                    logger.warning(f"Re-routing after stale analysis confirmation failed: {reroute_exc}")
+                    route = "query"
+                if route == "schedule":
+                    return self._handle_schedule_message(workspace_id, raw_text, None, username, None)
+                if route != "prediction":
+                    return self._handle_query_message(raw_text, None, workspace_id)
+                # route == "prediction": fall through to the normal fresh-match logic below.
 
             initialized, init_err = self.ensure_vanna_initialized(workspace_id)
             if not initialized:
@@ -9552,11 +9783,10 @@ class VannaFlaskApp(VannaFlaskAPI):
             kind = match.get("kind", "prediction")
             table = match.get("suggested_table")
             if not table:
-                return {
-                    "type": "text",
-                    "text": "I don't have enough documented tables in this workspace to build that check "
-                            "yet — ask your admin to add table documentation first.",
-                }, 200
+                return _fallback_to_query_or(
+                    "I don't have enough documented tables in this workspace to build that check "
+                    "yet — ask your admin to add table documentation first."
+                )
 
             try:
                 if kind == "prediction":
@@ -9565,7 +9795,7 @@ class VannaFlaskApp(VannaFlaskAPI):
                     suggestion_raw, *_rest = vn.get_anomaly_suggestions(table=table, user_query=raw_text, workspace=workspace_name)
             except Exception as suggest_exc:
                 logger.error(f"Failed to generate {kind} suggestion for table {table}: {suggest_exc}")
-                return {"type": "error", "error": f"Couldn't build a {kind} check for that: {suggest_exc}"}, 500
+                return _fallback_to_query_or(f"Couldn't build a {kind} check for that: {suggest_exc}")
 
             try:
                 parsed = json.loads(suggestion_raw)
@@ -9573,11 +9803,10 @@ class VannaFlaskApp(VannaFlaskAPI):
             except Exception:
                 suggestion = None
             if not suggestion:
-                return {
-                    "type": "text",
-                    "text": f"I couldn't work out a reliable {kind} check for that yet — try rephrasing, "
-                            f"or ask your admin to add one from the dashboard.",
-                }, 200
+                return _fallback_to_query_or(
+                    f"I couldn't work out a reliable {kind} check for that yet — try rephrasing, "
+                    f"or ask your admin to add one from the dashboard."
+                )
 
             name_field = "prediction_name" if kind == "prediction" else "anomaly_name"
             table_field = "table_names" if kind == "prediction" else "table_name"
@@ -9614,11 +9843,10 @@ class VannaFlaskApp(VannaFlaskAPI):
                 # for the "bad SQL" case (both mean "I couldn't build a
                 # reliable check for that").
                 logger.warning(f"Freshly-generated {kind} check for table {table} failed to run: {body.get('error')}")
-                return {
-                    "type": "text",
-                    "text": f"I wasn't able to build a reliable {kind} check for that yet — try rephrasing, "
-                            f"or ask your admin to set one up from the dashboard.",
-                }, 200
+                return _fallback_to_query_or(
+                    f"I wasn't able to build a reliable {kind} check for that yet — try rephrasing, "
+                    f"or ask your admin to set one up from the dashboard."
+                )
 
             reply = _summarize_analysis_result(rows, name, workspace_name, kind, config.get("sql_query"))
             if body.get("truncated"):
@@ -9679,6 +9907,7 @@ class VannaFlaskApp(VannaFlaskAPI):
             raw_text = (data.get('text') or '').strip()
             prior_question = data.get('prior_question')
             prior_sql = data.get('prior_sql')
+            main_question = data.get('main_question')
 
             username = user.get("username") if isinstance(user, dict) else getattr(user, "username", None)
             if not workspace_id or not username:
@@ -9690,7 +9919,7 @@ class VannaFlaskApp(VannaFlaskAPI):
                 body, status = _wpa.handle_chat(user, workspace_id, raw_text)
                 return jsonify(body), status
 
-            body, status = _handle_schedule_message(workspace_id, raw_text, prior_question, username, prior_sql)
+            body, status = _handle_schedule_message(workspace_id, raw_text, prior_question, username, prior_sql, main_question=main_question)
             return jsonify(body), status
 
         @self.flask_app.route('/api/v0/route_message', methods=['POST'])
@@ -9712,6 +9941,7 @@ class VannaFlaskApp(VannaFlaskAPI):
             raw_text = (data.get('text') or '').strip()
             prior_question = data.get('prior_question')
             previous_sql = data.get('sql')
+            main_question = data.get('main_question')
 
             username = user.get("username") if isinstance(user, dict) else getattr(user, "username", None)
             if not workspace_id or not username:
@@ -9725,7 +9955,7 @@ class VannaFlaskApp(VannaFlaskAPI):
                 return jsonify(body), status
 
             if raw_text.startswith('/') or _has_pending_clarification(workspace_id, username):
-                body, status = _handle_schedule_message(workspace_id, raw_text, prior_question, username, previous_sql)
+                body, status = _handle_schedule_message(workspace_id, raw_text, prior_question, username, previous_sql, main_question=main_question)
                 return jsonify(body), status
 
             if _has_pending_analysis_confirmation(workspace_id, username):
@@ -9748,7 +9978,7 @@ class VannaFlaskApp(VannaFlaskAPI):
 
             route = vn.classify_message_route(raw_text)
             if route == "schedule":
-                body, status = _handle_schedule_message(workspace_id, raw_text, prior_question, username, previous_sql)
+                body, status = _handle_schedule_message(workspace_id, raw_text, prior_question, username, previous_sql, main_question=main_question)
             elif route == "prediction":
                 body, status = _handle_prediction_message(workspace_id, raw_text, username)
             else:
@@ -10462,6 +10692,69 @@ class VannaFlaskApp(VannaFlaskAPI):
                 return jsonify({"type": "error", "error": f"Failed to retrieve anomalies: {str(e)}"}), 500
 
 
+        def _coerce_numeric_features(df, columns):
+            """
+            Every ML algorithm below (linear/logistic regression, isolation forest,
+            DBSCAN) needs a purely numeric feature matrix — but a prediction/anomaly
+            config's SQL is free to select a date or a text/categorical column as a
+            "feature" (e.g. a suggested query grouping by a formatted month string),
+            which is often exactly the meaningful column for that use case. Found
+            live: a suggestion using a 'year_month' string column ('2019-05') as a
+            feature crashed with "could not convert string to float" instead of
+            ever producing a prediction. Converts in place: a datetime column
+            becomes its ordinal day number; anything else non-numeric is
+            label-encoded (pandas.factorize) into an integer code — lossy for a
+            model that would benefit from true one-hot encoding, but turns a hard
+            crash into a working (if simplistic) prediction, which is the actual
+            goal here.
+            """
+            for col in columns:
+                if col not in df.columns:
+                    continue
+                series = df[col]
+                if pd.api.types.is_numeric_dtype(series):
+                    continue
+                if pd.api.types.is_datetime64_any_dtype(series):
+                    df[col] = series.map(lambda d: d.toordinal() if pd.notnull(d) else None)
+                    continue
+                try:
+                    parsed_dates = pd.to_datetime(series, errors="raise")
+                    df[col] = parsed_dates.map(lambda d: d.toordinal() if pd.notnull(d) else None)
+                except Exception:
+                    codes, _ = pd.factorize(series)
+                    df[col] = codes
+            return df
+
+        def _is_safe_eval_rule(rule, allowed_columns):
+            """
+            Validates a "custom" anomaly rule is a pure boolean/comparison
+            expression over real columns — no function calls, attribute access,
+            or subscripts, which is how a pandas df.eval() expression could
+            otherwise reach outside the expression itself. Walking the AST
+            (rather than blocklisting specific syntax) rejects every node shape
+            not explicitly allowed, so there's nothing left to enumerate around.
+
+            Returns (True, "") if safe to pass to df.eval(), else (False, reason).
+            """
+            try:
+                tree = ast.parse(rule, mode="eval")
+            except SyntaxError as exc:
+                return False, f"Not a valid expression: {exc}"
+
+            allowed_node_types = (
+                ast.Expression, ast.Compare, ast.BoolOp, ast.BinOp, ast.UnaryOp,
+                ast.Name, ast.Load, ast.Constant,
+                ast.And, ast.Or, ast.Not,
+                ast.Eq, ast.NotEq, ast.Lt, ast.LtE, ast.Gt, ast.GtE,
+                ast.Add, ast.Sub, ast.Mult, ast.Div, ast.USub, ast.UAdd,
+            )
+            for node in ast.walk(tree):
+                if not isinstance(node, allowed_node_types):
+                    return False, f"'{type(node).__name__}' is not permitted in a custom rule"
+                if isinstance(node, ast.Name) and node.id not in allowed_columns:
+                    return False, f"'{node.id}' is not a real column in this query's results"
+            return True, ""
+
         def _run_anomaly_config(workspace_id, anomaly_type=None, config=None):
             """
             Runs an anomaly-detection config and returns (body, status). Either
@@ -10567,6 +10860,7 @@ class VannaFlaskApp(VannaFlaskAPI):
                         return {"type": "error", "error": f"Invalid or missing features {features} for isolation_forest anomaly {anomaly_type}."}, 400
                     contamination = float(parameters.get('contamination', 0.1))
                     model = IsolationForest(contamination=contamination, random_state=42)
+                    df = _coerce_numeric_features(df, features)
                     X = df[features].values
                     result_df['is_anomaly'] = model.fit_predict(X) == -1
                     result_df['anomaly_score'] = model.score_samples(X)
@@ -10580,6 +10874,7 @@ class VannaFlaskApp(VannaFlaskAPI):
                     eps = float(parameters.get('eps', 0.5))
                     min_samples = int(parameters.get('min_samples', 5))
                     model = DBSCAN(eps=eps, min_samples=min_samples)
+                    df = _coerce_numeric_features(df, features)
                     X = df[features].values
                     labels = model.fit_predict(X)
                     result_df['is_anomaly'] = labels == -1
@@ -10592,7 +10887,15 @@ class VannaFlaskApp(VannaFlaskAPI):
                         logger.error(f"No rule provided for custom anomaly {anomaly_type}")
                         return {"type": "error", "error": f"No rule specified for custom anomaly {anomaly_type}."}, 400
                     try:
-                        if rule.startswith('SELECT'):
+                        if rule.strip().upper().startswith('SELECT'):
+                            # Found live: a bare .startswith('SELECT') check is trivially
+                            # passed by e.g. "SELECT 1; DROP TABLE x;--" and let this run
+                            # straight through vn.run_sql with none of the read-only/
+                            # write-whitelist checks every other SQL path in this app
+                            # goes through. is_select_only_sql is that same backstop.
+                            ok, reason = vn.is_select_only_sql(rule)
+                            if not ok:
+                                return {"type": "error", "error": f"Invalid custom rule: {reason}"}, 400
                             result_df = vn.run_sql(rule)
                             if len(result_df) > _MAX_ANALYSIS_ROWS:
                                 truncated = True
@@ -10603,6 +10906,13 @@ class VannaFlaskApp(VannaFlaskAPI):
                             original_df['is_anomaly'] = False
                             result_df = pd.concat([original_df, result_df]).drop_duplicates().reset_index(drop=True)
                         else:
+                            # df.eval() is not a secure sandbox on its own — gate it with
+                            # an AST allowlist first (see _is_safe_eval_rule) so a rule
+                            # that passes can only be a comparison over real columns,
+                            # never a function call or attribute-access escape.
+                            ok, reason = _is_safe_eval_rule(rule, set(df.columns))
+                            if not ok:
+                                return {"type": "error", "error": f"Invalid custom rule: {reason}"}, 400
                             result_df['is_anomaly'] = df.eval(rule)
                         # Do not filter, keep all rows
                         result_df = result_df[df.columns.tolist() + ['is_anomaly']]
@@ -10744,6 +11054,7 @@ class VannaFlaskApp(VannaFlaskAPI):
                 elif algorithm == 'linear_regression':
                     if not features or not target or not all(f in df.columns for f in features) or target not in df.columns:
                         return {"type": "error", "error": "Invalid features or target column."}, 400
+                    df = _coerce_numeric_features(df, features)
                     X = df[features]
                     y = df[target]
                     model = LinearRegression()
@@ -10753,6 +11064,7 @@ class VannaFlaskApp(VannaFlaskAPI):
                 elif algorithm == 'logistic_regression':
                     if not features or not target or not all(f in df.columns for f in features) or target not in df.columns:
                         return {"type": "error", "error": "Invalid features or target column."}, 400
+                    df = _coerce_numeric_features(df, features)
                     X = df[features]
                     y = df[target]
                     model = LogisticRegression()
@@ -11328,9 +11640,6 @@ class VannaFlaskApp(VannaFlaskAPI):
 
                         
         
-        def hash_password(password):
-            """Simple password hashing with SHA256 (you can switch to bcrypt for better security)."""
-            return hashlib.sha256(password.encode()).hexdigest()
         def clean_metadata(metadata_dict):
             """Ensure no None values — replace with empty string."""
             return {k: ("" if v is None else v) for k, v in metadata_dict.items()}
@@ -11380,7 +11689,7 @@ class VannaFlaskApp(VannaFlaskAPI):
                 if email and self.find_user_by_email(email)[0]:
                     return jsonify({"error": f"{email} is already linked to another user"}), 400
 
-                password_hash = hashlib.sha256(password.encode("utf-8")).hexdigest()
+                password_hash = generate_password_hash(password)
                 workspace_valid = _is_workspace_name(workspace)
 
                 self.users_collection.add(
@@ -12883,7 +13192,16 @@ class VannaFlaskApp(VannaFlaskAPI):
 
     def _user_can_access_workspace(self, user, workspace_id):
         """Admins/superadmins may use any workspace; a plain user only the one
-        assigned to them (stored as the workspace name, or legacy UUID)."""
+        assigned to them (stored as the workspace name, or legacy UUID).
+
+        "admin" is intentionally platform-wide here, same as "superadmin" — it
+        is never assigned to a workspace-scoped/client account (confirmed with
+        the team: admin accounts are internal staff, not per-client managers).
+        If that ever changes, this check must instead scope "admin" to its own
+        assigned `user["workspace"]`, the same way a plain "user" is scoped
+        below — otherwise any admin account created with a specific workspace
+        (see /api/add_user) could still read every OTHER workspace's data just
+        by changing workspace_id, regardless of what it was assigned."""
         role = str((user or {}).get("role") or session.get("role") or "user").lower()
         if role in ADMIN_ROLES:
             return True

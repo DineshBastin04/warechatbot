@@ -242,6 +242,12 @@ async function handleSlashCommand(text) {
             // follow-ups. Without it the stored agent re-runs the bare text cold at
             // fire time and the model has nothing to work from.
             prior_sql: prior?.sql || null,
+            // The thread's ORIGINAL question, when prior_question is itself a
+            // follow-up fragment — e.g. scheduling right after "show me top 4"
+            // would otherwise store just that phrase as the agent's question,
+            // meaningless on its own in an email read days later. null when
+            // prior_question already IS the root (nothing to add).
+            main_question: _resolveMainQuestion(prior?.question_id, prior?.question),
         });
         Se({ type: "text", text: res.text || res.error || "Something went wrong." });
     } catch (e) {
@@ -1131,7 +1137,31 @@ function yn() {
     }
 
     return lastQuestionMsg?.question || null;
-}function fT() {
+}
+
+// Walks parent_question_id back to a thread's first question — same
+// resolution _resolveThreadRoot uses above for FAQ/history grouping — so a
+// scheduled agent created from mid-thread follow-up text ("show me top 4")
+// can report what it was really about in its confirmation and emails, not
+// just that fragment on its own. Returns null (not currentQuestionText) when
+// the root IS the current question, so the caller can tell "no broader
+// thread" apart from "thread root happens to equal this text".
+function _resolveMainQuestion(questionId, currentQuestionText) {
+    if (!questionId) return null;
+    const list = uE(CT);
+    let current = list.find(q => q.question_id === questionId);
+    let guard = 0;
+    while (current && current.parent_question_id && guard < 50) {
+        const next = list.find(q => q.question_id === current.parent_question_id);
+        if (!next) break;
+        current = next;
+        guard++;
+    }
+    if (!current || !current.question) return null;
+    return current.question !== currentQuestionText ? current.question : null;
+}
+
+function fT() {
     const messages = uE(YE);
     let lastQuestionMsg = null;
     let lastSqlMsg = null;

@@ -32,7 +32,7 @@ flowchart
         get_sql_prompt
         submit_prompt
         generate_question
-        generate_plotly_code
+        generate_chart_spec
     end
 
     subgraph ChromaDB_VectorStore
@@ -1049,7 +1049,14 @@ class VannaBase(ABC):
             '  "ok": true,\n'
             '  "question": "<the data question being asked, in English, or null if the\n'
             '               message is a follow-up that only refers back to prior results\n'
-            '               (e.g. \\"this\\", \\"this data\\", \\"it\\") without restating one>",\n'
+            '               (e.g. \\"this\\", \\"this data\\", \\"it\\") without restating one,\n'
+            '               OR a bare delivery/timing command with no data content of its\n'
+            '               own (e.g. \\"send mail now\\", \\"email it now\\", \\"send this\n'
+            '               again\\", \\"run it now\\") — the caller resolves these from the\n'
+            '               preceding chat turn, so do NOT restate the command itself as the\n'
+            '               question just because nothing else was said. Only set "question"\n'
+            '               when the text itself actually names what data to fetch (e.g.\n'
+            '               \\"send me open orders\\" -> question is about open orders)>",\n'
             '  "email_address": "<a raw email address if one was stated inline, else null>",\n'
             '  "email_labels": ["<registered label(s) the text referred to, or \\"all\\">"],\n'
             '  "schedules": [\n'
@@ -1318,6 +1325,38 @@ class VannaBase(ABC):
             col_clean = col.strip("[]").split(".")[-1].lower()
             if col_clean and col_clean not in allowed_columns:
                 return False, f"Column '{col_clean}' is not whitelisted for writes on '{table_name}'"
+
+        return True, ""
+
+    def is_select_only_sql(self, sql: str) -> Tuple[bool, str]:
+        """
+        Deterministic read-only guard, mirroring is_write_sql_valid's structure
+        but for the opposite direction: used wherever a caller lets an LLM- or
+        admin-supplied SQL string run as a read (e.g. a "custom" anomaly rule
+        that starts with SELECT) without that string ever having gone through
+        generate_sql's own validation chain. Not a replacement for the write
+        whitelist — this only establishes that a string truly is a single,
+        read-only SELECT before it's allowed to run at all.
+
+        Returns:
+            (True, "") if valid, else (False, reason).
+        """
+        if not sql or not sql.strip():
+            return False, "Empty SQL"
+
+        forbidden_keywords = r"\b(UPDATE|INSERT|DELETE|MERGE|CREATE|ALTER|DROP|TRUNCATE|RENAME|COMMENT|GRANT|REVOKE|EXEC|EXECUTE)\b"
+        if re.search(forbidden_keywords, sql, re.IGNORECASE):
+            return False, "Only read-only SELECT queries are permitted here"
+
+        if re.search(r"\bINTO\b", sql, re.IGNORECASE):
+            return False, "SELECT ... INTO (table creation) is not permitted"
+
+        parsed = sqlparse.parse(sql)
+        if len(parsed) != 1:
+            return False, "Exactly one SQL statement is required"
+
+        if not re.match(r"^\s*(SELECT|WITH)\b", sql, re.IGNORECASE):
+            return False, "Only SELECT (or WITH ... SELECT) statements are permitted"
 
         return True, ""
 
@@ -1647,8 +1686,116 @@ class VannaBase(ABC):
 
         return text, int(total or 0), int(inp or 0), int(out or 0), model or "unknown"
 
+    def _get_live_table_columns(self, table, **kwargs) -> dict:
+        """
+        Real, current column names for one or more tables (comma-separated string
+        or list), read straight from INFORMATION_SCHEMA.COLUMNS instead of relying
+        on admin-written table documentation — which may not exist yet for a given
+        table, or may have drifted from the table's actual current schema. Used to
+        ground prediction/anomaly suggestion generation in ground truth, and to
+        validate/repair a suggested query afterward (see _validate_and_repair_suggestions).
 
+        Returns {table_name: [column_name, ...]}; a table that fails to resolve
+        (typo, no access, connection hiccup) is simply omitted rather than raising —
+        the caller still has doc_list as a fallback source of column names.
+        """
+        names = [t.strip() for t in table.split(",")] if isinstance(table, str) else list(table or [])
+        result = {}
+        for name in names:
+            if not name:
+                continue
+            # A strict identifier check, not just a quote-strip — the table name
+            # still gets interpolated into the query text below (run_sql's MSSQL
+            # connection takes no params argument at all), so this is what
+            # actually closes the injection surface rather than just reducing it.
+            if not re.match(r"^[A-Za-z0-9_]+$", name):
+                logger.warning(f"Skipping live-schema lookup for non-identifier table name: {name!r}")
+                continue
+            try:
+                df = self.run_sql(
+                    f"SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_NAME = '{name}'"
+                )
+                if df is not None and not df.empty:
+                    result[name] = df["COLUMN_NAME"].tolist()
+            except Exception as schema_exc:
+                logger.warning(f"Could not read live schema for table {name!r}: {schema_exc}")
+        return result
 
+    def _validate_and_repair_suggestions(self, suggestions: list, table, **kwargs) -> list:
+        """
+        Executes each suggestion's sql_query as a zero-row probe
+        (`SELECT TOP 0 * FROM (<query>) AS _validate_sq`) against the real
+        database — cheap even on a huge table, since SQL Server still has to bind
+        every column/table reference to produce a valid plan, but TOP 0 means it
+        never actually scans data. This is the one way to know for certain the
+        suggested SQL is runnable: the LLM is instructed to use only documented/
+        live-schema columns, but can still hallucinate a plausible-sounding one
+        (seen live: 'task_type'/'task_id' on t_work_q, neither of which exist).
+
+        A suggestion that fails gets exactly one corrective regeneration — the
+        real error and the live column list fed back to the LLM — rather than
+        being silently dropped immediately; still-invalid after that retry IS
+        dropped, so a bad suggestion never reaches the admin UI or a chat answer
+        as if it were trustworthy.
+        """
+        live_columns = self._get_live_table_columns(table, **kwargs)
+        columns_desc = "; ".join(f"{t}: {', '.join(cols)}" for t, cols in live_columns.items()) or "(schema unavailable)"
+
+        def _probe(sql):
+            # T-SQL rejects a bare ORDER BY inside a derived table/subquery unless
+            # that subquery also has its own TOP/OFFSET — found live: wrapping a
+            # perfectly valid "... ORDER BY order_date" suggestion this way made
+            # the probe itself fail with error 1033, which then looked like an
+            # invalid-column problem and got a good suggestion wrongly "repaired"
+            # (badly) and dropped. Strip a trailing ORDER BY for the probe only —
+            # it has no bearing on whether the referenced tables/columns are real,
+            # which is the only thing this probe needs to check — and keep it on
+            # the suggestion's actual sql_query, which runs standalone, not nested.
+            probe_body = re.sub(r'(?is)\s+order\s+by\s+(?:(?!;).)*$', '', sql.rstrip(';'))
+            probe_sql = f"SELECT TOP 0 * FROM ({probe_body}) AS _validate_sq"
+            try:
+                self.run_sql(probe_sql)
+                return True, ""
+            except Exception as probe_exc:
+                return False, str(probe_exc)
+
+        validated = []
+        for suggestion in suggestions:
+            if not isinstance(suggestion, dict) or not suggestion.get("sql_query"):
+                continue
+            ok, error = _probe(suggestion["sql_query"])
+            if not ok:
+                try:
+                    fix_messages = [
+                        {
+                            "role": "system",
+                            "content": (
+                                "The SQL query below failed to run against the real database. Fix it using "
+                                "ONLY the real columns listed — do not invent any column or table not in this "
+                                f"list: {columns_desc}\n\n"
+                                f"Failed query:\n{suggestion['sql_query']}\n\n"
+                                f"Database error:\n{error}\n\n"
+                                "Respond with ONLY the corrected SQL query — no prose, no markdown fences, "
+                                "no explanation."
+                            ),
+                        }
+                    ]
+                    fixed_raw, *_rest = self.submit_prompt(fix_messages, **kwargs)
+                    fixed_sql = self._strip_json_fence(fixed_raw).strip().rstrip(";")
+                    ok, error = _probe(fixed_sql)
+                    if ok:
+                        suggestion["sql_query"] = fixed_sql
+                except Exception as fix_exc:
+                    logger.warning(f"Suggestion SQL repair attempt failed: {fix_exc}")
+                    ok = False
+            if ok:
+                validated.append(suggestion)
+            else:
+                logger.warning(
+                    f"Dropping a {suggestion.get('prediction_name') or suggestion.get('anomaly_name') or 'suggestion'} "
+                    f"— SQL still invalid after one repair attempt: {error}"
+                )
+        return validated
 
     def get_prediction_suggestions(self, table: list[str],user_query: str, **kwargs) -> str:
         """
@@ -1665,16 +1812,27 @@ class VannaBase(ABC):
         # Fetch table documentation
         doc_list = self.get_table_documentation(table, **kwargs)
         logger.info(f"Prediction documentations: Tables: {table} and their {doc_list}")
+        # Documentation is admin-written and can be missing or stale; the live
+        # schema is always accurate and available even when nothing has been
+        # documented yet — ground the LLM in it directly rather than relying on
+        # documentation alone (every generated query is still probed against the
+        # real database afterward — see _validate_and_repair_suggestions — this
+        # just makes a first-try failure far less likely).
+        live_columns = self._get_live_table_columns(table, **kwargs)
+        live_columns_desc = (
+            "; ".join(f"{t}: {', '.join(cols)}" for t, cols in live_columns.items())
+            or "(could not read live schema — rely on documentation only)"
+        )
         system_message_content = (
             f"You are a precise and reliable data assistant tasked with generating prediction configurations for a given table, tailored for warehouse personas (employees, operators, managers)."
             f"\n\nThe user asked: '{user_query}'\n\n"
             f"You are provided with:\n"
             f"- A table name: {table}\n"
-            f"- Table documentation: {doc_list}\n\n"
+            f"- REAL columns that currently exist in this table (ground truth — read live from the database): {live_columns_desc}\n"
+            f"- Table documentation (may be incomplete or absent): {doc_list}\n\n"
             f"The documentation provides technical descriptions, business usage, relationships, and other relevant details strictly related to the specified table(s). You **must**:\n"
-            f"- Use **only** the columns, relationships, and details explicitly listed in the provided documentation for {table}.\n"
-            f"- **Do not** assume or invent any columns, relationships, or attributes not explicitly mentioned in the documentation.\n"
-            f"- Validate that all referenced columns in your SQL queries and parameters exist in the documented schema of {table} or related tables as per the documentation.\n"
+            f"- Use **only** columns that appear in the REAL columns list above — treat it as authoritative over the documentation if the two ever disagree.\n"
+            f"- **Do not** assume or invent any columns, relationships, or attributes not in that list.\n"
             f"- If the documentation is insufficient or unclear, include a note in the justification explaining any limitations and propose solutions based only on available information.\n\n"
             f"Your task is to:\n"
             f"1. Based on the user query and table documentation, identify one or more (up to 5) vital prediction use cases for {table} that can be utilized by warehouse employees, operators, or managers. Focus on predictions that enhance warehouse operations, such as inventory management, order fulfillment, or resource allocation.\n"
@@ -1683,7 +1841,6 @@ class VannaBase(ABC):
             f"   - standard_deviation\n"
             f"   - linear_regression\n"
             f"   - logistic_regression\n"
-            f"   - custom\n"
             f"3. For each use case, generate:\n"
             f"   - A concise and meaningful prediction name relevant to warehouse operations.\n"
             f"   - The selected algorithm.\n"
@@ -1691,7 +1848,6 @@ class VannaBase(ABC):
             f"   - Parameters required for the algorithm, e.g.:\n"
             f"       - For 'mean' or 'standard_deviation': target, inflation_rate\n"
             f"       - For regression: target and features (only documented columns)\n"
-            f"       - For custom: any custom fields inside a dictionary (only documented fields)\n"
             f"   - A clear justification explaining why the prediction is vital for warehouse personas, referencing specific details from the documentation and aligning with the user's query.\n\n"
             f"Return your answer in **valid JSON** as a list of prediction configurations, each with the following structure:\n\n"
             f"["
@@ -1723,6 +1879,8 @@ class VannaBase(ABC):
             parsed_suggestions = json.loads(self._strip_json_fence(suggestions))
             if not isinstance(parsed_suggestions, list):
                 parsed_suggestions = [parsed_suggestions]
+
+            parsed_suggestions = self._validate_and_repair_suggestions(parsed_suggestions, table, **kwargs)
 
             return (
                 json.dumps(parsed_suggestions),
@@ -1759,6 +1917,15 @@ class VannaBase(ABC):
         """
         # Fetch table documentation
         doc_list = self.get_table_documentation(table, **kwargs)
+        # Documentation is admin-written and can be missing or stale; ground the
+        # LLM in the real, live schema too — see get_prediction_suggestions above
+        # for the full rationale (same fix, same failure mode: a plausible but
+        # nonexistent column like t_work_q.task_type).
+        live_columns = self._get_live_table_columns(table, **kwargs)
+        live_columns_desc = (
+            "; ".join(f"{t}: {', '.join(cols)}" for t, cols in live_columns.items())
+            or "(could not read live schema — rely on documentation only)"
+        )
 
         system_message_content = (
             f"You are a precise and reliable data assistant tasked with generating anomaly detection configurations for a given table, tailored for warehouse personas (employees, operators, managers). The user asked: 'Given a table name and its complete documentation, "
@@ -1766,11 +1933,11 @@ class VannaBase(ABC):
             f"\n\nThe user asked: '{user_query}'\n\n"
             f"You are provided with:\n"
             f"- A table name: {table}\n"
-            f"- Table documentation: {doc_list}\n\n"
+            f"- REAL columns that currently exist in this table (ground truth — read live from the database): {live_columns_desc}\n"
+            f"- Table documentation (may be incomplete or absent): {doc_list}\n\n"
             f"The documentation provides technical descriptions, business usage, relationships, and other relevant details strictly related to the specified table(s). You **must**:\n"
-            f"- Use **only** the columns, relationships, and details explicitly listed in the provided documentation for {table}.\n"
-            f"- **Do not** assume or invent any columns, relationships, or attributes not explicitly mentioned in the documentation.\n"
-            f"- Validate that all referenced columns in your SQL queries and parameters exist in the documented schema of {table} or related tables as per the documentation.\n"
+            f"- Use **only** columns that appear in the REAL columns list above — treat it as authoritative over the documentation if the two ever disagree.\n"
+            f"- **Do not** assume or invent any columns, relationships, or attributes not in that list.\n"
             f"- If the documentation is insufficient or unclear, include a note in the justification explaining any limitations and propose solutions based only on available information.\n\n"
             f"Your task is to:\n"
             f"1. Identify one or more (up to 5) vital anomaly detection use cases for {table} that can be utilized by warehouse employees, operators, or managers, based solely on its documented purpose and attributes. Focus on detecting anomalies in warehouse operations, such as unusual inventory levels, order delays, or customer order patterns.\n"
@@ -1827,6 +1994,8 @@ class VannaBase(ABC):
             parsed_suggestions = json.loads(self._strip_json_fence(suggestions))
             if not isinstance(parsed_suggestions, list):
                 parsed_suggestions = [parsed_suggestions]
+
+            parsed_suggestions = self._validate_and_repair_suggestions(parsed_suggestions, table, **kwargs)
 
             return (
                 json.dumps(parsed_suggestions),
@@ -2599,34 +2768,18 @@ class VannaBase(ABC):
 
         return response
 
-    def _extract_python_code(self, markdown_string: str) -> str:
-        # Strip whitespace to avoid indentation errors in LLM-generated code
-        markdown_string = markdown_string.strip()
-
-        # Regex pattern to match Python code blocks
-        pattern = r"```[\w\s]*python\n([\s\S]*?)```|```([\s\S]*?)```"
-
-        # Find all matches in the markdown string
-        matches = re.findall(pattern, markdown_string, re.IGNORECASE)
-
-        # Extract the Python code from the matches
-        python_code = []
-        for match in matches:
-            python = match[0] if match[0] else match[1]
-            python_code.append(python.strip())
-
-        if len(python_code) == 0:
-            return markdown_string
-
-        return python_code[0]
-
-    def _sanitize_plotly_code(self, raw_plotly_code: str) -> str:
-        # Remove the fig.show() statement from the plotly code
-        plotly_code = raw_plotly_code.replace("fig.show()", "")
-
-        return plotly_code
-
-    def generate_plotly_code(self, question: str = None, sql: str = None, df_metadata: str = None, **kwargs) -> str:
+    def generate_chart_spec(self, question: str = None, sql: str = None, df_metadata: str = None, **kwargs) -> dict:
+        """
+        Asks the LLM to choose a chart type and columns for the result set, as a
+        small JSON spec — never executable code. An earlier version of this
+        method asked for raw Python ("plotly code") and ran it with exec()
+        (render_chart_figure's predecessor, get_plotly_figure) — meaning a
+        successful prompt injection in the user's own chat question could run
+        arbitrary code with the server process's full privileges. A spec can
+        only ever select a chart_type and column names; render_chart_figure
+        validates every one of them against the real DataFrame before use, so
+        there is nothing here that can be executed.
+        """
         if question is not None:
             system_msg = (
                 f"The following is a pandas DataFrame that contains the results of the query "
@@ -2648,28 +2801,27 @@ class VannaBase(ABC):
         message_log = [
             self.system_message(system_msg),
             self.user_message(
-                "Can you generate the Python plotly code to chart the results of the dataframe? "
-                "Assume the data is in a pandas dataframe called 'df'. "
-                "If there is only one value in the dataframe, use an Indicator. "
-                "Respond with only Python code. Do not answer with any explanations -- just the code."
+                "Choose how to chart this data. Respond with ONLY a single JSON object "
+                "(no prose, no markdown fences), matching exactly:\n"
+                '{"chart_type": "bar" | "line" | "scatter" | "pie" | "indicator", '
+                '"x": "<a real column name from df>" or null, '
+                '"y": "<a real column name from df>" or ["<column>", ...] or null, '
+                '"color": "<a real column name from df>" or null, '
+                '"title": "<a short chart title>" or null}\n\n'
+                'Use "indicator" only if the dataframe has a single row and a single '
+                'numeric value to show. Use "pie" only for a small number of categories. '
+                "Only name columns that actually appear in the dataframe described above."
             ),
         ]
 
-        plotly_code = self.submit_prompt(message_log, kwargs=kwargs)
+        response = self.submit_prompt(message_log, **kwargs)
+        if isinstance(response, tuple) and len(response) in (2, 5):
+            response_text = response[0]
+        else:
+            response_text = str(response)
 
-    
-        # If submit_prompt returns (response_text, usage) tuple
-        if isinstance(plotly_code, tuple):
-            plotly_code = plotly_code[0]
-
-        # Ensure it's always a string
-        if not isinstance(plotly_code, str):
-            plotly_code = str(plotly_code)
-    
-
-        return self._sanitize_plotly_code(
-            self._extract_python_code(plotly_code)
-        )
+        spec = self._parse_json_response(response_text)
+        return spec if isinstance(spec, dict) else {}
 
     # ----------------- Connect to Any Database to run the Generated SQL ----------------- #
 
@@ -3728,12 +3880,12 @@ class VannaBase(ABC):
             # Only generate plotly code if visualize is True
             if visualize:
                 try:
-                    plotly_code = self.generate_plotly_code(
+                    chart_spec = self.generate_chart_spec(
                         question=question,
                         sql=sql,
                         df_metadata=f"Running df.dtypes gives:\n {df.dtypes}",
                     )
-                    fig = self.get_plotly_figure(plotly_code=plotly_code, df=df)
+                    fig = self.render_chart_figure(spec=chart_spec, df=df)
                     if print_results:
                         try:
                             display = __import__(
@@ -4038,51 +4190,72 @@ class VannaBase(ABC):
 
         return plan
 
-    def get_plotly_figure(
-        self, plotly_code: str, df: pd.DataFrame, dark_mode: bool = True
+    def render_chart_figure(
+        self, spec: dict, df: pd.DataFrame, dark_mode: bool = True
     ) -> plotly.graph_objs.Figure:
         """
-        **Example:**
-        ```python
-        fig = vn.get_plotly_figure(
-            plotly_code="fig = px.bar(df, x='name', y='salary')",
-            df=df
-        )
-        fig.show()
-        ```
-        Get a Plotly figure from a dataframe and Plotly code.
+        Builds a Plotly figure from a chart spec (see generate_chart_spec) — a
+        plain dispatch over a handful of px./go. calls, never code execution.
+        Every column name in `spec` is checked against the real `df.columns`
+        before use; anything not present (a hallucinated column, or simply a
+        missing/invalid spec) is treated as absent and falls through to the
+        same dtype-based heuristic this always used as its fallback.
 
         Args:
-            df (pd.DataFrame): The dataframe to use.
-            plotly_code (str): The Plotly code to use.
+            spec (dict): {"chart_type", "x", "y", "color", "title"} from generate_chart_spec.
+            df (pd.DataFrame): The dataframe to chart.
 
         Returns:
             plotly.graph_objs.Figure: The Plotly figure.
         """
-        ldict = {"df": df, "px": px, "go": go}
+        spec = spec or {}
+        columns = set(df.columns)
+
+        def _col(value):
+            if isinstance(value, list):
+                picked = [v for v in value if isinstance(v, str) and v in columns]
+                return picked or None
+            return value if isinstance(value, str) and value in columns else None
+
+        chart_type = spec.get("chart_type")
+        x = _col(spec.get("x"))
+        y = _col(spec.get("y"))
+        color = spec.get("color") if spec.get("color") in columns else None
+        title = spec.get("title") if isinstance(spec.get("title"), str) else None
+        y_single = y[0] if isinstance(y, list) else y
+
+        fig = None
         try:
-            exec(plotly_code, globals(), ldict)
+            if chart_type == "indicator":
+                target = y_single or x
+                if target and not df.empty:
+                    fig = go.Figure(go.Indicator(mode="number", value=df[target].iloc[0],
+                                                  title={"text": title or target}))
+            elif chart_type == "bar" and x:
+                fig = px.bar(df, x=x, y=y, color=color, title=title)
+            elif chart_type == "line" and x:
+                fig = px.line(df, x=x, y=y, color=color, title=title)
+            elif chart_type == "scatter" and x and y_single:
+                fig = px.scatter(df, x=x, y=y_single, color=color, title=title)
+            elif chart_type == "pie" and x:
+                fig = px.pie(df, names=x, values=y_single, title=title)
+        except Exception as render_exc:
+            logger.warning(f"Chart spec failed to render ({chart_type}): {render_exc}")
+            fig = None
 
-            fig = ldict.get("fig", None)
-        except Exception as e:
-            # Inspect data types
+        if fig is None:
+            # Same fallback this method has always had — infer a reasonable
+            # chart straight from the dataframe's own dtypes when the spec
+            # is missing, invalid, or fails to render.
             numeric_cols = df.select_dtypes(include=["number"]).columns.tolist()
-            categorical_cols = df.select_dtypes(
-                include=["object", "category"]
-            ).columns.tolist()
-
-            # Decision-making for plot type
+            categorical_cols = df.select_dtypes(include=["object", "category"]).columns.tolist()
             if len(numeric_cols) >= 2:
-                # Use the first two numeric columns for a scatter plot
                 fig = px.scatter(df, x=numeric_cols[0], y=numeric_cols[1])
             elif len(numeric_cols) == 1 and len(categorical_cols) >= 1:
-                # Use a bar plot if there's one numeric and one categorical column
                 fig = px.bar(df, x=categorical_cols[0], y=numeric_cols[0])
             elif len(categorical_cols) >= 1 and df[categorical_cols[0]].nunique() < 10:
-                # Use a pie chart for categorical data with fewer unique values
                 fig = px.pie(df, names=categorical_cols[0])
             else:
-                # Default to a simple line plot if above conditions are not met
                 fig = px.line(df)
 
         if fig is None:

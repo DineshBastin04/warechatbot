@@ -71,16 +71,22 @@ class SessionCookie(unittest.TestCase):
     def test_matrix(self):
         secure = {"SESSION_COOKIE_SAMESITE": "None", "SESSION_COOKIE_SECURE": True,
                   "SESSION_COOKIE_PARTITIONED": True}
+        # The non-Secure path now sets SameSite=Lax explicitly instead of leaving
+        # it to Flask's own (version-dependent) default.
+        not_secure = {"SESSION_COOKIE_SAMESITE": "Lax"}
+        # (env, expected_config, expected_tab_without_secure, expected_secure_unconfigured)
         cases = [
-            ({}, {}, False),
-            ({"TEAMS_TAB_ENABLED": "true"}, secure, False),
-            ({"TEAMS_TAB_ENABLED": "true", "SESSION_COOKIE_SECURE": "false"}, {}, True),
-            ({"SESSION_COOKIE_SECURE": "1"}, secure, False),
-            ({"TEAMS_TAB_ENABLED": "no", "SESSION_COOKIE_SECURE": "no"}, {}, False),
+            ({}, not_secure, False, True),
+            ({"TEAMS_TAB_ENABLED": "true"}, secure, False, False),
+            ({"TEAMS_TAB_ENABLED": "true", "SESSION_COOKIE_SECURE": "false"}, not_secure, True, False),
+            ({"SESSION_COOKIE_SECURE": "1"}, secure, False, False),
+            ({"TEAMS_TAB_ENABLED": "no", "SESSION_COOKIE_SECURE": "no"}, not_secure, False, False),
         ]
-        for env, config, warn in cases:
+        for env, config, tab_warn, secure_unconfigured in cases:
             with self.subTest(env=env):
-                self.assertEqual(ef.session_cookie_settings(env), (config, warn))
+                self.assertEqual(
+                    ef.session_cookie_settings(env), (config, tab_warn, secure_unconfigured)
+                )
 
 
 def _columns_of_create(sql):
