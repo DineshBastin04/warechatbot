@@ -228,15 +228,31 @@ function pushFeedbackOnce() {
 // new context-tracking. The backend does exactly one LLM call (only for a
 // free-text request; list/stop/email are handled with no LLM call at all) and
 // always replies with {type:"text",...}, the one shape the feed already renders.
+// The most recent question, if it was answered by the prediction pipeline.
+function _latestPredictionTurn() {
+    const messages = uE(YE);
+    for (let i = messages.length - 1; i >= 0; i--) {
+        const m = messages[i];
+        if (m.type !== "user_question") continue;
+        return m.kind === "prediction" ? m : null;
+    }
+    return null;
+}
+
 async function handleSlashCommand(text) {
+    // Taken before this message joins the feed, so "this" means the turn before it.
+    const lastPrediction = _latestPredictionTurn();
     Se({ type: "user_question", question: text, question_id: null });
-    const prior = fT(); // {question, question_id, sql} or null
+    // A prediction answer has no SQL, so it sends its own question and lets the
+    // server re-run the check that answered it.
+    const prior = lastPrediction ? { question: lastPrediction.question, question_id: null, sql: null } : fT();
     const workspaceId = getWorkspaceIdFromUrl() || getCurrentWorkspaceId();
     try {
         const res = await Pe("slash_command", "POST", {
             workspace_id: workspaceId,
             text,
             prior_question: prior?.question || null,
+            prior_kind: lastPrediction ? "prediction" : null,
             // The prior SQL is the context that makes a follow-up ("show me top 4")
             // resolvable — generate_sql already relies on it for interactive
             // follow-ups. Without it the stored agent re-runs the bare text cold at
@@ -263,7 +279,7 @@ async function handleSlashCommand(text) {
 // calling this again with the user's next reply (classify_message_route
 // forces the "prediction" route while one is open).
 async function handlePredictionQuery(text) {
-    Se({ type: "user_question", question: text, question_id: null });
+    Se({ type: "user_question", question: text, question_id: null, kind: "prediction" });
     const workspaceId = getWorkspaceIdFromUrl() || getCurrentWorkspaceId();
     try {
         const res = await Pe("run_matched_analysis", "POST", {
@@ -373,6 +389,9 @@ async function uT(E, L, existingQuestionId = null) {
         handleSlashCommand(trimmed);
         return;
     }
+    // Set when the backend recognises this message as a trained question — its
+    // stored SQL answers it as asked, so the follow-up rewrite below is skipped.
+    let isTrainedQuestion = false;
     if (trimmed) {
         // "/" is still an accepted fast path above, but it's no longer required —
         // a lightweight server-side classification call decides whether a plain
@@ -384,6 +403,7 @@ async function uT(E, L, existingQuestionId = null) {
         // Pe() never throws (it swallows errors into {type:"error"}), so a
         // classification failure naturally fails open into the RAG flow below.
         const routeRes = await Pe("classify_message_route", "POST", { text: trimmed, workspace_id: workspaceId });
+        isTrainedQuestion = routeRes.trained === true;
         if (routeRes.route === "schedule") {
             handleSlashCommand(trimmed);
             return;
@@ -467,27 +487,44 @@ async function uT(E, L, existingQuestionId = null) {
     // Rewritten question logic (if follow-up) — purely a display/SQL-quality aid
     // (rewrites ambiguous phrasing like "show me top 4" into something standalone);
     // unrelated to the grouping decision above.
-    if (T) {
-        const rewrittenRes = await Pe("generate_rewritten_question", "GET", {
+    //
+    // Nothing downstream reads its result (generate_sql gets E, not the rewrite),
+    // so it used to cost a full LLM round trip before generate_sql even started.
+    // Now: skipped for a trained question, otherwise run alongside generate_sql
+    // and still shown first. get_function is only consulted when function
+    // generation is on, so it's only called then.
+    const rewritePromise = (T && !isTrainedQuestion)
+        ? Pe("generate_rewritten_question", "GET", {
             last_question: T,
             new_question: E,
             sql: L,
             workspace: workspaceName
+        })
+        : Promise.resolve(null);
+    const functionRes = e.function_generation
+        ? await Pe("get_function", "GET", { question: E, workspace: workspaceName })
+        : null;
+    const sqlPromise = (functionRes && functionRes.type === "function")
+        ? null
+        : Pe("generate_sql", "GET", {
+            question: E,
+            workspace: workspaceName,
+            ...(parentQuestionId ? { parent_question_id: parentQuestionId } : {})
         });
-        if (
-            rewrittenRes.type === "rewritten_question" &&
-            rewrittenRes.question !== E
-        ) {
-            Se(rewrittenRes);
-        }
+
+    const rewrittenRes = await rewritePromise;
+    if (
+        rewrittenRes &&
+        rewrittenRes.type === "rewritten_question" &&
+        rewrittenRes.question !== E
+    ) {
+        Se(rewrittenRes);
     }
 
-    // Try to use function first if enabled
-    const functionRes = await Pe("get_function", "GET", { question: E, workspace: workspaceName });
     let r; // backend-generated ID
     let finalSql = null;
 
-    if (e.function_generation && functionRes.type === "function") {
+    if (functionRes && functionRes.type === "function") {
         Se(functionRes);
         r = functionRes.id;
         GE.set(functionRes.id);
@@ -495,11 +532,7 @@ async function uT(E, L, existingQuestionId = null) {
         LAST_USED_SQL = finalSql;
         Et.set(finalSql);
     } else {
-        const sqlRes = await Pe("generate_sql", "GET", {
-            question: E,
-            workspace: workspaceName,
-            ...(parentQuestionId ? { parent_question_id: parentQuestionId } : {})
-        });
+        const sqlRes = await sqlPromise;
         if (sqlRes.type === "write_confirmation") {
             try { renderWriteConfirmationModal(sqlRes, workspaceId); } catch (e) { console.error("write confirmation modal failed:", e); }
             return;

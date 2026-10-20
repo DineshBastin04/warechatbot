@@ -38,14 +38,8 @@
   "[\"inventory receipt\", \"purchase order\", \"receipt date\", \"warehouse id\", \"vendor code\", \"receipt status\", \"quantity received\", \"quantity damaged\", \"license plate\", \"transaction status\"]": "t_receipt",
   "[\"pack slip\", \"shipment number\", \"lot number\", \"line number\", \"schedule number\", \"stored attribute\", \"hold reason\", \"inbound process\", \"inventory tracking\", \"receiving process\"]": "t_receipt",
   "[\"forklift id\", \"scac code\", \"receipt uom\", \"display vendor\", \"damaged_items\", \"receipt_date\", \"broken_items\"]": "t_receipt",
-  "[\"pick put profile\", \"picking rules\", \"putaway rules\", \"profile identifier\", \"override profile\", \"warehouse operations\", \"hierarchical rules\", \"operation automation\", \"seasonal handling\", \"rule management\"]": {
-    "table": "t_pick_put_master",
-    "db": "secondary"
-  },
-  "[\"inventory movement\", \"task configuration\"]": {
-    "table": "t_pick_put_master",
-    "db": "secondary"
-  },
+  "[\"pick put profile\", \"picking rules\", \"putaway rules\", \"profile identifier\", \"override profile\", \"warehouse operations\", \"hierarchical rules\", \"operation automation\", \"seasonal handling\", \"rule management\"]": "t_pick_put_master",
+  "[\"inventory movement\", \"task configuration\"]": "t_pick_put_master",
   "[\"lookup table\", \"status codes\", \"localization\", \"lookup id\", \"source table\", \"sequence number\", \"locale id\", \"lookup text\", \"lookup type\", \"standardization\"]": "t_lookup",
   "[\"error messages\", \"multi-language\", \"process integration\", \"data mapping\", \"description text\"]": "t_lookup",
   "[\"warehouse info\", \"warehouse id\", \"warehouse code\", \"warehouse name\", \"address lines\", \"city\", \"state\", \"zip code\", \"phone\", \"fax\"]": "t_whse",
@@ -352,5 +346,25 @@
   "[\"current location tracking\", \"zone workers\", \"temp menu users\", \"training mode\", \"language settings\", \"locale preferences\", \"priority settings\", \"work queue routing\", \"labor management source\", \"headcount report source\"]": "t_employee",
   "[\"productivity base table\", \"login ownership\", \"user provisioning\", \"deactivation records\", \"duplicate employee cleanup\", \"multi-site workers\", \"cross-DC visibility\", \"span of control\", \"warehouse staffing\", \"associate lifecycle\"]": "t_employee",
   "[\"employee provisioning\", \"user authentication store\", \"security role assignment\", \"WMS user directory\", \"daily active users\", \"shift planning source\", \"picker assignment\", \"operator list\", \"forklift drivers\", \"receiving clerks\"]": "t_employee",
-  "[\"packing station users\", \"system access control\"]": "t_employee"
+  "[\"packing station users\", \"system access control\"]": "t_employee",
+  "[\"order value\", \"erp order\", \"expensive order\", \"largest order\", \"biggest order\", \"currency code\", \"average value\", \"value of orders\", \"average order amount\", \"worth\", \"priciest\", \"highest value\", \"highest-value order\", \"lowest value\", \"lowest-value order\", \"smallest order\", \"smallest value\", \"minimum value\", \"value in erp\", \"erp system\", \"entire erp\", \"overall order\", \"order price\", \"average order cost\", \"highest order amount\", \"lowest order amount\", \"lowest order cost\", \"total sales value\", \"total sales amount\", \"total sales cost\", \"total sales price\"]": {
+    "table": "t_erpnext_order_stage",
+    "db": "secondary"
+  },
+  "[\"picking sla\", \"started picking\", \"picking breach\", \"picking threshold\", \"sla breach\", \"hasn started\", \"haven started\", \"stuck in picking\", \"orders stuck\", \"after hours\", \"longer than hours\", \"picking limit\", \"zero picks\", \"picking overdue\", \"picking waiting\", \"open orders no picking\", \"orders breaching sla\"]": {
+    "table": "t_erpnext_order_stage",
+    "db": "secondary"
+  },
+  "[\"delivery risk\", \"late delivery\", \"delivery deadline\", \"delivery commitment\", \"required delivery\", \"due today\", \"delivery status\", \"order risk\", \"orders at risk\", \"risk of missing\", \"miss their delivery\", \"delivery deadlines\", \"delivery date missed\", \"orders due soon\", \"orders close to delivery\", \"orders near deadline\", \"fully loaded\"]": {
+    "table": "t_erpnext_order_stage",
+    "db": "secondary"
+  },
+  "[\"order not started\", \"execution status\", \"order stage\", \"erp status\", \"wms status\", \"fulfillment status\", \"sal-ord-\", \"erp shows\", \"erp says\", \"active in wms\", \"wms still\", \"erp but still\"]": {
+    "table": "t_erpnext_order_stage",
+    "db": "secondary"
+  },
+  "[\"cancelled orders in wms\", \"erp cancelled\", \"erp closed\", \"still active\", \"still released\", \"still being processed\", \"stopped in wms\", \"closed but\", \"cancelled but active\", \"orders cancelled not done\", \"cancelled orders still open\", \"cancelled orders in picking\", \"orders cancelled not finished\", \"wms active on closed\", \"wms active on cancelled\", \"cancelled orders still staged\", \"orders cancelled not stopped\", \"wms work on closed\", \"wms work on cancelled\", \"cancelled orders not complete\"]": {
+    "table": "t_erpnext_order_stage",
+    "db": "secondary"
+  }
 }

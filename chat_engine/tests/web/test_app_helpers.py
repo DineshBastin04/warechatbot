@@ -188,5 +188,96 @@ class WorkspaceAccess(unittest.TestCase):
         self.assertFalse(self.check({"role": "user", "workspace": ""}, "ws-1", meta={"name": ""}))
 
 
+class TrainedQuestionLookup(unittest.TestCase):
+    """A trained question must run its stored SQL — asked with different case or
+    punctuation, and asked after an earlier answer (the chat sends the previous
+    SQL with every question after the first)."""
+
+    def test_exact_key_ignores_case_spacing_and_trailing_punctuation(self):
+        from engine.chromadb.chromadb_vector import ChromaDB_VectorStore
+        key = ChromaDB_VectorStore._exact_key
+        self.assertEqual(key("What is the average value for AMZ002?"),
+                         key("  what is the  average value for amz002 "))
+        self.assertEqual(key("Count the unshipped orders."), key("count the unshipped orders"))
+        # wording still has to match
+        self.assertNotEqual(key("What is the average value for AMZ002?"),
+                            key("What is the average value for AMZ003?"))
+
+    def _generate(self, followup, trained):
+        from engine.base.base import VannaBase
+        stub = MagicMock()
+        stub.find_trained_sql = MagicMock(side_effect=lambda q, ws: trained.get(q))
+        stub.extract_sql = lambda text: text.split("```sql\n", 1)[-1].rsplit("\n```", 1)[0]
+        stub.validate_openquery_literals.return_value = (True, None)
+        stub.validate_db_scope.return_value = (True, None)
+        stub.get_similar_question_sql.return_value = {"sql": [], "documentation": [], "context": {}}
+        stub.submit_prompt.return_value = ("SELECT 'from the LLM'", 1, 1, 1, "gpt")
+        return VannaBase.generate_sql(stub, question="SELECT 1 FROM t_prev", followup_sql=followup,
+                                      workspace="test"), stub
+
+    def test_followup_that_is_a_trained_question_runs_its_sql(self):
+        (sql, *_rest, model), stub = self._generate(
+            "What is the average value for AMZ002?",
+            {"What is the average value for AMZ002?": "SELECT AVG(order_value) FROM t_erpnext_order_stage"})
+        self.assertEqual((sql, model), ("SELECT AVG(order_value) FROM t_erpnext_order_stage", "exact_match"))
+        stub.submit_prompt.assert_not_called()
+
+    def test_short_reply_stays_a_followup(self):
+        # "Warehouse ATH1" is (oddly) trained, but as a reply it means "the previous query, for ATH1"
+        (_sql, *_rest, model), stub = self._generate("Warehouse ATH1", {"Warehouse ATH1": "SELECT * FROM t_whse"})
+        self.assertNotEqual(model, "exact_match")
+        stub.submit_prompt.assert_called_once()
+
+
+class DatasetRoute(unittest.TestCase):
+    """Dataset questions (and close rephrasings) must reach the query pipeline,
+    not prediction/scheduling — unless they ask for something to be sent."""
+
+    def route(self, question, trained=False, distance=None):
+        stub = MagicMock()
+        stub.find_trained_sql.return_value = "SELECT 1" if trained else None
+        stub.nearest_trained_distance.return_value = distance
+        with patch.object(ef, "vn", stub):
+            return ef._dataset_route(question, "demo")
+
+    def test_exact_trained_question(self):
+        self.assertEqual(self.route("Show me orders at risk of missing delivery.", trained=True), "exact")
+
+    def test_close_rephrasing_goes_to_the_dataset(self):
+        self.assertEqual(self.route("orders at risk of missing delivery", distance=0.2), "near")
+
+    def test_far_from_every_trained_question(self):
+        self.assertIsNone(self.route("forecast next month's demand", distance=1.1))
+
+    def test_delivery_requests_stay_with_scheduling(self):
+        for q in ("send a mail to suriyan on orders at risk of missing delivery",
+                  "email me daily the orders at risk of missing delivery",
+                  "notify me when any order is at risk of missing delivery"):
+            with self.subTest(q=q):
+                self.assertIsNone(self.route(q, distance=0.1))
+
+    def test_dataset_words_that_look_like_scheduling_still_match(self):
+        # "watch" / "cancelled" are ordinary words in the trained questions
+        self.assertEqual(self.route("which orders should we watch for delivery", distance=0.05), "near")
+        self.assertEqual(self.route("cancelled orders still being picked", distance=0.1), "near")
+
+
+class NewQuestionDuringSchedulePrompt(unittest.TestCase):
+    """A fresh question typed while "What would you like me to send you?" is
+    open is answered, not scheduled; real answers to the prompt still continue it."""
+
+    def test_fresh_questions_leave_the_prompt(self):
+        for q in ("how many warehpuse do we ahve", "what are the open orders",
+                  "show me today's picks", "open orders by customer?"):
+            with self.subTest(q=q):
+                self.assertTrue(ef._is_new_question(q))
+
+    def test_answers_to_the_prompt_continue_it(self):
+        for q in ("suriyan", "the sales report", "send the open orders to suriyan",
+                  "email what we discussed to akshaya", "every monday at 9am", "/list", ""):
+            with self.subTest(q=q):
+                self.assertFalse(ef._is_new_question(q))
+
+
 if __name__ == "__main__":
     unittest.main()
