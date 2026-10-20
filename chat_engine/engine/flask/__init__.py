@@ -74,6 +74,7 @@ from flask_sock import Sock
 
 # Custom/Project-Specific (Based on your listed imports)
 from ..base import VannaBase
+from ..base.base import DELIVERY_CUES
 from ..ollama import Ollama
 from ..openai import OpenAI_Chat
 from ..chromadb import ChromaDB_VectorStore
@@ -195,6 +196,13 @@ _pending_analysis_confirmations = {}
 _pending_analysis_confirmations_lock = None   # initialised after Lock is imported below
 _PENDING_ANALYSIS_CONFIRMATION_TTL_SECONDS = 600
 
+# The prediction/anomaly check behind each user's latest prediction answer,
+# keyed like the dicts above. "send this to X" right after a prediction refers
+# to that answer, which has no SQL of its own: the schedule stores this check
+# and re-runs it at fire time instead of asking what to send.
+_last_analysis_runs = {}
+_LAST_ANALYSIS_RUN_TTL_SECONDS = 3600
+
 # An ordinary data question that generate_sql couldn't answer (its own
 # anti-hallucination guard fired — no trained example/documentation covers
 # this shape of question, so it returned the literal "Insufficient data for
@@ -256,6 +264,7 @@ _unpick_log_lock = Lock()
 _pending_writes_lock = Lock()
 _pending_schedule_clarifications_lock = Lock()
 _pending_analysis_confirmations_lock = Lock()
+_last_analysis_runs_lock = Lock()
 _pending_query_clarifications_lock = Lock()
 _schedule_records_locks_guard = Lock()
 
@@ -1640,10 +1649,12 @@ def build_vanna_instance(llm_details, db_details, db_details_b=None):
     # reached either via same-instance three-part naming (if both databases
     # share the same server+port) or a linked server (if genuinely separate
     # servers) — get_sql_prompt picks the right form using same_instance.
-    instance.primary_db_alias = db_details.get("db_alias") or "PRIMARY"
+    # strip(): an alias typed with a stray space ("secondarydb ") never matched
+    # the db tags in table_relevance/query_mapping.
+    instance.primary_db_alias = (db_details.get("db_alias") or "").strip() or "PRIMARY"
     instance.primary_db_name = db_details.get("databaseName")
     if db_details_b and db_details_b.get("databaseName"):
-        instance.secondary_db_alias = db_details_b.get("db_alias") or "SECONDARY"
+        instance.secondary_db_alias = (db_details_b.get("db_alias") or "").strip() or "SECONDARY"
         instance.secondary_db_name = db_details_b.get("databaseName")
         instance.same_instance = (
             str(db_details_b.get("serverName") or "").strip().lower()
@@ -2081,6 +2092,14 @@ class VannaFlaskAPI:
                 if not initialized:
                     return {"type": "error", "error": init_err}, 400
 
+            # The trained dataset lives in a collection named after the workspace
+            # NAME. Some callers (the prediction pipeline's fallback) pass the
+            # workspace ID instead — that searched an empty collection, so every
+            # question there missed the dataset and ended in a clarifying question.
+            ws_meta = get_workspace_metadata(self, workspace)
+            if ws_meta and ws_meta.get("name"):
+                workspace = ws_meta["name"]
+
             # ────────────────────────────────────────────────
             # Resume a pending query clarification, if one is open for this
             # user — treat this message as the answer, merged with the
@@ -2110,6 +2129,16 @@ class VannaFlaskAPI:
                     _pending_schedule_clarifications.pop(clarification_key, None)
                 with _pending_analysis_confirmations_lock:
                     _pending_analysis_confirmations.pop(clarification_key, None)
+
+                # A complete trained question isn't an answer to the clarifying
+                # question — it's a new question. Merging it produced things like
+                # "what does that means?? Which items are most likely to run out…",
+                # which then matched nothing in the dataset.
+                # (Short replies like "Warehouse ATH1" are still answers to the
+                # clarifying question, even if some trained entry is that bare text.)
+                reply = clean_question(question_raw)
+                if pending_clarification and len(reply.split()) >= 4 and _is_trained_question(reply, workspace):
+                    pending_clarification = None
 
                 if pending_clarification and time.time() - pending_clarification.get("created_at", 0) <= _PENDING_QUERY_CLARIFICATION_TTL_SECONDS:
                     question_raw = f"{pending_clarification['raw_text']} {question_raw}".strip()
@@ -6466,6 +6495,52 @@ Runs {e(schedule_desc)}.</div></td></tr>
                     record["enabled"] = False
                     return _fail("rejected", "Re-classified as a write request at fire time — agent disabled.")
 
+                # "Send this" after a prediction answer: re-run the check that
+                # produced it (it has no SQL to regenerate) and mail its summary.
+                analysis = record.get("analysis")
+                if analysis and analysis.get("config"):
+                    reply_text, rows = self._run_analysis_check(
+                        workspace_id, analysis.get("kind") or "prediction", analysis["config"],
+                        record["question_en"], record["workspace_name"],
+                    )
+                    if reply_text is None:
+                        return _fail("error", f"The check failed to run: {rows}")
+                    e = html_escape_lib.escape
+                    body = f"You asked: {record['display_question']}\n\n{reply_text}"
+                    if rows:
+                        body += f"\n\n({len(rows)} row(s) attached as CSV.)"
+                    main_html = "".join(
+                        f"<p style=\"margin:0 0 10px\">{e(part)}</p>" for part in reply_text.split("\n\n") if part.strip()
+                    )
+                    if record.get("channel") == "email" and record.get("email_recipients"):
+                        try:
+                            _send_email(
+                                record["email_recipients"],
+                                f"[Scheduled] {record['display_question']}",
+                                _scheduled_email_body(body),
+                                rows,
+                                _scheduled_email_filename(schedule_id),
+                                html=_scheduled_email_html(
+                                    "Scheduled Report", record["display_question"],
+                                    "Answered", "#0ca30c", "&#10003;", main_html,
+                                    _describe_schedule(record.get("schedule") or {}),
+                                ),
+                            )
+                        except Exception as email_exc:
+                            logger.exception(f"Scheduled question {schedule_id} email delivery failed: {email_exc}")
+                    elif record.get("channel") == "teams" and record.get("teams_aad_id"):
+                        _deliver_to_teams(record, body, rows)
+                    else:
+                        logger.info(f"Scheduled question {schedule_id}: no recipient assigned yet — result not delivered.")
+                    record["last_status"] = "ok"
+                    record["last_error"] = None
+                    record["last_run_at"] = time.time()
+                    record["run_count"] = record.get("run_count", 0) + 1
+                    if schedule.get("type") == "date":
+                        record["enabled"] = False
+                    _save_schedule_records(workspace_id, metadata, records)
+                    return
+
                 # A follow-up question ("show me top 4") is meaningless on its own —
                 # resolve it against the SQL it was originally asked against, exactly
                 # as the interactive follow-up branch does. .get() keeps agents created
@@ -8336,7 +8411,7 @@ Runs {e(schedule_desc)}.</div></td></tr>
             if not secondary_cfg or not secondary_cfg.get("databaseName"):
                 return True, "No secondary DB configured — nothing to sync."
 
-            alias = secondary_cfg.get("db_alias") or "SECONDARY"
+            alias = (secondary_cfg.get("db_alias") or "").strip() or "SECONDARY"
             same_instance = (
                 str(primary_cfg.get("serverName") or "").strip().lower()
                     == str(secondary_cfg.get("serverName") or "").strip().lower()
@@ -9118,7 +9193,7 @@ Runs {e(schedule_desc)}.</div></td></tr>
             except Exception:
                 return None
 
-        def _has_pending_clarification(workspace_id, username):
+        def _has_pending_clarification(workspace_id, username, text=None):
             """Peek (without consuming) whether (workspace_id, username) has an
             open schedule clarification — used by the routing endpoints to force
             a bare follow-up reply down the schedule path even though the reply
@@ -9127,9 +9202,14 @@ Runs {e(schedule_desc)}.</div></td></tr>
             key = f"{workspace_id}:{username}"
             with _pending_schedule_clarifications_lock:
                 pending = _pending_schedule_clarifications.get(key)
+                # A fresh question instead of an answer: the user moved on, so the
+                # prompt is dropped and the question is routed as usual.
+                if pending and _is_new_question(text):
+                    _pending_schedule_clarifications.pop(key, None)
+                    return False
             return bool(pending) and time.time() - pending.get("created_at", 0) <= _PENDING_CLARIFICATION_TTL_SECONDS
 
-        def _handle_schedule_message(workspace_id, raw_text, prior_question, username, prior_sql=None, ctx=None, main_question=None):
+        def _handle_schedule_message(workspace_id, raw_text, prior_question, username, prior_sql=None, ctx=None, main_question=None, prior_kind=None):
             """
             Core scheduling/conditional-agent pipeline: fixed literals (list /
             stop <id> / email list) are handled deterministically with no LLM
@@ -9148,6 +9228,10 @@ Runs {e(schedule_desc)}.</div></td></tr>
             its own in a notification email sent days later. None when there is
             no broader thread (prior_question is already the root) or no caller
             supplies it (e.g. the Teams channel, which has no thread tracking).
+
+            prior_kind: "prediction" when prior_question was answered by the
+            prediction/anomaly pipeline. That answer has no SQL, so a bare "send
+            this" stores the check that produced it and re-runs that at fire time.
 
             Returns (body_dict, status_code).
             """
@@ -9318,6 +9402,12 @@ Runs {e(schedule_desc)}.</div></td></tr>
             # follow-up branch does; a self-contained question needs no context and
             # gets none, so generation stays unbiased.
             context_sql = prior_sql if (not extracted_question and not conditional_text and prior_sql) else None
+            analysis = None
+            if prior_kind == "prediction" and question_en == prior_question:
+                run = _last_analysis_run_for(workspace_id, username, prior_question)
+                if run:
+                    analysis = {"kind": run["kind"], "config": run["config"]}
+                    context_sql = None
             if not question_en:
                 return _ask_clarification("What would you like me to send you, or what should I watch for?")
 
@@ -9504,6 +9594,7 @@ Runs {e(schedule_desc)}.</div></td></tr>
                         "workspace_name": metadata.get("name") or str(workspace_id),
                         "question_en": question_en,
                         "context_sql": context_sql,
+                        "analysis": None if is_conditional else analysis,
                         "display_question": schedule.get("condition_text") if is_conditional else display_question,
                         "channel": channel,
                         "teams_aad_id": ctx.teams_aad_id if channel == "teams" else None,
@@ -9659,6 +9750,40 @@ Runs {e(schedule_desc)}.</div></td></tr>
             body_text = f"{summary_text}\n\n{tail}" if summary_text else tail
             return {"type": "text", "text": body_text}
 
+        def _remember_analysis_run(key, question, kind, config):
+            with _last_analysis_runs_lock:
+                _last_analysis_runs[key] = {
+                    "question": question, "kind": kind, "config": config, "created_at": time.time(),
+                }
+
+        def _last_analysis_run_for(workspace_id, username, question):
+            """The check that answered `question` for this user, if it was their
+            latest prediction answer (and recent enough to still be "this")."""
+            with _last_analysis_runs_lock:
+                run = _last_analysis_runs.get(f"{workspace_id}:{username}")
+            if not run or time.time() - run["created_at"] > _LAST_ANALYSIS_RUN_TTL_SECONDS:
+                return None
+            if question and run["question"].strip().lower() != question.strip().lower():
+                return None
+            return run
+
+        def _run_analysis_check(workspace_id, kind, config, question, workspace_name):
+            """Runs a stored prediction/anomaly check once, without any chat state.
+            Returns (reply_text, rows), or (None, error_text) when it fails."""
+            if kind == "prediction":
+                body, status = _run_prediction_config(workspace_id, config=config)
+                rows = body.get("df") if status == 200 else None
+            else:
+                body, status = _run_anomaly_config(workspace_id, config=config)
+                rows = body.get("results") if status == 200 else None
+            if status != 200:
+                return None, body.get("error") or "the check failed to run"
+            reply = _summarize_analysis_result(rows, question, workspace_name, kind, config.get("sql_query"))
+            return reply["text"], rows or []
+
+        self._last_analysis_run_for = _last_analysis_run_for
+        self._run_analysis_check = _run_analysis_check
+
         _AFFIRMATIVE_ANALYSIS_REPLIES = {
             "yes", "y", "yep", "yeah", "sure", "save", "save it", "please save",
             "ok", "okay", "confirm", "do it", "go ahead", "yes please",
@@ -9710,6 +9835,13 @@ Runs {e(schedule_desc)}.</div></td></tr>
                     return {"type": "text", "text": apology_text}, 200
                 if query_status == 200 and query_body.get("type") == "sql":
                     return query_body, query_status
+                # No SQL, but the query pipeline asked the user a clarifying question
+                # (and left a pending clarification for their reply) — that's a
+                # useful answer, far better than the generic apology below.
+                with _pending_query_clarifications_lock:
+                    asked_user = pending_key in _pending_query_clarifications
+                if query_status == 200 and asked_user and query_body.get("text"):
+                    return query_body, query_status
                 # The query pipeline didn't produce an answer either (e.g. "Insufficient
                 # data for query.") — on that path _handle_query_message may have just
                 # opened a query clarification for this same user/workspace, inviting a
@@ -9744,12 +9876,21 @@ Runs {e(schedule_desc)}.</div></td></tr>
                 # discard above.
                 try:
                     reroute_initialized, _reroute_err = self.ensure_vanna_initialized(workspace_id)
-                    route = vn.classify_message_route(raw_text) if reroute_initialized else "query"
+                    ws_name = (get_workspace_metadata(self, workspace_id) or {}).get("name")
+                    if not reroute_initialized or _dataset_route(clean_question(raw_text), ws_name):
+                        route = "query"   # a dataset question isn't an answer to "save this check?"
+                    else:
+                        route = vn.classify_message_route(raw_text)
                 except Exception as reroute_exc:
                     logger.warning(f"Re-routing after stale analysis confirmation failed: {reroute_exc}")
                     route = "query"
                 if route == "schedule":
-                    return self._handle_schedule_message(workspace_id, raw_text, None, username, None)
+                    # "send this to X" here means the prediction answer just given.
+                    last_run = _last_analysis_run_for(workspace_id, username, None)
+                    return self._handle_schedule_message(
+                        workspace_id, raw_text, last_run["question"] if last_run else None, username, None,
+                        prior_kind="prediction" if last_run else None,
+                    )
                 if route != "prediction":
                     return self._handle_query_message(raw_text, None, workspace_id)
                 # route == "prediction": fall through to the normal fresh-match logic below.
@@ -9765,16 +9906,28 @@ Runs {e(schedule_desc)}.</div></td></tr>
 
             predictions = [p for p in json.loads(workspace.get("predictions", "[]")) if p.get("enabled", True)]
             anomalies = [a for a in json.loads(workspace.get("anomalies", "[]")) if a.get("enabled", True)]
+            def _sql_tables(sql):
+                # Saved checks often have no table/justification filled in, leaving
+                # the matcher only a name to go on — the tables its SQL actually
+                # reads say far more about what it's for.
+                return ", ".join(dict.fromkeys(
+                    m.split(".")[-1].strip("[]")
+                    for m in re.findall(r"\b(?:FROM|JOIN)\s+([\w.\[\]]+)", sql or "", re.I)
+                )) or None
+
             configs = (
                 [{
                     "kind": "prediction", "type": p.get("type"),
                     "name": p.get("prediction_name") or p.get("type"),
-                    "table": p.get("table_names"), "justification": p.get("justification"),
+                    "table": p.get("table_names") or _sql_tables(p.get("sql_query")),
+                    "predicts": (p.get("parameters") or {}).get("target"),
+                    "justification": p.get("justification"),
                 } for p in predictions]
                 + [{
                     "kind": "anomaly", "type": a.get("type"),
                     "name": a.get("anomaly_name") or a.get("type"),
-                    "table": a.get("table_name"), "justification": a.get("justification"),
+                    "table": a.get("table_name") or _sql_tables(a.get("sql_query")),
+                    "justification": a.get("justification"),
                 } for a in anomalies]
             )
 
@@ -9787,7 +9940,13 @@ Runs {e(schedule_desc)}.</div></td></tr>
 
             match = vn.match_analysis_config(raw_text, configs, tables)
 
-            if match.get("matched"):
+            # A broken saved check (e.g. its features no longer match its own SQL's
+            # columns) used to surface its raw error — "Invalid features or target
+            # column." — as the whole reply. The user asked a question, not to run
+            # that check: log it for the admin, drop it, and re-match, so another
+            # saved check, a fresh one, or plain SQL can still answer. Terminates:
+            # each pass removes one config, and a match must name a remaining one.
+            while match.get("matched"):
                 kind = match["kind"]
                 cfg_type = match["type"]
                 matched_cfg = next((c for c in (predictions if kind == "prediction" else anomalies) if c.get("type") == cfg_type), {})
@@ -9798,14 +9957,21 @@ Runs {e(schedule_desc)}.</div></td></tr>
                     body, status = _run_anomaly_config(workspace_id, cfg_type)
                     rows = body.get("results") if status == 200 else None
 
-                if status != 200:
-                    return {"type": "error", "error": body.get("error", "That check failed to run.")}, status
+                if status == 200:
+                    _remember_analysis_run(pending_key, raw_text, kind, matched_cfg)
+                    name = matched_cfg.get("prediction_name") or matched_cfg.get("anomaly_name") or cfg_type
+                    matched_reply = _summarize_analysis_result(rows, name, workspace_name, kind, matched_cfg.get("sql_query"))
+                    if body.get("truncated"):
+                        matched_reply["text"] = f"{matched_reply['text']}\n\n{body['truncated_note']}"
+                    return matched_reply, 200
 
-                name = matched_cfg.get("prediction_name") or matched_cfg.get("anomaly_name") or cfg_type
-                matched_reply = _summarize_analysis_result(rows, name, workspace_name, kind, matched_cfg.get("sql_query"))
-                if body.get("truncated"):
-                    matched_reply["text"] = f"{matched_reply['text']}\n\n{body['truncated_note']}"
-                return matched_reply, 200
+                logger.warning(
+                    f"Saved {kind} check {cfg_type!r} matched {raw_text!r} but failed to run: "
+                    f"{body.get('error')} — trying without it.",
+                    extra={"admin": True},
+                )
+                configs = [c for c in configs if not (c.get("kind") == kind and c.get("type") == cfg_type)]
+                match = vn.match_analysis_config(raw_text, configs, tables)
 
             # No existing config matched — generate one on the fly.
             kind = match.get("kind", "prediction")
@@ -9876,6 +10042,7 @@ Runs {e(schedule_desc)}.</div></td></tr>
                     f"or ask your admin to set one up from the dashboard."
                 )
 
+            _remember_analysis_run(pending_key, raw_text, kind, config)
             reply = _summarize_analysis_result(rows, name, workspace_name, kind, config.get("sql_query"))
             if body.get("truncated"):
                 reply["text"] = f"{reply['text']}\n\n{body['truncated_note']}"
@@ -9947,7 +10114,7 @@ Runs {e(schedule_desc)}.</div></td></tr>
                 body, status = _wpa.handle_chat(user, workspace_id, raw_text)
                 return jsonify(body), status
 
-            body, status = _handle_schedule_message(workspace_id, raw_text, prior_question, username, prior_sql, main_question=main_question)
+            body, status = _handle_schedule_message(workspace_id, raw_text, prior_question, username, prior_sql, main_question=main_question, prior_kind=data.get('prior_kind'))
             return jsonify(body), status
 
         @self.flask_app.route('/api/v0/route_message', methods=['POST'])
@@ -9982,8 +10149,8 @@ Runs {e(schedule_desc)}.</div></td></tr>
                 body, status = _wpa.handle_chat(user, workspace_id, raw_text)
                 return jsonify(body), status
 
-            if raw_text.startswith('/') or _has_pending_clarification(workspace_id, username):
-                body, status = _handle_schedule_message(workspace_id, raw_text, prior_question, username, previous_sql, main_question=main_question)
+            if raw_text.startswith('/') or _has_pending_clarification(workspace_id, username, raw_text):
+                body, status = _handle_schedule_message(workspace_id, raw_text, prior_question, username, previous_sql, main_question=main_question, prior_kind=data.get('prior_kind'))
                 return jsonify(body), status
 
             if _has_pending_analysis_confirmation(workspace_id, username):
@@ -10004,9 +10171,14 @@ Runs {e(schedule_desc)}.</div></td></tr>
             if not initialized:
                 return jsonify({"type": "error", "error": init_err}), 400
 
-            route = vn.classify_message_route(raw_text)
+            # Trained question → its stored SQL, never an LLM re-route.
+            ws_name = (get_workspace_metadata(self, workspace_id) or {}).get("name")
+            if _dataset_route(clean_question(raw_text), ws_name):
+                route = "query"
+            else:
+                route = vn.classify_message_route(raw_text)
             if route == "schedule":
-                body, status = _handle_schedule_message(workspace_id, raw_text, prior_question, username, previous_sql, main_question=main_question)
+                body, status = _handle_schedule_message(workspace_id, raw_text, prior_question, username, previous_sql, main_question=main_question, prior_kind=data.get('prior_kind'))
             elif route == "prediction":
                 body, status = _handle_prediction_message(workspace_id, raw_text, username)
             else:
@@ -10040,8 +10212,10 @@ Runs {e(schedule_desc)}.</div></td></tr>
             prior_question = state.get("prior_question")
             previous_sql = state.get("previous_sql")
 
-            if raw_text.startswith('/') or _has_pending_clarification(ctx.workspace_id, ctx.username):
+            if raw_text.startswith('/') or _has_pending_clarification(ctx.workspace_id, ctx.username, raw_text):
                 route = "schedule"
+            elif _dataset_route(clean_question(raw_text), ctx.workspace_name):
+                route = "query"   # trained question (or close rephrasing) → answered from the dataset
             else:
                 route = vn.classify_message_route(raw_text)
 
@@ -10153,18 +10327,34 @@ Runs {e(schedule_desc)}.</div></td></tr>
                 return jsonify({"type": "route", "route": "query"})
             if raw_text.startswith('/'):
                 return jsonify({"type": "route", "route": "schedule"})
-            if workspace_id and username and _has_pending_clarification(workspace_id, username):
+            if workspace_id and username and _has_pending_clarification(workspace_id, username, raw_text):
                 return jsonify({"type": "route", "route": "schedule"})
-            if workspace_id and username and _has_pending_analysis_confirmation(workspace_id, username):
-                return jsonify({"type": "route", "route": "prediction"})
-            if workspace_id and username and _has_pending_query_clarification(workspace_id, username):
-                return jsonify({"type": "route", "route": "query"})
 
             # vn is a lazily-initialized global — on a fresh process this may be
             # the very first request to touch it. Fail open to "query" (the
             # existing RAG flow already handles an un-initialized vn with its
             # own clear error) rather than a raw 500 if init fails.
             initialized, _init_err = ensure_vanna_initialized(self, workspace_id) if workspace_id else (False, "no workspace_id")
+
+            # A trained question, or a close rephrasing of one, is answered from
+            # the dataset. Checked before a pending "save this check?" prompt and
+            # before the LLM classifier, which both used to send questions like
+            # "Show me orders at risk of missing delivery" to the prediction
+            # pipeline. "trained" (exact only) lets the chat skip its follow-up
+            # rewrite step: the stored SQL answers the question as asked.
+            if initialized:
+                ws_meta = get_workspace_metadata(self, workspace_id) or {}
+                dataset = _dataset_route(clean_question(raw_text), ws_meta.get("name"))
+                if dataset:
+                    return jsonify({"type": "route", "route": "query", "trained": dataset == "exact"})
+
+            # "send this to X" after a prediction is a delivery request, not an
+            # answer to its "save this check?" prompt.
+            if (workspace_id and username and not DELIVERY_CUES.search(raw_text)
+                    and _has_pending_analysis_confirmation(workspace_id, username)):
+                return jsonify({"type": "route", "route": "prediction"})
+            if workspace_id and username and _has_pending_query_clarification(workspace_id, username):
+                return jsonify({"type": "route", "route": "query"})
             if not initialized:
                 return jsonify({"type": "route", "route": "query"})
             return jsonify({"type": "route", "route": vn.classify_message_route(raw_text)})
@@ -10720,6 +10910,29 @@ Runs {e(schedule_desc)}.</div></td></tr>
                 return jsonify({"type": "error", "error": f"Failed to retrieve anomalies: {str(e)}"}), 500
 
 
+        def _resolve_column(name, columns):
+            """
+            Maps a config's feature/target name to a column the SQL actually
+            returns. Saved suggestions often name features the way the SQL wrote
+            them before aliasing — "po.create_date", "po.status" (selected AS
+            po_status), "pod.qty" (selected AS ordered_qty) — none of which is a
+            result column, so every run failed with "Invalid features or target
+            column." Tries: exact; without the alias prefix; prefix_column; then
+            the single column ending in _column. Returns None when ambiguous or
+            absent rather than guessing.
+            """
+            if not name:
+                return None
+            if name in columns:
+                return name
+            prefix, _, bare = name.rpartition(".")
+            if bare in columns:
+                return bare
+            if prefix and f"{prefix}_{bare}" in columns:
+                return f"{prefix}_{bare}"
+            suffixed = [c for c in columns if str(c).endswith(f"_{bare}")]
+            return suffixed[0] if len(suffixed) == 1 else None
+
         def _coerce_numeric_features(df, columns):
             """
             Every ML algorithm below (linear/logistic regression, isolation forest,
@@ -10850,8 +11063,8 @@ Runs {e(schedule_desc)}.</div></td></tr>
                 # Step 2: Preprocess data
                 algorithm = anomaly.get('algorithm')
                 parameters = anomaly.get('parameters', {})
-                target = parameters.get('target')
-                features = parameters.get('features', [])
+                target = _resolve_column(parameters.get('target'), list(df.columns)) or parameters.get('target')
+                features = [_resolve_column(f, list(df.columns)) or f for f in parameters.get('features', [])]
 
                 # Replace NaN with None for JSON compatibility
                 df = df.replace({np.nan: None})
@@ -11036,8 +11249,8 @@ Runs {e(schedule_desc)}.</div></td></tr>
                 # Step 2: Preprocess data based on prediction parameters
                 algorithm = prediction.get('algorithm')
                 parameters = prediction.get('parameters', {})
-                target = parameters.get('target')
-                features = parameters.get('features', [])
+                target = _resolve_column(parameters.get('target'), list(df.columns)) or parameters.get('target')
+                features = [_resolve_column(f, list(df.columns)) or f for f in parameters.get('features', [])]
                 inflation_rate = parameters.get('inflation_rate', None)
                 if inflation_rate is None:
                     logger.warning(f"No inflation rate provided for prediction {prediction_type}, defaulting to 0")
@@ -13781,6 +13994,70 @@ def get_workspace_metadata(self, workspace_id):
             except Exception as e:
                 logger.error(f"Error fetching workspace metadata: {str(e)}", exc_info=True)
                 return None
+
+
+def _is_trained_question(question, workspace_name):
+    """True when `question` is one of this workspace's trained questions — its
+    stored SQL answers it directly, so it must not be re-routed, merged into a
+    pending clarification, or second-guessed by an LLM classifier."""
+    finder = getattr(vn, "find_trained_sql", None)
+    if not finder or not question or not workspace_name:
+        return False
+    try:
+        return bool(finder(question, workspace_name))
+    except Exception as e:
+        logger.warning(f"Trained-question lookup failed: {e}")
+        return False
+
+
+# Messages closer than this to a trained question are answered from the dataset
+# instead of being routed by the LLM classifier. Calibrated on the demo workspace
+# (Chroma default embedding): rephrasings of its trained questions sat at
+# 0.00–0.61 (96% under 0.5); genuine forecast/anomaly requests at 0.35–1.57
+# (1 of 20 under 0.5).
+_NEAR_TRAINED_DISTANCE = 0.5
+
+_QUESTION_OPENERS = re.compile(
+    r"^\s*(what|which|who|whose|when|where|why|how|show|list|give|get|fetch|find|display|"
+    r"count|tell me|is|are|was|were|do|does|did|can|could|will|would|has|have)\b",
+    re.IGNORECASE,
+)
+
+
+def _is_new_question(text):
+    """True when a reply to an open scheduling prompt ("What would you like me
+    to send you?", "Who should receive this?") is really a fresh question — e.g.
+    "how many warehouses do we have" — that should be answered, not scheduled.
+    A reply that mentions sending/mailing/scheduling still continues the prompt."""
+    text = (text or "").strip()
+    if not text or text.startswith("/") or DELIVERY_CUES.search(text):
+        return False
+    if len(text.split()) < 3:
+        return False
+    return text.endswith("?") or bool(_QUESTION_OPENERS.match(text))
+
+
+def _dataset_route(question, workspace_name):
+    """How a chat message relates to this workspace's trained dataset:
+    "exact"  — it IS a trained question (its stored SQL answers it);
+    "near"   — a close rephrasing of one, and it doesn't ask for anything to be
+               sent/scheduled, so the query pipeline (which retrieves that
+               trained example) answers it — not prediction or scheduling;
+    None     — neither; route it as usual.
+    Before this, "Show me orders at risk…" style questions — a quarter of the
+    demo dataset — were sent to the prediction pipeline by the classifier and
+    answered by an unrelated saved check."""
+    if not question or not workspace_name:
+        return None
+    if _is_trained_question(question, workspace_name):
+        return "exact"
+    if DELIVERY_CUES.search(question):
+        return None
+    finder = getattr(vn, "nearest_trained_distance", None)
+    distance = finder(question, workspace_name) if finder else None
+    if distance is not None and distance < _NEAR_TRAINED_DISTANCE:
+        return "near"
+    return None
 
 
 def _canonical_question_id(value):

@@ -79,6 +79,36 @@ from ..utils import validate_config_path
 #nlp = spacy.load("en_core_web_sm")  
 
 logger = logging.getLogger(__name__)
+
+# Words without which a message can't be a schedule/mail request or a
+# prediction/anomaly request (see classify_message_route). Matched as word
+# prefixes and kept deliberately broad: a false cue only costs the LLM call
+# every message used to make; a missing cue would misroute.
+_SCHEDULE_CUE_TEXT = (
+    # delivery / scheduling / managing agents
+    r"send|sent|mail|e-mail|email|forward|share|text|messag|notif|alert|remind|schedul|"
+    r"every|daily|weekly|monthly|hourly|yearly|whenever|when|watch|monitor|track|stop|"
+    r"cancel|pause|resume|agent|subscri|let me know|ping|whatsapp|teams|pass\b.{0,12}\bon\b|cc\b|"
+    r"loop in"
+)
+_PREDICTION_CUE_TEXT = (
+    r"might be|predict|forecast|likel|probab|chance|expect|estimat|project|future|will|going to|"
+    r"next|upcoming|trend|anomal|unusual|abnormal|normal|outlier|odd|strange|weird|spike|"
+    r"suspicious|irregular|deviat|risk|typical|pattern|run out|running out|stock-?out|"
+    r"shortage|demand"
+)
+_ROUTE_CUES = re.compile(rf"\b({_SCHEDULE_CUE_TEXT}|{_PREDICTION_CUE_TEXT})", re.IGNORECASE)
+# Explicitly asking for something to be delivered or repeated — such a message is
+# never answered from the dataset alone, however close its wording is to a trained
+# question. Narrower than the schedule cues above: the trained questions
+# themselves use "watch", "track", "cancelled", "when" as ordinary data words.
+DELIVERY_CUES = re.compile(
+    r"\b(send|mail|e-mail|email|forward|share|text me|notif|alert|remind|schedul|every|daily|"
+    r"weekly|monthly|hourly|whenever|let me know|ping|whatsapp|subscri|pass\b.{0,12}\bon\b|cc\b|loop in)",
+    re.IGNORECASE,
+)
+
+
 class VannaBase(ABC):
     def __init__(self, config=None):
         if config is None:
@@ -265,6 +295,24 @@ class VannaBase(ABC):
             rewritten_match = re.search(r"'''rewritten'''\s*(.*?)\s*'''rewritten'''", new_q, re.DOTALL)
             if rewritten_match:
                 new_q = rewritten_match.group(1).strip()
+
+            # The chat sends the previous SQL with EVERY question after the first,
+            # so "follow-up mode" is the norm, not the exception. A trained
+            # question asked second in a conversation was therefore looked up as
+            # "<question>\n\nPrevious SQL: ..." — which never matches the dataset —
+            # and went to the LLM instead of running its trained SQL. If the new
+            # question on its own is a trained one, it isn't really a follow-up.
+            # Short replies ("Warehouse ATH1", "top 5") stay follow-ups even when
+            # some trained entry happens to be that bare text: merged with the
+            # previous SQL is what gives them their meaning.
+            find_trained_sql = getattr(self, "find_trained_sql", None)
+            trained_sql = (
+                find_trained_sql(new_q, kwargs.get("workspace"))
+                if find_trained_sql and len(new_q.split()) >= 4 else None
+            )
+            if trained_sql:
+                logger.info("Follow-up is itself a trained question → returning its SQL directly", extra={"admin": True})
+                return self.extract_sql(f"```sql\n{trained_sql}\n```"), 0, 0, 0, "exact_match"
 
             question = f"{new_q}\n\nPrevious SQL:\n{prev_sql}"
 
@@ -717,6 +765,14 @@ class VannaBase(ABC):
         if not text or not text.strip():
             return "query"
 
+        # Most messages are plain data questions, and paying an LLM round trip
+        # before every one of them delayed every answer. A schedule/mail request
+        # or a prediction/anomaly request always carries one of these cues — no
+        # cue at all means "query" without asking the model. Any cue, however
+        # loose ("cancel", "risk", "when"), still goes to the model below.
+        if not _ROUTE_CUES.search(text):
+            return "query"
+
         system_prompt = (
             "Classify the user's message into exactly one category. Respond with "
             'ONLY the single word "schedule", "prediction", or "query" — no '
@@ -829,7 +885,8 @@ class VannaBase(ABC):
 
         configs_desc = "\n".join(
             f"- kind={c.get('kind')}, type={c.get('type')}, name={c.get('name')!r}, "
-            f"table={c.get('table')!r}, about: {(c.get('justification') or '')[:200]}"
+            f"table={c.get('table')!r}, predicts={c.get('predicts')!r}, "
+            f"about: {(c.get('justification') or '')[:200]}"
             for c in (configs or [])
         ) or "(no prediction/anomaly checks configured yet in this workspace)"
         tables_desc = ", ".join(tables) if tables else "(no tables known)"
@@ -847,7 +904,11 @@ class VannaBase(ABC):
             f"{configs_desc}\n\n"
             "If one of them genuinely answers the user's question — same table/"
             "topic/intent, not just a loose keyword overlap — set matched:true "
-            "and copy its exact type string.\n\n"
+            "and copy its exact type string. The check must estimate the SAME "
+            "thing the user asks about (e.g. a purchase-order receipt-delay check "
+            "does NOT answer a stock-out question, even though both involve items "
+            "and dates). When in doubt, matched:false — a new check is built "
+            "instead, so a wrong match is worse than no match.\n\n"
             "Otherwise set matched:false, and decide \"kind\": is the user asking "
             "to estimate/forecast a future or typical value (\"prediction\"), or "
             "to find unusual/outlier/abnormal records (\"anomaly\")? Then pick "
@@ -2536,6 +2597,10 @@ class VannaBase(ABC):
                 prompt += f"Relevant tables: {', '.join(tables)}\n"
             if query_mapping:
                 prompt += f"Query mappings: {', '.join(str(m) for m in query_mapping[:10])}\n"
+            for name, detail in list((domain_context.get("query_mapping_details") or {}).items())[:5]:
+                prompt += f"- {name} ({detail.get('table')}): {detail.get('description') or ''}\n"
+                for on in detail.get("joins") or []:
+                    prompt += f"    join used by the trained examples: {on}\n"
             prompt += (
                 "Use this context only to interpret intent — "
                 "NEVER invent schema or joins not supported by examples/documentation.\n\n"
@@ -3478,7 +3543,7 @@ class VannaBase(ABC):
         self.run_sql = run_sql_duckdb
         self.run_sql_is_set = True
 
-    def connect_to_mssql(self, odbc_conn_str: str, pool_size: int = 10, max_overflow: int = 5, query_timeout: int = 15, **kwargs):
+    def connect_to_mssql(self, odbc_conn_str: str, pool_size: int = 10, max_overflow: int = 5, query_timeout: int = 30, **kwargs):
         # Convert pool_size and max_overflow to integers if they're strings
         try:
             pool_size = int(pool_size)
