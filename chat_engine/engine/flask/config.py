@@ -1415,7 +1415,7 @@ ORDER BY tran_datetime DESC;
         */
 
         function initializeVanna(workspaceId) {
-            fetch(`/get_workspace/${workspaceId}`)
+            return fetch(`/get_workspace/${workspaceId}`)
                 .then(res => res.json())
                 .then(data => {
                     if (data.error) throw new Error(data.error);
@@ -6073,6 +6073,16 @@ function showPerformanceConfig(workspaceId) {
         <input type="hidden" id="workspaceId" value="${workspaceId}">
         <p>Admin-curated, validated SQL that answers a specific operational metric directly in chat (e.g. warehouse storage occupancy, order cycle time) — these run as-is instead of the AI generating new SQL, so the answer is always exact. Unmatched questions fall back to normal AI-generated SQL as usual.</p>
 
+        <!-- Connects WI (LLM and DB) so checks can be run and SQL tested here -->
+        <div style="margin-bottom: 16px;">
+            <p>Initialize Saved Performance Checks</p>
+            <label class="switch">
+                <input type="checkbox" id="togglePerformance" ${isVannaConnected ? 'checked' : ''} onchange="togglePerformanceState('${workspaceId}')">
+                <span class="slider"></span>
+            </label>
+            <span id="performanceState" class="${isVannaConnected ? 'enabled' : 'disabled'}">${isVannaConnected ? 'Enabled' : 'Disabled'}</span>
+        </div>
+
         <div id="performanceList"></div>
         <button class="save" onclick="openAddPerformanceForm()">Add New Performance Check</button>
 
@@ -6095,6 +6105,31 @@ function showPerformanceConfig(workspaceId) {
     `;
     contentArea.style.display = 'block';
     fetchPerformanceConfigs(workspaceId);
+}
+
+function updatePerformanceToggleUI(isEnabled) {
+    const toggleButton = document.getElementById('togglePerformance');
+    const state = document.getElementById('performanceState');
+    if (!toggleButton || !state) return;
+    toggleButton.checked = isEnabled;
+    state.textContent = isEnabled ? 'Enabled' : 'Disabled';
+    state.classList.toggle('enabled', isEnabled);
+    state.classList.toggle('disabled', !isEnabled);
+}
+
+function togglePerformanceState(workspaceId) {
+    const toggleButton = document.getElementById('togglePerformance');
+    if (!toggleButton) return;
+    if (toggleButton.checked) {
+        toggleButton.disabled = true;
+        initializeVanna(workspaceId)
+            .then(() => updatePerformanceToggleUI(isVannaConnected))
+            .finally(() => { toggleButton.disabled = false; });
+    } else {
+        isVannaConnected = false;
+        updatePerformanceToggleUI(false);
+        showSuccessMessage('Performance checks disabled.');
+    }
 }
 
 function fetchPerformanceConfigs(workspaceId) {
