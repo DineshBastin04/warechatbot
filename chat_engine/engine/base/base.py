@@ -951,6 +951,307 @@ class VannaBase(ABC):
             suggested_table = tables[0] if tables else None
         return {"matched": False, "kind": kind, "suggested_table": suggested_table}
 
+    def match_performance_config(self, question: str, configs: list, **kwargs) -> dict:
+        """
+        Single LLM call deciding whether one or more of this workspace's saved
+        performance checks (admin-curated, validated SQL answering a specific
+        operational metric — e.g. warehouse storage occupancy, order cycle
+        time) directly answer `question`, so their SQL can be run as-is
+        instead of generating new SQL from scratch.
+
+        Handles three shapes of question:
+        - names one specific metric ("what's our storage occupancy?") →
+          exactly one type.
+        - broad/general, no single metric named ("how is the warehouse
+          performing?") → ALL enabled checks, so the caller can run each and
+          combine them into one answer instead of guessing which one metric
+          the user meant.
+        - unrelated to any configured check → empty list, matched False.
+
+        Unlike match_analysis_config (prediction/anomaly), there is no
+        "propose a new check" branch — performance checks are curated ahead of
+        time by an admin; an unmatched question just falls through to the
+        ordinary generate_sql path untouched.
+
+        Args:
+            question: the raw user message (already translated to English).
+            configs: this workspace's enabled performance checks, flattened by
+                the caller into [{"type": str, "name": str, "description": str}, ...].
+
+        Same trust level as classify_message_route/match_analysis_config — a UX
+        aid, not a security boundary. The caller cross-checks every claimed
+        "type" against the actual `configs` list before trusting it.
+
+        Returns {"matched": True, "types": ["<config type>", ...]} (one or
+        more, never empty when matched) or {"matched": False, "types": []}.
+        """
+        if not question or not question.strip() or not configs:
+            return {"matched": False, "types": []}
+
+        configs_desc = "\n".join(
+            f"- type={c.get('type')}, name={c.get('name')!r}, about: {(c.get('description') or '')[:300]}"
+            for c in configs
+        )
+
+        system_prompt = (
+            "Decide whether one or more of this workspace's pre-built "
+            "performance checks directly answer the user's question.\n\n"
+            "Respond with ONLY a single JSON object (no prose, no markdown "
+            "fences), matching exactly:\n"
+            '{"matched": true or false, "types": ["<matching check\'s exact type>", ...]}\n\n'
+            "Available performance checks:\n"
+            f"{configs_desc}\n\n"
+            "Three cases:\n"
+            "1. The question names one specific metric that one check "
+            "computes — same topic/intent, not just a loose keyword overlap "
+            "(e.g. a question about order status is NOT a cycle-time question "
+            "just because both mention 'orders'; a question about staffing is "
+            "NOT a storage-occupancy question just because both mention "
+            "'warehouse'). Return matched:true with just that one type.\n"
+            "2. The question asks broadly about overall warehouse/operational "
+            "performance WITHOUT naming one specific metric (e.g. 'how is the "
+            "warehouse doing?', 'how are we performing?'). Return matched:true "
+            "with ALL of the listed types — each contributes part of the "
+            "overall picture, so none should be left out.\n"
+            "3. The question isn't about any of these metrics at all. Return "
+            "matched:false with an empty types list.\n\n"
+            "When in doubt between case 1 and case 3 for a specific-sounding "
+            "but unclear question, prefer matched:false — the question falls "
+            "back to normal SQL generation instead, so a wrong match is worse "
+            "than no match. That caution does NOT apply to case 2: a genuinely "
+            "broad performance question should always return all types."
+        )
+
+        messages = [
+            self.system_message(system_prompt),
+            self.user_message(question),
+        ]
+
+        self.log(title="Performance Config Match Prompt", message=system_prompt)
+        llm_response_tuple = self.submit_prompt(messages, **kwargs)
+
+        if isinstance(llm_response_tuple, tuple) and len(llm_response_tuple) in (2, 5):
+            response_text = llm_response_tuple[0]
+        else:
+            response_text = str(llm_response_tuple)
+
+        self.log(title="Performance Config Match Response", message=response_text)
+
+        parsed = self._parse_json_response(response_text)
+        if not parsed or not parsed.get("matched"):
+            return {"matched": False, "types": []}
+
+        claimed_types = parsed.get("types")
+        if not isinstance(claimed_types, list):
+            claimed_types = [claimed_types] if claimed_types else []
+        valid_types = {c.get("type") for c in configs}
+        # Drop anything claimed that isn't actually in the provided list —
+        # don't trust it blindly, same caution as match_analysis_config's
+        # suggested_table cross-check.
+        matched_types = [t for t in claimed_types if t in valid_types]
+        if matched_types:
+            return {"matched": True, "types": matched_types}
+        return {"matched": False, "types": []}
+
+    def match_entity_filter(self, question: str, df: pd.DataFrame, **kwargs) -> dict:
+        """
+        Single LLM call: does `question` name ONE specific value of some
+        identifying column already present in `df` (a warehouse code, a
+        carrier, a customer, an item, a region — whatever the result happens
+        to be grouped by) rather than asking about the data in general? And
+        if so, does that named value actually exist in the real results?
+
+        Deliberately column-agnostic — it inspects `df` itself rather than
+        assuming a fixed column name, so the same protection applies no
+        matter which dimension a given performance check (or any other
+        tabular result) happens to group by, today or in the future, without
+        needing a code change per check.
+
+        A performance check's SQL has no WHERE-clause filter at all — it
+        always returns every row. Found live: "what is the warehouse
+        performance in Manhattan" quietly returned the exact same all-
+        warehouse breakdown every time, since this schema has no warehouse-
+        to-city mapping and "Manhattan" never matched anything — but the
+        answer looked just as confident as a real one, with nothing telling
+        the user their filter was ignored. This lets the caller detect that
+        case for ANY identifying column, not just warehouse_id.
+
+        Returns:
+            {"mentioned": False} — nothing specific named, answer broadly.
+            {"mentioned": True, "column": "<df column>", "matched_value": "<real value>"}
+                — named and resolved to a real row.
+            {"mentioned": True, "column": None, "mentioned_term": "<term>"}
+                — named something that doesn't match any real value in any
+                  identifying column.
+        """
+        fallback = {"mentioned": False}
+        if df is None or df.empty or not question or not question.strip():
+            return fallback
+
+        # Candidate identifying columns: non-numeric, with few enough
+        # distinct values to plausibly be something a user would name (a
+        # code, a status, a category) rather than free text. A purely
+        # numeric column (a percentage, a count, an hours figure) is never
+        # something a question "names" a specific value of.
+        candidates = {}
+        for col in df.columns:
+            if pd.api.types.is_numeric_dtype(df[col]):
+                continue
+            values = df[col].dropna().unique().tolist()
+            if 0 < len(values) <= 200:
+                candidates[col] = [str(v) for v in values]
+
+        if not candidates:
+            return fallback
+
+        columns_desc = "\n".join(
+            f"- {col}: {', '.join(values[:50])}" for col, values in candidates.items()
+        )
+
+        system_prompt = (
+            "This data's rows are identified by one or more columns, listed "
+            "below together with every real value that exists in the current "
+            "result:\n\n"
+            f"{columns_desc}\n\n"
+            "Does the user's question name ONE specific value for any of "
+            "these columns — by its exact value, an abbreviation, a "
+            "nickname, or a name/city that might plausibly refer to it — "
+            "rather than asking about the data in general?\n\n"
+            "If so, decide whether it matches one of the REAL values listed "
+            "above for that column. If it does, return that column name and "
+            "the exact matching value. If it clearly names something that "
+            "does NOT match any real value in any column (e.g. a city or "
+            "name that isn't in any list above), return null for column but "
+            "still report what they said.\n\n"
+            "Respond with ONLY a single JSON object (no prose, no markdown "
+            'fences): {"mentioned": true or false, "column": "<column name '
+            'from the list, or null>", "matched_value": "<exact real value, '
+            'only if column is set>", "mentioned_term": "<what they said, '
+            'only if mentioned is true and column is null>"}'
+        )
+
+        messages = [
+            self.system_message(system_prompt),
+            self.user_message(question),
+        ]
+
+        try:
+            llm_response_tuple = self.submit_prompt(messages, **kwargs)
+            response_text = (
+                llm_response_tuple[0]
+                if isinstance(llm_response_tuple, tuple) and len(llm_response_tuple) in (2, 5)
+                else str(llm_response_tuple)
+            )
+            parsed = self._parse_json_response(response_text)
+        except Exception as e:
+            logger.warning(f"match_entity_filter failed: {e}")
+            return fallback
+
+        if not parsed or not parsed.get("mentioned"):
+            return fallback
+
+        column = parsed.get("column")
+        matched_value = parsed.get("matched_value")
+        # Don't trust a claimed match blindly — the column must be one of
+        # the real candidates and the value must actually be in it.
+        if column not in candidates or matched_value not in candidates.get(column, []):
+            column = None
+            matched_value = None
+
+        return {
+            "mentioned": True,
+            "column": column,
+            "matched_value": matched_value,
+            "mentioned_term": parsed.get("mentioned_term") if not column else None,
+        }
+
+    def extract_numeric_condition(self, condition_text: str, numeric_columns: list, **kwargs) -> dict:
+        """
+        Single LLM call: turn a natural-language alert condition (e.g. "any
+        warehouse's occupancy goes above 90%", "execution time exceeds 3
+        hours") into a pure comparison expression over one of the given real
+        numeric columns, so a Performance Check can be scheduled to notify
+        only when the condition becomes newly true instead of delivering a
+        full report on every poll.
+
+        This is the performance-check analogue of the admin-entered "custom"
+        anomaly rule — same AST-gated safety model (the caller validates the
+        returned rule with is_select_only_sql's sibling, _is_safe_eval_rule,
+        before ever passing it to df.eval()), but the expression itself is
+        extracted from a chat request rather than typed by an admin.
+
+        Args:
+            condition_text: the verbatim condition, as extracted by
+                extract_schedule_request's "conditional" schedule type.
+            numeric_columns: the real numeric column names present in the
+                performance check's result (e.g. occupied_location_pct,
+                average_cycle_time_hours) — the only legal operands.
+
+        Returns {"rule": "<expression>"} if a safe, groundable comparison
+        could be built, or {"rule": None} if the condition doesn't map to
+        any of the given columns (the caller falls back to delivering on
+        every poll rather than silently never firing).
+        """
+        fallback = {"rule": None}
+        if not condition_text or not condition_text.strip() or not numeric_columns:
+            return fallback
+
+        pct_columns = [
+            c for c in numeric_columns
+            if c.lower().endswith(("_pct", "_percent", "_percentage", "_rate", "_ratio"))
+        ]
+        other_columns = [c for c in numeric_columns if c not in pct_columns]
+        columns_desc = (
+            f"Percentage/rate columns (already 0-100 or 0-1 scale): {', '.join(pct_columns) or '(none)'}\n"
+            f"Other numeric columns (raw counts, hours, etc.): {', '.join(other_columns) or '(none)'}"
+        )
+        system_prompt = (
+            "Turn this alert condition into a single comparison expression over "
+            "ONE of the real columns listed below:\n\n"
+            f"Condition: \"{condition_text}\"\n\n"
+            f"{columns_desc}\n\n"
+            "Pick whichever column the condition is actually about, and write a "
+            "plain comparison: '<column> > <number>', '<column> < <number>', "
+            "'<column> >= <number>', etc. A percentage stated as '90%' becomes "
+            "the number 90 if the column is already a 0-100 percentage.\n\n"
+            "Critical: if the condition uses the word 'percentage', 'percent', "
+            "'%', 'rate', 'ratio', or 'proportion', you MUST pick a column from "
+            "the Percentage/rate list above — never a raw count/value column "
+            "from the Other list, even if its name sounds related (e.g. "
+            "'occupied location percentage' means the column literally named "
+            "something like occupied_location_pct, NOT a raw count column like "
+            "full_locations or active_locations, which measure something "
+            "different — a count of locations, not a percentage of anything). "
+            "If no column in the Percentage/rate list matches, return null "
+            "rather than substituting a raw-count column as a guess.\n\n"
+            "Only use '&'/'|' to combine two comparisons if the condition "
+            "genuinely names two thresholds; otherwise keep it to one "
+            "comparison. If the condition doesn't correspond to any listed "
+            "column at all, return null instead of guessing.\n\n"
+            "Respond with ONLY a single JSON object (no prose, no markdown "
+            'fences): {"rule": "<expression using only the listed columns, or null>"}'
+        )
+
+        messages = [
+            self.system_message(system_prompt),
+            self.user_message(condition_text),
+        ]
+
+        try:
+            llm_response_tuple = self.submit_prompt(messages, **kwargs)
+            response_text = (
+                llm_response_tuple[0]
+                if isinstance(llm_response_tuple, tuple) and len(llm_response_tuple) in (2, 5)
+                else str(llm_response_tuple)
+            )
+            parsed = self._parse_json_response(response_text)
+        except Exception as e:
+            logger.warning(f"extract_numeric_condition failed: {e}")
+            return fallback
+
+        rule = parsed.get("rule") if parsed else None
+        return {"rule": rule or None}
+
     def suggest_query_clarification(self, question: str, tables: list, **kwargs) -> dict:
         """
         Single LLM call used when generate_sql couldn't produce a query — it hit
@@ -1008,6 +1309,30 @@ class VannaBase(ABC):
             "no data for, like payroll hours or weather), asking more "
             "questions won't help — say so plainly instead, don't pretend a "
             "clarifying question would fix it.\n\n"
+            "Important: 'too broad, could mean several things' is NOT the same "
+            "as 'not about this data at all'. If your answer would name one or "
+            "more specific plausible sub-topics the tables likely cover (e.g. "
+            "'could involve order fulfillment, inventory levels, or shipment "
+            "tracking'), that itself proves the question IS plausibly "
+            "answerable — set ask_user:true and turn those same sub-topics "
+            "into the clarifying question (e.g. 'Are you asking about order "
+            "fulfillment rate, inventory levels, or shipment tracking "
+            "times?'), rather than listing them in a dead-end reason. Reserve "
+            "ask_user:false strictly for questions about a concept this "
+            "database has no data for whatsoever — never use it just because "
+            "the question is broad.\n\n"
+            "Critical: the table list above is for YOUR reasoning only — the "
+            "people asking this are often non-technical managers who have "
+            "never seen this database and don't know or care what the tables "
+            "are called. The clarifying_question text itself must be written "
+            "entirely in plain business language: never mention a table name, "
+            "column name, schema term, or phrase like 'based on data from "
+            "X' or 'in the Y table'. Bad: \"Are you asking about order "
+            "fulfillment rate based on data from t_order or t_pick_detail?\" "
+            "Good: \"Are you asking about how quickly orders get fulfilled, "
+            "or how much inventory is on hand?\" Translate every internal "
+            "table/column name into the everyday business concept it "
+            "represents before it reaches the user.\n\n"
             "Respond with ONLY a single JSON object (no prose, no markdown "
             "fences), matching exactly:\n"
             '{"ask_user": true or false, '
@@ -1034,9 +1359,104 @@ class VannaBase(ABC):
         if not parsed:
             return fallback
 
+        # Defense in depth — found live: the model sometimes leaks a real
+        # table name into the user-facing text anyway ("...based on data
+        # from t_order or t_pick_detail?") despite the prompt forbidding it.
+        # The people asking this are non-technical managers who have never
+        # seen this schema; a table name in front of them is worse than a
+        # generic nudge, so detect it and fall back rather than expose it.
+        def _leaks_schema(text):
+            if not text:
+                return False
+            low = text.lower()
+            if any(t and t.lower() in low for t in (tables or [])):
+                return True
+            return bool(re.search(r"\bt_[a-z0-9_]+\b", low))
+
+        safe_generic_question = (
+            "Could you tell me a bit more about what you'd like to know — for example a "
+            "specific time period, warehouse, or order status?"
+        )
+
         if parsed.get("ask_user") and parsed.get("clarifying_question"):
-            return {"ask_user": True, "clarifying_question": parsed["clarifying_question"]}
-        return {"ask_user": False, "reason": parsed.get("reason") or fallback["reason"]}
+            question_text = parsed["clarifying_question"]
+            if _leaks_schema(question_text):
+                logger.warning(f"suggest_query_clarification leaked a schema term, using generic fallback: {question_text!r}")
+                question_text = safe_generic_question
+            return {"ask_user": True, "clarifying_question": question_text}
+
+        reason_text = parsed.get("reason") or fallback["reason"]
+        if _leaks_schema(reason_text):
+            logger.warning(f"suggest_query_clarification leaked a schema term in reason, using generic fallback: {reason_text!r}")
+            reason_text = fallback["reason"]
+        return {"ask_user": False, "reason": reason_text}
+
+    def is_fresh_topic_change(self, reply: str, pending_question: str, **kwargs) -> bool:
+        """
+        Single LLM call used when a chat message arrives while a clarifying
+        question from suggest_query_clarification is still open (see
+        _pending_query_clarifications) — decides whether `reply` actually
+        answers `pending_question`, or is really an unrelated new question
+        the user has moved on to asking instead.
+
+        Before this, the only guard against wrongly merging a topic-change
+        message into a stale clarification was "is `reply` an exact trained
+        dataset question, and at least 4 words" — which caught the narrow
+        case of a complete trained question, but let any other brand-new,
+        unrelated, 4+-word question (e.g. a genuinely different topic that
+        happens to not be verbatim-trained) get silently glued onto the old
+        clarification's text instead of answered on its own.
+
+        A short noun-phrase answer ("order fulfillment rate", "last 30
+        days", "warehouse ATH1") is NOT a fresh topic change — that's
+        exactly what answering a clarifying question looks like. A
+        complete, standalone question on a different subject IS, even if
+        short.
+
+        Returns True only when reasonably confident this is a topic change
+        — False (treat it as an answer, the existing safe default) on any
+        doubt, parse failure, or missing input — so this can only ADD
+        topic-change detection on top of the existing checks, never weaken
+        them.
+        """
+        if not reply or not reply.strip() or not pending_question or not pending_question.strip():
+            return False
+
+        system_prompt = (
+            "A chatbot asked the user this clarifying question:\n"
+            f"\"{pending_question}\"\n\n"
+            "The user's next message follows. Decide: is it an ANSWER to "
+            "that clarifying question — even a short, partial, or "
+            "differently-worded one (naming one of the offered options, a "
+            "date range, a specific item/warehouse/order) — or is it a "
+            "completely different, unrelated NEW question the user has "
+            "moved on to instead?\n\n"
+            "Respond with ONLY a single JSON object (no prose, no markdown "
+            'fences): {"fresh_topic_change": true or false}\n\n'
+            "When genuinely unsure, answer false (treat it as an answer) — "
+            "wrongly discarding a real clarifying exchange is worse than "
+            "merging one extra unrelated word in."
+        )
+
+        messages = [
+            self.system_message(system_prompt),
+            self.user_message(reply),
+        ]
+
+        self.log(title="Fresh Topic Change Check Prompt", message=system_prompt)
+        try:
+            llm_response_tuple = self.submit_prompt(messages, **kwargs)
+            response_text = (
+                llm_response_tuple[0]
+                if isinstance(llm_response_tuple, tuple) and len(llm_response_tuple) in (2, 5)
+                else str(llm_response_tuple)
+            )
+            self.log(title="Fresh Topic Change Check Response", message=response_text)
+            parsed = self._parse_json_response(response_text)
+            return bool(parsed and parsed.get("fresh_topic_change"))
+        except Exception as e:
+            logger.warning(f"is_fresh_topic_change failed: {e}")
+            return False
 
     def extract_schedule_request(
         self,
@@ -1757,6 +2177,130 @@ class VannaBase(ABC):
             model = "error"
 
         return text, int(total or 0), int(inp or 0), int(out or 0), model or "unknown"
+
+    def generate_performance_summary(self, question: str, df: pd.DataFrame, **kwargs) -> str:
+        """
+        Summarizes a performance-check result (one metric, or several merged
+        — see match_performance_config) for a management/executive audience.
+        This feature gets demoed directly to senior staff who want a
+        decision-ready readout, not an operational line-item dump — so this
+        is deliberately stricter on content and format than the general-
+        purpose generate_summary used for ordinary data questions:
+
+        - Percentages/rates over raw counts. Where the data already has a
+          computed percentage column (e.g. occupied_location_pct), lead with
+          THAT value — never cite the raw counts it was computed from.
+        - Markdown bullet points only, a handful of them, never a narrative
+          paragraph.
+        - Each bullet says what the number MEANS for warehouse operations
+          (healthy / at risk / needs attention), not just the value itself.
+        - No mention of tables, columns, SQL, or anything technical.
+
+        Returns the bullet-point text, or None on failure/empty data.
+        """
+        if df is None or df.empty:
+            return "No data was available for this check."
+
+        num_rows = len(df)
+        max_rows = min(10, num_rows)
+        preview_md = df.head(max_rows).to_markdown(index=False)
+
+        pct_cols = [
+            c for c in df.columns
+            if c.lower().endswith(("_pct", "_percent", "_percentage", "_rate"))
+        ]
+        change_cols = [c for c in df.columns if c.lower().endswith("_change_pct")]
+
+        system = (
+            f"You are preparing a performance readout for senior management about: '{question}'\n\n"
+            f"Data (top {max_rows} of {num_rows} rows):\n{preview_md}\n\n"
+        )
+        if pct_cols:
+            system += (
+                f"This data already includes computed percentage/rate columns: {', '.join(pct_cols)}. "
+                "Lead with these values — do not cite the raw counts they were computed from.\n\n"
+            )
+        if change_cols:
+            system += (
+                f"This data also includes period-over-period change columns: {', '.join(change_cols)} "
+                "(the % change versus the prior 30-day period for that same warehouse). Use these to say "
+                "whether things are improving or getting worse — a management summary is incomplete if it "
+                "only states a current value and never says which direction it's moving.\n\n"
+            )
+
+        user_p = (
+            "Write the summary following these rules exactly:\n"
+            "1. One point per line, each line starting with the bullet character '•' followed "
+            "by a space — never a hyphen, asterisk, or numbered list, and never a narrative "
+            "paragraph. A handful of bullets at most.\n"
+            "2. Each bullet is ONE short sentence — crisp, not elaborated. State the single most "
+            "important number and its one key implication, then stop. Never pack two sentences, "
+            "two numbers, or two implications into one bullet.\n"
+            "3. If two stats are complements of each other (e.g. an occupied rate and its empty "
+            "rate, a pass rate and its fail rate), report only the one that's more decision-"
+            "relevant for that row — never state both; the reader can infer the other.\n"
+            "4. Lead with percentages or rates, not raw counts. If no percentage column exists "
+            "but one can reasonably be stated as a proportion (e.g. 'about a third of locations'), "
+            "prefer that over the sheer count.\n"
+            "5. This text is displayed as plain text with no markdown rendering — so use NO "
+            "markdown or formatting symbols at all: no asterisks, no bold/italic markers, no "
+            "headings. Make the number stand out through direct, concise phrasing instead (put "
+            "it early in the sentence, state it plainly) — never by wrapping it in symbols.\n"
+            "6. Be analytical: each bullet should say what the number MEANS for warehouse "
+            "operations — what's healthy, what's a risk, where to focus — in that single sentence, "
+            "not just restate a value.\n"
+            "7. Never mention tables, columns, SQL, or anything technical. Naming a specific "
+            "warehouse is fine when it's the point (e.g. which one needs attention) — just lead "
+            "with its rate/percentage, not raw location or order counts.\n"
+            "8. Round every percentage or rate to the nearest whole number (e.g. '66%', never "
+            "'66.32%') — decimal precision reads as a raw export, not an executive summary.\n"
+            "9. If there are more rows than fit in a handful of bullets, don't try to cover every "
+            "one — prioritize the ones that most need attention (the highest-risk or most extreme "
+            "values) and leave out the unremarkable, healthy ones entirely. A shorter list of real "
+            "exceptions beats a complete roll call.\n"
+            "10. If a period-over-period change column is present, state the trend direction "
+            "('improved', 'worsened', 'held steady') alongside the current value — a number with no "
+            "sense of direction leaves out exactly what a decision-maker needs. If no change column "
+            "exists, skip this (don't speculate about trend from a single snapshot).\n"
+            "Respond with ONLY the bullet list — no heading, no preamble, no closing remark."
+        )
+        user_p += self._response_language()
+
+        messages = [self.system_message(system), self.user_message(user_p)]
+        try:
+            result = self.submit_prompt(messages, **kwargs)
+            text = result[0] if isinstance(result, tuple) and len(result) in (2, 5) else str(result)
+        except Exception as e:
+            logger.warning(f"generate_performance_summary failed: {e}")
+            text = None
+        text = (text or "").strip()
+        if not text:
+            return None
+
+        # Defense in depth — the chat UI renders plain text with no markdown
+        # support, so **bold**/*italic*/# headings show up as literal, ugly
+        # symbols rather than formatting. The prompt above already asks for
+        # plain text and '•' bullets, but LLMs don't always follow a
+        # formatting instruction exactly; normalize here so a slip never
+        # reaches the user as raw asterisks or a stray hyphen bullet.
+        normalized_lines = []
+        for line in text.splitlines():
+            stripped = line.strip()
+            if not stripped:
+                continue   # drop any blank lines the model already added — re-spaced below
+            stripped = re.sub(r"^[-*]\s+", "• ", stripped)          # "- "/"* " → "• "
+            stripped = re.sub(r"^•\s*", "• ", stripped)             # normalize spacing after an existing •
+            stripped = re.sub(r"\*\*(.+?)\*\*", r"\1", stripped)    # **bold** → bold
+            stripped = re.sub(r"(?<!\*)\*([^*]+)\*(?!\*)", r"\1", stripped)  # *italic* → italic
+            # Round a stray decimal percentage the model didn't round itself
+            # (rule 8 above) — "66.32%" -> "66%". Plain round-half-up on the
+            # integer part is fine here; this is a readability pass, not a
+            # calculation anyone downstream depends on.
+            stripped = re.sub(r"(\d+)\.\d+%", lambda m: f"{round(float(m.group(0)[:-1]))}%", stripped)
+            normalized_lines.append(stripped)
+        # Blank line between bullets — the chat bubble otherwise renders every
+        # line packed tight with no breathing room between points.
+        return "\n\n".join(normalized_lines)
 
     def _get_live_table_columns(self, table, **kwargs) -> dict:
         """

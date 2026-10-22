@@ -1415,7 +1415,7 @@ ORDER BY tran_datetime DESC;
         */
 
         function initializeVanna(workspaceId) {
-            fetch(`/get_workspace/${workspaceId}`)
+            return fetch(`/get_workspace/${workspaceId}`)
                 .then(res => res.json())
                 .then(data => {
                     if (data.error) throw new Error(data.error);
@@ -4710,6 +4710,7 @@ function displayPredictionResults(predictionType, results) {
                                         <li onclick="showAIFeatures('${workspace.id}')"><i class="fas fa-cogs"></i>AI Features & Options</li>
                                         <li onclick="showPredictions('${workspace.id}')"><i class="fas fa-chart-line"></i>Predictions</li>
                                         <li onclick="showAnomaly('${workspace.id}')"><i class="fas fa-exclamation-triangle"></i>Anomaly Detection</li>
+                                        <li onclick="showPerformanceConfig('${workspace.id}')"><i class="fas fa-tachometer-alt"></i>Performance Checks</li>
                                         <li onclick="showTrainingModule('${workspace.id}')"><i class="fas fa-book"></i>Training Data</li>
 
                                         <div class="sub-section-label">Manage Agents</div>
@@ -6061,6 +6062,264 @@ function flipMasterAnomalyUI(){
 }
 
 //updated 
+
+// ---------------- Performance Checks (admin-curated SQL answering a specific operational metric directly) ----------------
+let currentPerformanceChecks = [];
+
+function showPerformanceConfig(workspaceId) {
+    const contentArea = document.getElementById('contentArea');
+    contentArea.innerHTML = `
+        <h4>Performance Checks</h4>
+        <input type="hidden" id="workspaceId" value="${workspaceId}">
+        <p>Admin-curated, validated SQL that answers a specific operational metric directly in chat (e.g. warehouse storage occupancy, order cycle time) — these run as-is instead of the AI generating new SQL, so the answer is always exact. Unmatched questions fall back to normal AI-generated SQL as usual.</p>
+
+        <!-- Connects WI (LLM and DB) so checks can be run and SQL tested here -->
+        <div style="margin-bottom: 16px;">
+            <p>Initialize Saved Performance Checks</p>
+            <label class="switch">
+                <input type="checkbox" id="togglePerformance" ${isVannaConnected ? 'checked' : ''} onchange="togglePerformanceState('${workspaceId}')">
+                <span class="slider"></span>
+            </label>
+            <span id="performanceState" class="${isVannaConnected ? 'enabled' : 'disabled'}">${isVannaConnected ? 'Enabled' : 'Disabled'}</span>
+        </div>
+
+        <div id="performanceList"></div>
+        <button class="save" onclick="openAddPerformanceForm()">Add New Performance Check</button>
+
+        <div id="performanceForm" style="display:none; margin-top:20px;">
+            <h5 id="performanceFormTitle">Add New Performance Check</h5>
+            <input type="hidden" id="performanceOriginalType">
+            <label for="performanceName">Name:</label>
+            <input type="text" id="performanceName" placeholder="e.g., Warehouse Storage Occupancy">
+            <label for="performanceDescription">Description (used to match chat questions to this check):</label>
+            <textarea id="performanceDescription" rows="2" placeholder="e.g., Calculates per-warehouse storage location occupancy performance, broken down by warehouse."></textarea>
+            <label for="perfSqlQuery">SQL Query (read-only SELECT or WITH only — no stored procedure call):</label>
+            <textarea id="perfSqlQuery" rows="8" placeholder="Enter a read-only SELECT or WITH query"></textarea>
+            <button class="test" onclick="testSqlQuery('perfSqlQuery')">Test SQL Query</button>
+            <p id="perfSqlQueryResult"></p>
+            <button class="save" onclick="savePerformanceCheck('${workspaceId}')">Save Performance Check</button>
+            <button class="test" onclick="closePerformanceForm()">Cancel</button>
+        </div>
+
+        <div id="performanceResults" style="margin-top:20px;"></div>
+    `;
+    contentArea.style.display = 'block';
+    fetchPerformanceConfigs(workspaceId);
+}
+
+function updatePerformanceToggleUI(isEnabled) {
+    const toggleButton = document.getElementById('togglePerformance');
+    const state = document.getElementById('performanceState');
+    if (!toggleButton || !state) return;
+    toggleButton.checked = isEnabled;
+    state.textContent = isEnabled ? 'Enabled' : 'Disabled';
+    state.classList.toggle('enabled', isEnabled);
+    state.classList.toggle('disabled', !isEnabled);
+}
+
+function togglePerformanceState(workspaceId) {
+    const toggleButton = document.getElementById('togglePerformance');
+    if (!toggleButton) return;
+    if (toggleButton.checked) {
+        toggleButton.disabled = true;
+        initializeVanna(workspaceId)
+            .then(() => updatePerformanceToggleUI(isVannaConnected))
+            .finally(() => { toggleButton.disabled = false; });
+    } else {
+        isVannaConnected = false;
+        updatePerformanceToggleUI(false);
+        showSuccessMessage('Performance checks disabled.');
+    }
+}
+
+function fetchPerformanceConfigs(workspaceId) {
+    fetch(`/api/v0/get_performance_configs?workspace_id=${encodeURIComponent(workspaceId)}`)
+        .then(response => response.json())
+        .then(data => {
+            if (data.type === "error") {
+                showErrorMessage(data.error);
+                return;
+            }
+            currentPerformanceChecks = data.performance || [];
+            updatePerformanceList(currentPerformanceChecks, workspaceId);
+        })
+        .catch(error => showErrorMessage("Error fetching performance checks: " + error));
+}
+
+function updatePerformanceList(checks, workspaceId) {
+    const list = document.getElementById('performanceList');
+    if (!list) return;
+    if (!checks.length) {
+        list.innerHTML = '<p>No performance checks configured yet.</p>';
+        return;
+    }
+    list.innerHTML = '';
+    checks.forEach((check, index) => {
+        const div = document.createElement('div');
+        div.style.marginBottom = '12px';
+        div.innerHTML = `
+            <div style="display:flex;align-items:center;gap:10px">
+                <label class="switch">
+                    <input type="checkbox" ${check.enabled !== false ? 'checked' : ''}
+                           onchange="togglePerformanceCheck(${index}, '${workspaceId}')">
+                    <span class="slider"></span>
+                </label>
+                <span><strong>${(check.name || check.type || '').replace(/_/g, ' ')}</strong></span>
+                <button class="test" onclick="openEditPerformanceByIndex(${index})">Edit</button>
+                <button class="test" onclick="deletePerformanceCheck('${check.type}', '${workspaceId}')">Delete</button>
+                <button class="test" onclick="runPerformanceCheck('${check.type}', '${workspaceId}')" ${check.enabled === false ? 'disabled' : ''}>Run</button>
+            </div>
+            <div style="color:#666;font-size:0.9em;margin-left:48px">${check.description || ''}</div>
+        `;
+        list.appendChild(div);
+    });
+}
+
+function togglePerformanceCheck(index, workspaceId) {
+    const check = currentPerformanceChecks[index];
+    if (!check) { showErrorMessage('Performance check not found.'); return; }
+    check.enabled = check.enabled === false ? true : false;
+    fetch('/save_performance_config', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ workspace_id: workspaceId, performance: [check] })
+    })
+    .then(response => response.json())
+    .then(data => {
+        if (data.error) {
+            showErrorMessage(data.error);
+        } else {
+            showSuccessMessage(`Performance check ${check.enabled ? 'enabled' : 'disabled'}!`);
+            fetchPerformanceConfigs(workspaceId);
+        }
+    })
+    .catch(error => showErrorMessage('Error toggling performance check: ' + error));
+}
+
+function openAddPerformanceForm() {
+    document.getElementById('performanceFormTitle').textContent = 'Add New Performance Check';
+    document.getElementById('performanceOriginalType').value = '';
+    document.getElementById('performanceName').value = '';
+    document.getElementById('performanceDescription').value = '';
+    document.getElementById('perfSqlQuery').value = '';
+    document.getElementById('perfSqlQueryResult').textContent = '';
+    document.getElementById('performanceForm').style.display = 'block';
+}
+
+function openEditPerformanceByIndex(index) {
+    const check = currentPerformanceChecks[index];
+    if (!check) { showErrorMessage('Performance check not found.'); return; }
+    document.getElementById('performanceFormTitle').textContent = 'Edit Performance Check';
+    document.getElementById('performanceOriginalType').value = check.type || '';
+    document.getElementById('performanceName').value = check.name || '';
+    document.getElementById('performanceDescription').value = check.description || '';
+    document.getElementById('perfSqlQuery').value = check.sql_query || '';
+    document.getElementById('perfSqlQueryResult').textContent = '';
+    document.getElementById('performanceForm').style.display = 'block';
+}
+
+function closePerformanceForm() {
+    document.getElementById('performanceForm').style.display = 'none';
+}
+
+function savePerformanceCheck(workspaceId) {
+    const originalType = document.getElementById('performanceOriginalType').value.trim();
+    const name = document.getElementById('performanceName').value.trim();
+    const description = document.getElementById('performanceDescription').value.trim();
+    const sqlQuery = document.getElementById('perfSqlQuery').value.trim();
+
+    if (!name) { showErrorMessage('Name is required.'); return; }
+    if (!sqlQuery) { showErrorMessage('SQL query is required.'); return; }
+
+    // type is derived from the name the first time (lowercase, underscored)
+    // and kept stable on edit (same type), so saving an edit upserts the
+    // same entry instead of creating a duplicate — mirrors how anomaly/
+    // prediction types work.
+    const type = originalType || name.toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '');
+    const existing = currentPerformanceChecks.find(c => c.type === type);
+
+    const check = {
+        type: type,
+        name: name,
+        description: description,
+        sql_query: sqlQuery,
+        enabled: existing ? existing.enabled !== false : true,
+    };
+
+    fetch('/save_performance_config', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ workspace_id: workspaceId, performance: [check] })
+    })
+    .then(response => response.json())
+    .then(data => {
+        if (data.error) {
+            showErrorMessage(data.error);
+        } else {
+            showSuccessMessage('Performance check saved!');
+            closePerformanceForm();
+            fetchPerformanceConfigs(workspaceId);
+        }
+    })
+    .catch(error => showErrorMessage('Error saving performance check: ' + error));
+}
+
+function deletePerformanceCheck(type, workspaceId) {
+    if (!confirm(`Are you sure you want to delete the performance check "${type}"?`)) return;
+    fetch('/delete_performance_config', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ workspace_id: workspaceId, performance_type: type })
+    })
+    .then(response => response.json())
+    .then(data => {
+        if (data.error) {
+            showErrorMessage(data.error);
+        } else {
+            showSuccessMessage('Performance check deleted!');
+            fetchPerformanceConfigs(workspaceId);
+        }
+    })
+    .catch(error => showErrorMessage('Error deleting performance check: ' + error));
+}
+
+function runPerformanceCheck(type, workspaceId) {
+    if (!isVannaConnected) {
+        showErrorMessage("Please initialize WI (LLM and DB) before running a performance check.");
+        return;
+    }
+    const resultsDiv = document.getElementById('performanceResults');
+    if (!resultsDiv) { showErrorMessage('Results container missing'); return; }
+    resultsDiv.innerHTML = '<div style="text-align:center;margin:20px"><span class="loader"></span> Running…</div>';
+
+    fetch(`/api/v0/run_performance?workspace_id=${encodeURIComponent(workspaceId)}&performance_type=${encodeURIComponent(type)}`)
+        .then(r => r.json())
+        .then(data => {
+            if (data.type === 'error') {
+                resultsDiv.innerHTML = `<p class="error">${data.error}</p>`;
+                showErrorMessage(data.error);
+                return;
+            }
+            const rows = data.results || [];
+            if (!rows.length) {
+                resultsDiv.innerHTML = '<p>No rows returned.</p>';
+                return;
+            }
+            const columns = Object.keys(rows[0]);
+            let html = '<table class="table"><thead><tr>' + columns.map(c => `<th>${c}</th>`).join('') + '</tr></thead><tbody>';
+            rows.forEach(row => {
+                html += '<tr>' + columns.map(c => `<td>${row[c] === null || row[c] === undefined ? '' : row[c]}</td>`).join('') + '</tr>';
+            });
+            html += '</tbody></table>';
+            resultsDiv.innerHTML = html;
+            showSuccessMessage(`${type.replace(/_/g,' ')} check completed!`);
+        })
+        .catch(err => {
+            resultsDiv.innerHTML = `<p class="error">${err.message}</p>`;
+            showErrorMessage('Error running performance check: ' + err.message);
+        });
+}
+
 
 function showAnomaly(workspaceId) {
     const contentArea = document.getElementById('contentArea');

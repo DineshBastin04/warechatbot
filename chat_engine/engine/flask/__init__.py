@@ -214,7 +214,49 @@ _LAST_ANALYSIS_RUN_TTL_SECONDS = 3600
 _pending_query_clarifications = {}
 _pending_query_clarifications_lock = None   # initialised after Lock is imported below
 _PENDING_QUERY_CLARIFICATION_TTL_SECONDS = 600
-_MAX_QUERY_CLARIFICATION_ATTEMPTS = 2
+_MAX_QUERY_CLARIFICATION_ATTEMPTS = 1
+
+# Hard cap on consecutive clarifying questions shown to one user in one
+# workspace, independent of _MAX_QUERY_CLARIFICATION_ATTEMPTS above. That
+# per-thread counter only increments when a reply is judged to MERGE with
+# the prior clarification — but is_fresh_topic_change (the judgment call
+# that decides merge-vs-new) can misjudge a loosely-phrased real answer as
+# a "new question", which resets the per-thread counter to 0 and lets the
+# cap be bypassed indefinitely, one misjudged reset at a time. This streak
+# counter tracks "how many clarifying questions in a row has this user been
+# asked, regardless of how each one was classified" and is the backstop
+# that actually guarantees the conversation can't loop forever — reset to 0
+# only by an actual answer (a real "sql" response), not by any judgment
+# call about merging.
+_clarification_streaks = {}   # key -> {"count": int, "last_at": float}
+_CLARIFICATION_STREAK_WINDOW_SECONDS = 300
+_MAX_CLARIFICATION_STREAK = 2
+
+
+def _clarification_streak_count(key):
+    """Current consecutive-clarification count for this user/workspace, 0 if
+    none yet or the window since the last one has expired."""
+    with _clarification_streaks_lock:
+        entry = _clarification_streaks.get(key)
+    if not entry or time.time() - entry.get("last_at", 0) > _CLARIFICATION_STREAK_WINDOW_SECONDS:
+        return 0
+    return entry.get("count", 0)
+
+
+def _clarification_streak_increment(key):
+    with _clarification_streaks_lock:
+        entry = _clarification_streaks.get(key)
+        count = (
+            entry.get("count", 0)
+            if entry and time.time() - entry.get("last_at", 0) <= _CLARIFICATION_STREAK_WINDOW_SECONDS
+            else 0
+        )
+        _clarification_streaks[key] = {"count": count + 1, "last_at": time.time()}
+
+
+def _clarification_streak_reset(key):
+    with _clarification_streaks_lock:
+        _clarification_streaks.pop(key, None)
 
 # A prediction/anomaly config's SQL query is written by an LLM (or, worse,
 # generated on the fly with no human review yet) and can come back unaggregated
@@ -266,6 +308,7 @@ _pending_schedule_clarifications_lock = Lock()
 _pending_analysis_confirmations_lock = Lock()
 _last_analysis_runs_lock = Lock()
 _pending_query_clarifications_lock = Lock()
+_clarification_streaks_lock = Lock()
 _schedule_records_locks_guard = Lock()
 
 
@@ -2028,6 +2071,106 @@ class VannaFlaskAPI:
                     }
                 )
 
+        def _run_performance_configs_and_summarize(configs, question_en, workspace_name):
+            """
+            Runs one or more admin-curated performance-check configs (see
+            match_performance_config / the Performance Checks admin panel),
+            merges their results, applies any named-entity filter the
+            question implies (see match_entity_filter — e.g. "...in
+            Manhattan" when no such entity exists), and summarizes for a
+            management audience (see generate_performance_summary).
+
+            Single source of truth for this, shared by the live chat answer,
+            "send this" re-runs (_run_analysis_check's "performance" kind),
+            and conditional scheduled-agent polls — one metric or several
+            merged are handled identically everywhere, so a question like
+            "what's our storage occupancy?" and "how is the warehouse
+            performing?" get the same bulleted, percentage-led treatment
+            instead of the single-metric case looking like a different,
+            less-finished feature.
+
+            Returns (summary_text_with_any_disclaimer, combined_df, ran_types)
+            — combined_df is None (and summary_text a plain explanation) if
+            nothing could be run.
+            """
+            combined_df = None
+            ran_types = []
+            for cfg in configs:
+                is_safe, reason = vn.is_select_only_sql(cfg.get("sql_query") or "")
+                if not is_safe:
+                    logger.warning(f"Performance config '{cfg.get('type')}' failed SQL validation: {reason}")
+                    continue
+                try:
+                    cfg_df = vn.run_sql(cfg["sql_query"])
+                except Exception as run_exc:
+                    logger.warning(f"Performance config '{cfg.get('type')}' failed to run: {run_exc}")
+                    continue
+                if cfg_df is None or cfg_df.empty:
+                    continue
+                # SQL Server's DECIMAL columns (every _pct column these
+                # configs compute) come back from the DB driver as Python
+                # decimal.Decimal objects, which pandas stores as dtype
+                # "object" — invisible to pd.api.types.is_numeric_dtype().
+                # Found live: this silently dropped every percentage column
+                # from match_entity_filter's and extract_numeric_condition's
+                # numeric-column detection, so a condition like "occupied
+                # location PERCENTAGE above 90" could only ever match a raw
+                # count column instead, a wrong-but-plausible-looking answer.
+                # pd.to_numeric safely converts Decimal (and numeric strings)
+                # to float; a genuinely non-numeric column (warehouse_id)
+                # raises and is left untouched (errors="ignore" was removed
+                # in pandas 3.x — "invalid error value specified" — so a
+                # plain try/except is the only way to do this that works
+                # across pandas versions).
+                for col in cfg_df.columns:
+                    if cfg_df[col].dtype == object:
+                        try:
+                            cfg_df[col] = pd.to_numeric(cfg_df[col])
+                        except (ValueError, TypeError):
+                            pass
+                ran_types.append(cfg.get("type"))
+                if combined_df is None:
+                    combined_df = cfg_df
+                elif "warehouse_id" in cfg_df.columns and "warehouse_id" in combined_df.columns:
+                    combined_df = combined_df.merge(
+                        cfg_df, on="warehouse_id", how="outer", suffixes=("", f"_{cfg.get('type')}")
+                    )
+                else:
+                    combined_df = pd.concat([combined_df, cfg_df], axis=1)
+
+            if combined_df is None or combined_df.empty:
+                return "None of the matched performance checks returned any data.", None, []
+
+            entity_filter = {"mentioned": False}
+            try:
+                entity_filter = vn.match_entity_filter(question_en, combined_df)
+            except Exception as ef_exc:
+                logger.warning(f"match_entity_filter failed: {ef_exc}")
+
+            disclaimer = ""
+            if entity_filter.get("mentioned") and not entity_filter.get("column"):
+                term = entity_filter.get("mentioned_term") or "that"
+                disclaimer = (
+                    f"I don't have anything in this data specifically labeled '{term}' — "
+                    "here's the full breakdown in case one of these matches what you mean:\n\n"
+                )
+            if entity_filter.get("column"):
+                combined_df = combined_df[
+                    combined_df[entity_filter["column"]].astype(str) == entity_filter["matched_value"]
+                ]
+
+            try:
+                summary_text = vn.generate_performance_summary(question=question_en, df=combined_df)
+            except Exception as summary_exc:
+                logger.warning(f"Performance summary generation failed: {summary_exc}")
+                summary_text = None
+            if not summary_text:
+                summary_text = combined_df.to_string(index=False)
+
+            return disclaimer + summary_text, combined_df, ran_types
+
+        self._run_performance_configs_and_summarize = _run_performance_configs_and_summarize
+
         def _handle_query_message(question_raw, previous_sql, workspace, ctx=None, parent_question_id=None):
             """
             Core RAG/text-to-SQL pipeline: validates input, translates, routes read
@@ -2096,7 +2239,20 @@ class VannaFlaskAPI:
             # NAME. Some callers (the prediction pipeline's fallback) pass the
             # workspace ID instead — that searched an empty collection, so every
             # question there missed the dataset and ended in a clarifying question.
-            ws_meta = get_workspace_metadata(self, workspace)
+            #
+            # get_workspace_metadata itself only looks up by ID (workspace_
+            # collection.get(ids=[...])) — but the real chat UI's generate_sql
+            # call passes the workspace NAME (see its "workspace: workspaceName"
+            # fetch param), not the ID. Found live: that silently returned
+            # ws_meta=None, which meant performance-config matching below always
+            # saw an empty config list and never even attempted a match — a
+            # question like "how is warehouse performing" fell all the way
+            # through to generate_sql's own clarification loop instead, with no
+            # error or warning anywhere to point at why. _workspace_id_from_ref
+            # already resolves an id/name/display_name ambiguously for other
+            # callers in this file; reuse it here so ws_meta resolves correctly
+            # regardless of which form the caller passed.
+            ws_meta = get_workspace_metadata(self, self._workspace_id_from_ref(workspace) or workspace)
             if ws_meta and ws_meta.get("name"):
                 workspace = ws_meta["name"]
 
@@ -2139,6 +2295,26 @@ class VannaFlaskAPI:
                 reply = clean_question(question_raw)
                 if pending_clarification and len(reply.split()) >= 4 and _is_trained_question(reply, workspace):
                     pending_clarification = None
+                # The trained-question check above only catches one narrow case
+                # of "this is actually a new question" — any other unrelated
+                # fresh question (not verbatim-trained) used to get silently
+                # glued onto the stale clarification's text instead. Ask the
+                # same question an LLM can answer cheaply: does this reply read
+                # like an answer to the specific clarifying question that was
+                # asked, or like its own new question? Only checked when the
+                # narrow check above didn't already decide, and defaults to
+                # "treat as an answer" (False) on any doubt — this can only
+                # discard a stale clarification, never create new merge risk.
+                if pending_clarification:
+                    try:
+                        if vn.is_fresh_topic_change(reply, pending_clarification.get("clarifying_question") or ""):
+                            logger.info(
+                                f"Discarding stale query clarification — '{reply}' reads as a new "
+                                f"question, not an answer to '{pending_clarification.get('clarifying_question')}'"
+                            )
+                            pending_clarification = None
+                    except Exception as topic_exc:
+                        logger.warning(f"is_fresh_topic_change check failed: {topic_exc}")
 
                 if pending_clarification and time.time() - pending_clarification.get("created_at", 0) <= _PENDING_QUERY_CLARIFICATION_TTL_SECONDS:
                     question_raw = f"{pending_clarification['raw_text']} {question_raw}".strip()
@@ -2217,6 +2393,85 @@ class VannaFlaskAPI:
                     body["was_translated"] = was_translated
                     body["translated_question"] = question_en if was_translated else None
                 return body, status
+
+            # ────────────────────────────────────────────────
+            # Performance-check short-circuit: before deciding follow-up vs.
+            # fresh SQL generation, see if one of this workspace's admin-
+            # curated performance configs (validated SQL for a specific
+            # operational metric — e.g. warehouse storage occupancy, order
+            # cycle time, order execution time) already answers this question
+            # outright. Checked unconditionally on the new message text
+            # (question_en), REGARDLESS of whether a previous_sql/follow-up
+            # context is attached — a self-contained, answerable question
+            # like "how is the warehouse performing?" means exactly the same
+            # thing whether it's the first message of a chat or the tenth.
+            # Originally this only ran in the fresh-question branch, on the
+            # theory that a wrong match mid-conversation would be worse than
+            # no match — but in practice, most real chat messages DO carry a
+            # previous_sql (any ongoing thread), so performance questions
+            # almost never reached this check at all, and instead fell into
+            # generate_sql's follow-up interpretation, which has no concept
+            # of these configs and just kept asking narrowing clarifying
+            # questions indefinitely. match_performance_config is still an
+            # LLM judgment call with "no match" as its safe default, so this
+            # can only skip SQL generation — never block or alter it.
+            # ────────────────────────────────────────────────
+            try:
+                enabled_performance = [
+                    p for p in json.loads((ws_meta or {}).get("performance", "[]"))
+                    if p.get("enabled", True)
+                ]
+                # Skip the LLM match call entirely when this question is
+                # already an exact trained dataset question — find_trained_sql
+                # is a free, deterministic lookup, and generate_sql below will
+                # hit the same exact match anyway, so there's no reason to pay
+                # for an extra classification call on top of it.
+                if enabled_performance and not _is_trained_question(question_en, workspace):
+                    perf_configs = [
+                        {"type": p.get("type"), "name": p.get("name") or p.get("type"), "description": p.get("description")}
+                        for p in enabled_performance
+                    ]
+                    perf_match = vn.match_performance_config(question_en, perf_configs)
+                    matched_types = perf_match.get("types") or []
+                    matched_perf_cfgs = [p for p in enabled_performance if p.get("type") in matched_types]
+
+                    # One match or several, always answered the same way —
+                    # see _run_performance_configs_and_summarize's docstring
+                    # for why unifying this (rather than giving a single match
+                    # the old raw-SQL/chart treatment) was the fix for single-
+                    # metric answers looking like an unfinished, different
+                    # feature from the "how is the warehouse doing?" case.
+                    if matched_perf_cfgs:
+                        summary_text, result_df, ran_types = _run_performance_configs_and_summarize(
+                            matched_perf_cfgs, question_en, workspace
+                        )
+                        if result_df is not None:
+                            logger.info(
+                                f"Answered performance question '{question_en}' using: {ran_types}"
+                            )
+                            if clarification_workspace_id and clarification_username:
+                                _clarification_streak_reset(f"{clarification_workspace_id}:{clarification_username}")
+                                # Remembered the same way a prediction/anomaly
+                                # answer is (see _remember_analysis_run) — so a
+                                # bare "send this" or "notify me if..." right
+                                # after this answer can re-run these exact
+                                # configs later without needing a stored SQL
+                                # string, same mechanism predictions already use.
+                                self._remember_analysis_run(
+                                    f"{clarification_workspace_id}:{clarification_username}",
+                                    question_en, "performance", matched_perf_cfgs,
+                                )
+                            return {
+                                "type": "text",
+                                "text": summary_text,
+                                "detected_language": detected_language,
+                                "was_translated": was_translated,
+                            }, 200
+                        # Matched config(s) found, but none returned data —
+                        # fall through to ordinary SQL generation below rather
+                        # than dead-ending on an empty result.
+            except Exception as perf_exc:
+                logger.warning(f"Performance config matching failed: {perf_exc}")
 
             # ────────────────────────────────────────────────
             # Decide ID + call generate_sql
@@ -2324,6 +2579,13 @@ class VannaFlaskAPI:
 
             response_type = "sql" if vn.is_sql_valid(sql=sql_text) else "text"
 
+            # A real answer resets the clarification streak — the user got
+            # unstuck, so the next dead-end (if any) starts counting fresh
+            # rather than inheriting frustration from an unrelated earlier
+            # exchange.
+            if response_type == "sql" and clarification_workspace_id and clarification_username:
+                _clarification_streak_reset(f"{clarification_workspace_id}:{clarification_username}")
+
             # generate_sql's own anti-hallucination guard fires when no trained
             # example/documentation covers this question's shape — sometimes as
             # the exact literal "Insufficient data for query.", but observed
@@ -2339,7 +2601,27 @@ class VannaFlaskAPI:
             # genuinely untrained area of the schema doesn't loop forever.
             _write_refusal_text = "cannot perform ddl or dml functions"
             if response_type == "text" and (sql_text or "").strip().rstrip(".").lower() != _write_refusal_text:
-                if clarification_workspace_id and clarification_username and query_clarification_attempts < _MAX_QUERY_CLARIFICATION_ATTEMPTS:
+                streak_key = (
+                    f"{clarification_workspace_id}:{clarification_username}"
+                    if clarification_workspace_id and clarification_username else None
+                )
+                # The per-thread attempt counter (query_clarification_attempts)
+                # only increments when a reply is judged to MERGE with the
+                # prior clarification — is_fresh_topic_change can misjudge a
+                # loosely-phrased real answer as "a new question", which
+                # resets that counter to 0 and would otherwise let the cap be
+                # bypassed one misjudged reset at a time. The streak count
+                # below is the backstop: it counts every clarifying question
+                # asked in a row regardless of how each reply was classified,
+                # and is only cleared by an actual answer (see the "sql"
+                # reset above) — so the conversation can't loop forever even
+                # if the merge/fresh judgment keeps getting it wrong.
+                streak_count = _clarification_streak_count(streak_key) if streak_key else 0
+                if (
+                    clarification_workspace_id and clarification_username
+                    and query_clarification_attempts < _MAX_QUERY_CLARIFICATION_ATTEMPTS
+                    and streak_count < _MAX_CLARIFICATION_STREAK
+                ):
                     try:
                         tables_df = vn.run_sql("SELECT TABLE_NAME FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_TYPE='BASE TABLE'")
                         real_tables = tables_df["TABLE_NAME"].tolist() if tables_df is not None and not tables_df.empty else []
@@ -2349,15 +2631,20 @@ class VannaFlaskAPI:
                     suggestion = vn.suggest_query_clarification(question_en, real_tables)
                     if suggestion.get("ask_user") and suggestion.get("clarifying_question"):
                         with _pending_query_clarifications_lock:
-                            _pending_query_clarifications[f"{clarification_workspace_id}:{clarification_username}"] = {
+                            _pending_query_clarifications[streak_key] = {
                                 "raw_text": original_question,
                                 "created_at": time.time(),
                                 "attempts": query_clarification_attempts + 1,
+                                "clarifying_question": suggestion["clarifying_question"],
                             }
+                        _clarification_streak_increment(streak_key)
                         sql_text = suggestion["clarifying_question"]
                     else:
                         sql_text = suggestion.get("reason") or sql_text
-                elif query_clarification_attempts >= _MAX_QUERY_CLARIFICATION_ATTEMPTS:
+                elif clarification_workspace_id and clarification_username and (
+                    query_clarification_attempts >= _MAX_QUERY_CLARIFICATION_ATTEMPTS
+                    or streak_count >= _MAX_CLARIFICATION_STREAK
+                ):
                     # Already asked enough times without landing on something
                     # answerable — stop looping and say so plainly instead of
                     # surfacing generate_sql's raw (sometimes blunt, sometimes
@@ -6495,9 +6782,98 @@ Runs {e(schedule_desc)}.</div></td></tr>
                     record["enabled"] = False
                     return _fail("rejected", "Re-classified as a write request at fire time — agent disabled.")
 
-                # "Send this" after a prediction answer: re-run the check that
-                # produced it (it has no SQL to regenerate) and mail its summary.
+                # "Send this" after a prediction/anomaly/performance answer:
+                # re-run the check that produced it (it has no SQL to
+                # regenerate) and mail its summary. A performance check
+                # scheduled CONDITIONALLY (analysis.condition_rule set — see
+                # _handle_schedule_message's extract_numeric_condition
+                # wiring) is handled separately below: only notify when a
+                # NEW row starts satisfying the rule, same new-match diffing
+                # a plain-SQL conditional schedule already uses (matched_keys
+                # / _condition_row_key), rather than delivering every poll.
                 analysis = record.get("analysis")
+                if (
+                    analysis and analysis.get("config")
+                    and (analysis.get("kind") or "prediction") == "performance"
+                    and analysis.get("condition_rule")
+                    and schedule.get("type") == "conditional"
+                ):
+                    configs = analysis["config"] if isinstance(analysis["config"], list) else [analysis["config"]]
+                    try:
+                        _text, result_df, _types = self._run_performance_configs_and_summarize(
+                            configs, record["question_en"], record["workspace_name"]
+                        )
+                    except Exception as run_exc:
+                        return _fail("error", f"The check failed to run: {run_exc}")
+                    if result_df is None:
+                        return _fail("error", "The check returned no data this cycle.")
+
+                    condition_rule = analysis["condition_rule"]
+                    is_safe, reason = _is_safe_eval_rule(condition_rule, list(result_df.columns))
+                    if not is_safe:
+                        return _fail("error", f"Saved condition is no longer valid: {reason}")
+                    try:
+                        mask = result_df.eval(condition_rule)
+                    except Exception as eval_exc:
+                        return _fail("error", f"Condition evaluation failed: {eval_exc}")
+
+                    matching_rows = result_df[mask].to_dict(orient="records")
+                    key_to_row = {}
+                    for row in matching_rows:
+                        key = _condition_row_key(row)
+                        if key is not None:
+                            key_to_row.setdefault(key, row)
+                    current_keys = set(key_to_row)
+                    previous_keys = set(record.get("matched_keys") or [])
+                    new_keys = current_keys - previous_keys
+                    record["matched_keys"] = sorted(current_keys)
+                    record["last_condition_state"] = bool(current_keys)
+
+                    if new_keys:
+                        new_rows = [key_to_row[k] for k in sorted(new_keys)]
+                        try:
+                            alert_summary = vn.generate_performance_summary(
+                                question=record["question_en"], df=pd.DataFrame(new_rows)
+                            )
+                        except Exception:
+                            alert_summary = None
+                        e = html_escape_lib.escape
+                        subject = f"[Alert] {record['display_question']}"
+                        base_line = (
+                            f"{len(new_rows)} new record(s) now match: {analysis.get('condition_text', condition_rule)} "
+                            f"({len(current_keys)} matching in total)."
+                        )
+                        body = f"{alert_summary}\n\n{base_line}" if alert_summary else base_line
+                        main_html = (
+                            (f"<p style=\"margin:0 0 10px\">{e(alert_summary)}</p>" if alert_summary else "")
+                            + f"<p style=\"margin:0\">{len(new_rows)} new record(s) now match "
+                              f"({len(current_keys)} matching in total) — attached as CSV.</p>"
+                        )
+                        if record.get("channel") == "email" and record.get("email_recipients"):
+                            try:
+                                _send_email(
+                                    record["email_recipients"], subject, _scheduled_email_body(body), new_rows,
+                                    _scheduled_email_filename(schedule_id),
+                                    html=_scheduled_email_html(
+                                        "Scheduled Alert", record["display_question"], "New match(es) found",
+                                        "#c98500", "&#9888;", main_html, _describe_schedule(record.get("schedule") or {}),
+                                        question_label="Watching for",
+                                    ),
+                                )
+                            except Exception as email_exc:
+                                logger.exception(f"Scheduled question {schedule_id} email delivery failed: {email_exc}")
+                        elif record.get("channel") == "teams" and record.get("teams_aad_id"):
+                            _deliver_to_teams(record, body, new_rows)
+                        else:
+                            logger.info(f"Scheduled question {schedule_id}: no recipient assigned yet — match not delivered.")
+
+                    record["last_status"] = "ok"
+                    record["last_error"] = None
+                    record["last_run_at"] = time.time()
+                    record["run_count"] = record.get("run_count", 0) + 1
+                    _save_schedule_records(workspace_id, metadata, records)
+                    return
+
                 if analysis and analysis.get("config"):
                     reply_text, rows = self._run_analysis_check(
                         workspace_id, analysis.get("kind") or "prediction", analysis["config"],
@@ -9403,11 +9779,72 @@ Runs {e(schedule_desc)}.</div></td></tr>
             # gets none, so generation stays unbiased.
             context_sql = prior_sql if (not extracted_question and not conditional_text and prior_sql) else None
             analysis = None
-            if prior_kind == "prediction" and question_en == prior_question:
-                run = _last_analysis_run_for(workspace_id, username, prior_question)
-                if run:
-                    analysis = {"kind": run["kind"], "config": run["config"]}
-                    context_sql = None
+            # "send this"/"notify me if..." referring back to a prior
+            # prediction/anomaly/performance chat answer has no SQL of its
+            # own to regenerate (performance: admin-curated config SQL;
+            # prediction/anomaly: an LLM-built check) — look up what actually
+            # produced it and re-run THAT at fire time, regardless of what
+            # prior_kind the caller claims (previously gated on prior_kind ==
+            # "prediction" specifically, which meant this never fired for a
+            # remembered performance answer at all) — _last_analysis_run_for
+            # is already self-contained/safe (TTL + exact question-text
+            # match), so trying it can only ADD a correct match.
+            run = _last_analysis_run_for(workspace_id, username, prior_question) if prior_question else None
+
+            if conditional_text and run and run.get("kind") == "performance":
+                # A threshold on the SAME remembered performance check, not a
+                # brand-new data question to generate SQL for — checked even
+                # when extracted_question ALSO came back non-empty, since a
+                # clause like "any warehouse's occupancy exceeds 90%" reads
+                # just as plausibly as a standalone question to
+                # extract_schedule_request, which has no way to know it's
+                # really qualifying the check just answered. Only committed
+                # to if the condition actually maps to one of that check's
+                # real columns (extract_numeric_condition below); otherwise
+                # falls through to the existing plain-SQL conditional path
+                # using whatever extracted_question/conditional_text already
+                # resolved to, unchanged.
+                sample_configs = run["config"] if isinstance(run["config"], list) else [run["config"]]
+                try:
+                    _sample_text, sample_df, _sample_types = self._run_performance_configs_and_summarize(
+                        sample_configs, prior_question, None
+                    )
+                except Exception as sample_exc:
+                    logger.warning(f"Condition grounding run failed: {sample_exc}")
+                    sample_df = None
+                if sample_df is not None:
+                    numeric_cols = [
+                        c for c in sample_df.columns
+                        if pd.api.types.is_numeric_dtype(sample_df[c])
+                    ]
+                    cond = vn.extract_numeric_condition(conditional_text, numeric_cols)
+                    rule = cond.get("rule")
+                    if rule:
+                        is_safe, reason = _is_safe_eval_rule(rule, list(sample_df.columns))
+                        if is_safe:
+                            analysis = {
+                                "kind": "performance", "config": run["config"],
+                                "condition_rule": rule, "condition_text": conditional_text,
+                            }
+                            # question_en must stay the ORIGINAL question (what's
+                            # being checked), never conditional_text (the rule) —
+                            # otherwise every fire's display/subject would read
+                            # as the raw condition instead of what's monitored.
+                            question_en = prior_question
+                            context_sql = None
+                        else:
+                            logger.warning(
+                                f"extract_numeric_condition produced an unsafe rule, "
+                                f"discarding: {rule!r} ({reason})"
+                            )
+
+            if analysis is None and not extracted_question and run:
+                # Bare "send this"/"email that" — no new question, no
+                # (usable) condition — reuse whatever was last answered,
+                # regardless of kind.
+                analysis = {"kind": run["kind"], "config": run["config"]}
+                context_sql = None
+
             if not question_en:
                 return _ask_clarification("What would you like me to send you, or what should I watch for?")
 
@@ -9545,7 +9982,47 @@ Runs {e(schedule_desc)}.</div></td></tr>
                     initial_matched_keys = None
                     condition_preview_error = None
                     condition_row_count = 0
-                    if is_conditional:
+                    if is_conditional and analysis and analysis.get("condition_rule"):
+                        # Performance-based conditional (see extract_numeric_
+                        # condition in _handle_schedule_message above) — the
+                        # "condition" is a threshold on the remembered
+                        # check's own numeric result, not a plain data
+                        # question to regenerate SQL for. question_en here is
+                        # deliberately the ORIGINAL question (what's being
+                        # checked), not the condition text, so vn.generate_sql
+                        # would either fail outright (no trained example for
+                        # "how is the warehouse performing?") or answer a
+                        # different question than the one actually being
+                        # watched — seed the baseline from the same shared
+                        # runner the live chat answer and every poll use.
+                        configs = analysis["config"] if isinstance(analysis["config"], list) else [analysis["config"]]
+                        try:
+                            _preview_text, preview_df, _preview_types = self._run_performance_configs_and_summarize(
+                                configs, question_en, metadata.get("name") or str(workspace_id)
+                            )
+                        except Exception as check_exc:
+                            condition_preview_error = f"Condition check failed: {check_exc}"
+                            preview_df = None
+                        if preview_df is not None:
+                            is_safe, reason = _is_safe_eval_rule(analysis["condition_rule"], list(preview_df.columns))
+                            if not is_safe:
+                                condition_preview_error = f"Condition is no longer valid: {reason}"
+                            else:
+                                try:
+                                    mask = preview_df.eval(analysis["condition_rule"])
+                                    matching_df = preview_df[mask]
+                                    condition_row_count = len(matching_df)
+                                    initial_condition_state = condition_row_count > 0
+                                    preview_rows = matching_df.to_dict(orient="records")
+                                    initial_matched_keys = sorted({
+                                        key for key in (_condition_row_key(r) for r in preview_rows)
+                                        if key is not None
+                                    })
+                                except Exception as eval_exc:
+                                    condition_preview_error = f"Condition evaluation failed: {eval_exc}"
+                        if condition_preview_error:
+                            raise _ScheduleRequestError({"type": "error", "error": f"{label}Couldn't set up that condition: {condition_preview_error}"}, 400)
+                    elif is_conditional:
                         sql, *_rest = vn.generate_sql(question=question_en, workspace=metadata.get("name") or str(workspace_id))
                         if not vn.is_sql_valid(sql):
                             condition_preview_error = _explain_invalid_sql(sql)
@@ -9594,7 +10071,21 @@ Runs {e(schedule_desc)}.</div></td></tr>
                         "workspace_name": metadata.get("name") or str(workspace_id),
                         "question_en": question_en,
                         "context_sql": context_sql,
-                        "analysis": None if is_conditional else analysis,
+                        # A conditional schedule normally means "the SQL
+                        # itself is the condition" (plain data questions) —
+                        # analysis (a prediction/anomaly/performance check)
+                        # has no SQL of its own to double as that, so it's
+                        # wiped by default for a conditional schedule UNLESS
+                        # it carries its own condition_rule (performance +
+                        # extract_numeric_condition — see _handle_schedule_
+                        # message above), in which case keeping it is the
+                        # whole point: _run_scheduled_question_locked's
+                        # analysis branch uses condition_rule to do the same
+                        # new-match diffing a plain-SQL conditional does.
+                        "analysis": (
+                            analysis if (not is_conditional or (analysis and analysis.get("condition_rule")))
+                            else None
+                        ),
                         "display_question": schedule.get("condition_text") if is_conditional else display_question,
                         "channel": channel,
                         "teams_aad_id": ctx.teams_aad_id if channel == "teams" else None,
@@ -9768,8 +10259,24 @@ Runs {e(schedule_desc)}.</div></td></tr>
             return run
 
         def _run_analysis_check(workspace_id, kind, config, question, workspace_name):
-            """Runs a stored prediction/anomaly check once, without any chat state.
-            Returns (reply_text, rows), or (None, error_text) when it fails."""
+            """Runs a stored prediction/anomaly/performance check once, without
+            any chat state. Returns (reply_text, rows), or (None, error_text)
+            when it fails.
+
+            config is a single config dict for "prediction"/"anomaly", but a
+            LIST of one or more config dicts for "performance" — a remembered
+            performance answer may have come from several merged checks (see
+            _run_performance_configs_and_summarize), and re-running it later
+            (a "send this", or a conditional scheduled poll) needs to merge
+            the same way the original chat answer did."""
+            if kind == "performance":
+                configs = config if isinstance(config, list) else [config]
+                reply_text, df, _ran_types = self._run_performance_configs_and_summarize(
+                    configs, question, workspace_name
+                )
+                if df is None:
+                    return None, reply_text or "the check failed to run"
+                return reply_text, df.to_dict(orient="records")
             if kind == "prediction":
                 body, status = _run_prediction_config(workspace_id, config=config)
                 rows = body.get("df") if status == 200 else None
@@ -9783,6 +10290,7 @@ Runs {e(schedule_desc)}.</div></td></tr>
 
         self._last_analysis_run_for = _last_analysis_run_for
         self._run_analysis_check = _run_analysis_check
+        self._remember_analysis_run = _remember_analysis_run
 
         _AFFIRMATIVE_ANALYSIS_REPLIES = {
             "yes", "y", "yep", "yeah", "sure", "save", "save it", "please save",
@@ -10909,6 +11417,123 @@ Runs {e(schedule_desc)}.</div></td></tr>
                 logger.error(f"Unexpected error in get_anomaly_configs for workspace {workspace_id}: {str(e)}", exc_info=True)
                 return jsonify({"type": "error", "error": f"Failed to retrieve anomalies: {str(e)}"}), 500
 
+        @self.flask_app.route('/save_performance_config', methods=['POST'])
+        def save_performance_config():
+            """
+            Save or update performance-check configurations for a workspace —
+            same upsert-by-type shape as save_anomaly_config/save_prediction_config.
+
+            Expects a JSON payload with:
+            - workspace_id: The ID of the workspace.
+            - performance: A list of performance configurations, each containing:
+              - type: Unique identifier (lowercase, underscored).
+              - name/description: Human-readable summary of what it computes,
+                used by match_performance_config to decide if a chat question
+                matches it.
+              - sql_query: The validated SELECT/WITH SQL to run (no stored
+                procedure call — see is_select_only_sql).
+              - enabled: Boolean.
+            """
+            data = request.get_json()
+            workspace_id = data.get('workspace_id')
+            new_checks = data.get('performance', [])
+
+            if not workspace_id:
+                return jsonify({"type": "error", "error": "Workspace ID is required."}), 400
+
+            workspace = get_workspace_metadata(self, workspace_id)
+            if not workspace:
+                return jsonify({"type": "error", "error": "Workspace not found."}), 404
+
+            try:
+                existing_checks = json.loads(workspace.get("performance", "[]"))
+                for new_check in new_checks:
+                    perf_type = new_check.get("type")
+                    if not perf_type:
+                        return jsonify({"type": "error", "error": "Performance check type is required."}), 400
+                    sql_query = new_check.get("sql_query")
+                    if not sql_query:
+                        return jsonify({"type": "error", "error": "Performance check sql_query is required."}), 400
+                    is_safe, reason = vn.is_select_only_sql(sql_query)
+                    if not is_safe:
+                        return jsonify({"type": "error", "error": f"sql_query failed validation: {reason}"}), 400
+
+                    existing_idx = next((i for i, c in enumerate(existing_checks) if c["type"] == perf_type), -1)
+                    if existing_idx >= 0:
+                        existing_checks[existing_idx] = new_check
+                    else:
+                        existing_checks.append(new_check)
+
+                workspace["performance"] = json.dumps(existing_checks)
+                self.workspace_collection.update(
+                    ids=[str(workspace_id)],
+                    metadatas=[workspace],
+                    documents=[f"Workspace: {workspace['name']}"]
+                )
+                logger.info(f"Saved performance config for workspace: ID={workspace_id}")
+                return jsonify({"type": "success", "message": "Performance checks saved successfully."})
+            except Exception as e:
+                logger.error(f"Failed to save performance checks: {str(e)}", exc_info=True)
+                return jsonify({"type": "error", "error": f"Failed to save performance checks: {str(e)}"}), 500
+
+        @self.flask_app.route('/delete_performance_config', methods=['POST'])
+        def delete_performance_config():
+            data = request.get_json()
+            workspace_id = data.get('workspace_id')
+            performance_type = data.get('performance_type')
+
+            if not workspace_id or not performance_type:
+                return jsonify({"type": "error", "error": "Workspace ID and performance type are required."}), 400
+
+            workspace = get_workspace_metadata(self, workspace_id)
+            if not workspace:
+                return jsonify({"type": "error", "error": "Workspace not found."}), 404
+
+            try:
+                existing_checks = json.loads(workspace.get("performance", "[]"))
+                updated_checks = [p for p in existing_checks if p.get("type") != performance_type]
+
+                workspace["performance"] = json.dumps(updated_checks)
+                self.workspace_collection.update(
+                    ids=[str(workspace_id)],
+                    metadatas=[workspace],
+                    documents=[f"Workspace: {workspace['name']}"]
+                )
+                logger.info(f"Deleted performance check '{performance_type}' for workspace ID={workspace_id}")
+                return jsonify({"type": "success", "message": "Performance check deleted successfully."})
+            except Exception as e:
+                logger.error(f"Failed to delete performance check: {str(e)}", exc_info=True)
+                return jsonify({"type": "error", "error": f"Failed to delete performance check: {str(e)}"}), 500
+
+        @self.flask_app.route('/api/v0/get_performance_configs', methods=['GET'])
+        def get_performance_configs():
+            workspace_id = request.args.get('workspace_id')
+            logger.info(f"Fetching performance configs for workspace ID: {workspace_id}")
+            if not workspace_id:
+                return jsonify({"type": "error", "error": "Workspace ID is required."}), 400
+
+            initialized, error = ensure_vanna_initialized(self, workspace_id)
+            if not initialized:
+                return jsonify({"type": "error", "error": error}), 400
+
+            workspace = get_workspace_metadata(self, workspace_id)
+            if not workspace:
+                return jsonify({"type": "error", "error": "Workspace not found."}), 404
+
+            try:
+                performance_raw = workspace.get("performance", "[]")
+                performance = json.loads(performance_raw)
+                if not isinstance(performance, list):
+                    logger.warning(f"Invalid performance format for workspace {workspace_id}: {performance_raw}")
+                    performance = []
+                return jsonify({"type": "success", "performance": performance})
+            except json.JSONDecodeError as e:
+                logger.error(f"Failed to parse performance configs for workspace {workspace_id}: {str(e)}")
+                return jsonify({"type": "error", "error": "Failed to parse performance configs: Invalid JSON format."}), 500
+            except Exception as e:
+                logger.error(f"Unexpected error in get_performance_configs for workspace {workspace_id}: {str(e)}", exc_info=True)
+                return jsonify({"type": "error", "error": f"Failed to retrieve performance configs: {str(e)}"}), 500
+
 
         def _resolve_column(name, columns):
             """
@@ -10995,6 +11620,84 @@ Runs {e(schedule_desc)}.</div></td></tr>
                 if isinstance(node, ast.Name) and node.id not in allowed_columns:
                     return False, f"'{node.id}' is not a real column in this query's results"
             return True, ""
+
+        def _run_performance_config(workspace_id, performance_type=None, config=None):
+            """
+            Runs a performance-check config and returns (body, status). Either
+            looks one up by performance_type (an existing, saved config) or,
+            when config is given directly, runs that config as-is.
+
+            Unlike anomaly/prediction configs, there is no algorithm step here
+            — a performance check is just admin-curated, validated SQL (e.g. a
+            flattened warehouse-performance stored procedure) run and handed
+            back as rows for the caller to summarize. The SQL is re-validated
+            with is_select_only_sql on every run (not just at save time) so an
+            edit that slips in something unsafe is still caught.
+            """
+            if config is None:
+                if not workspace_id or not performance_type:
+                    logger.warning(f"Missing parameters: workspace_id={workspace_id}, performance_type={performance_type}")
+                    return {"type": "error", "error": "Workspace ID and performance type are required."}, 400
+
+                initialized, error = ensure_vanna_initialized(self, workspace_id)
+                if not initialized:
+                    logger.error(f"Vanna initialization failed: {error}")
+                    return {"type": "error", "error": error}, 400
+
+                workspace = get_workspace_metadata(self, workspace_id)
+                if not workspace:
+                    logger.error(f"Workspace not found: ID={workspace_id}")
+                    return {"type": "error", "error": "Workspace not found."}, 404
+
+                try:
+                    performance_checks = json.loads(workspace.get("performance", "[]"))
+                except json.JSONDecodeError as e:
+                    logger.error(f"Failed to parse performance configs for workspace {workspace_id}: {str(e)}")
+                    return {"type": "error", "error": "Invalid performance configuration format."}, 500
+
+                perf_config = next((p for p in performance_checks if p.get('type') == performance_type), None)
+                if not perf_config:
+                    logger.error(f"Performance type {performance_type} not found in workspace {workspace_id}")
+                    return {"type": "error", "error": f"Performance check '{performance_type}' not found."}, 404
+
+                if not perf_config.get('enabled', True):
+                    logger.warning(f"Performance type {performance_type} is disabled in workspace {workspace_id}")
+                    return {"type": "error", "error": f"Performance check '{performance_type}' is disabled."}, 400
+            else:
+                perf_config = config
+
+            sql_query = perf_config.get('sql_query')
+            if not sql_query:
+                return {"type": "error", "error": "Performance check has no sql_query configured."}, 400
+
+            is_safe, reason = vn.is_select_only_sql(sql_query)
+            if not is_safe:
+                logger.error(f"Performance config '{perf_config.get('type')}' failed SQL safety check: {reason}")
+                return {"type": "error", "error": f"Performance check's SQL failed validation: {reason}"}, 400
+
+            try:
+                df = vn.run_sql(sql_query)
+                logger.info(f"Raw data from SQL query for performance check {perf_config.get('type')}:\n{df}")
+                if df is None or df.empty:
+                    return {"type": "success", "results": [], "sql": sql_query}, 200
+
+                truncated = len(df) > _MAX_ANALYSIS_ROWS
+                if truncated:
+                    logger.warning(
+                        f"Performance check {perf_config.get('type')}: query returned {len(df)} rows, "
+                        f"truncating to {_MAX_ANALYSIS_ROWS} to avoid hanging."
+                    )
+                    df = df.head(_MAX_ANALYSIS_ROWS)
+
+                df = df.replace({np.nan: None})
+                for col in df.columns:
+                    if pd.api.types.is_datetime64_any_dtype(df[col]):
+                        df[col] = df[col].astype(str)
+
+                return {"type": "success", "results": df.to_dict(orient="records"), "sql": sql_query}, 200
+            except Exception as e:
+                logger.error(f"Error running performance config '{perf_config.get('type')}': {str(e)}", exc_info=True)
+                return {"type": "error", "error": f"Failed to run performance check: {str(e)}"}, 500
 
         def _run_anomaly_config(workspace_id, anomaly_type=None, config=None):
             """
@@ -11194,6 +11897,21 @@ Runs {e(schedule_desc)}.</div></td></tr>
             workspace_id = request.args.get('workspace_id')
             anomaly_type = request.args.get('anomaly_type')
             body, status = _run_anomaly_config(workspace_id, anomaly_type)
+            return jsonify(body), status
+
+        @self.flask_app.route('/api/v0/run_performance', methods=['GET'])
+        def run_performance():
+            """
+            Run a performance check for a specified type in a workspace — lets
+            the admin panel test a check's SQL before relying on it in chat.
+
+            Query Parameters:
+                workspace_id: The ID of the workspace.
+                performance_type: The type of performance configuration to run.
+            """
+            workspace_id = request.args.get('workspace_id')
+            performance_type = request.args.get('performance_type')
+            body, status = _run_performance_config(workspace_id, performance_type)
             return jsonify(body), status
 
         def _run_prediction_config(workspace_id, prediction_type=None, config=None):
