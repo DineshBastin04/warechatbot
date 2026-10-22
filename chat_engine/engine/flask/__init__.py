@@ -203,6 +203,20 @@ _PENDING_ANALYSIS_CONFIRMATION_TTL_SECONDS = 600
 _last_analysis_runs = {}
 _LAST_ANALYSIS_RUN_TTL_SECONDS = 3600
 
+# "How is this calculated?" / "how does this work?" / "what's the formula?" —
+# a methodology question about a performance-check answer, never itself a new
+# data question. Left to fall through to generate_sql, this produced either a
+# clarifying question or hallucinated SQL, since "how is it calculated" names
+# no table or column generate_sql could ground itself in. Cheap regex gate
+# first (same rationale as _ROUTE_CUES in base.py) — most messages have no
+# methodology cue at all, so this never costs an LLM round trip for them.
+_METHODOLOGY_CUE = re.compile(
+    r"\bhow\b.{0,30}\b(calculat|comput|deriv|measur|formula|work(s|ed|ing)?|done|arriv|determin)"
+    r"|\b(what('?s| is)) the (formula|methodology|logic)\b"
+    r"|\bwhere does (this|that|the) (number|data|figure|value) come from\b",
+    re.IGNORECASE,
+)
+
 # An ordinary data question that generate_sql couldn't answer (its own
 # anti-hallucination guard fired — no trained example/documentation covers
 # this shape of question, so it returned the literal "Insufficient data for
@@ -2171,6 +2185,126 @@ class VannaFlaskAPI:
 
         self._run_performance_configs_and_summarize = _run_performance_configs_and_summarize
 
+        def _try_match_performance_config(question_en, workspace, ws_meta, workspace_id, username):
+            """
+            Checks whether one of this workspace's admin-curated performance
+            configs answers question_en outright, runs it, and remembers the
+            run for a later "send this"/conditional-alert reference — the
+            same unconditional check _handle_query_message always ran before
+            generate_sql, pulled out so route_message can run it too.
+
+            Found live: a management question like "are operational
+            exceptions trending up or down this month?" — a question a saved
+            performance config (exception_trend) answers exactly — was
+            classified "prediction" by classify_message_route (it reads
+            trend/abnormal-pattern language the same way "any unusual
+            inventory movement" does) and went straight to
+            _handle_prediction_message, which never looks at performance
+            configs at all. It ran its own ad-hoc anomaly analysis against an
+            unrelated table ("error message frequency") instead of the
+            validated, on-point answer that already existed. Performance
+            configs are admin-validated and more specific than an ad-hoc
+            LLM-built check, so they should win whenever they match, even on
+            a message classify_message_route guessed was "prediction".
+
+            Returns the summary text (str) if a configured check answered
+            it, else None — None means "let the normal pipeline handle this",
+            never an error.
+            """
+            try:
+                enabled_performance = [
+                    p for p in json.loads((ws_meta or {}).get("performance", "[]"))
+                    if p.get("enabled", True)
+                ]
+                if not enabled_performance or _is_trained_question(question_en, workspace):
+                    return None
+                perf_configs = [
+                    {"type": p.get("type"), "name": p.get("name") or p.get("type"), "description": p.get("description")}
+                    for p in enabled_performance
+                ]
+                perf_match = vn.match_performance_config(question_en, perf_configs)
+                matched_types = perf_match.get("types") or []
+                matched_perf_cfgs = [p for p in enabled_performance if p.get("type") in matched_types]
+                if not matched_perf_cfgs:
+                    return None
+
+                summary_text, result_df, ran_types = _run_performance_configs_and_summarize(
+                    matched_perf_cfgs, question_en, workspace
+                )
+                if result_df is None:
+                    # Matched config(s) found, but none returned data — let
+                    # the caller fall through to its normal pipeline instead
+                    # of dead-ending on an empty result.
+                    return None
+
+                logger.info(f"Answered performance question '{question_en}' using: {ran_types}")
+                if workspace_id and username:
+                    _clarification_streak_reset(f"{workspace_id}:{username}")
+                    self._remember_analysis_run(
+                        f"{workspace_id}:{username}", question_en, "performance", matched_perf_cfgs,
+                    )
+                return summary_text
+            except Exception as perf_exc:
+                logger.warning(f"Performance config matching failed: {perf_exc}")
+                return None
+
+        self._try_match_performance_config = _try_match_performance_config
+
+        def _try_match_analysis_methodology(question_en, ws_meta, workspace_id, username):
+            """
+            Counterpart to _try_match_performance_config, for the methodology
+            short-circuit's prediction/anomaly branch (see
+            generate_analysis_methodology_explanation) — never used to answer
+            a question with actual data, only to find which saved check a
+            methodology question is asking about. Same priority as the
+            performance branch: a check the question explicitly names wins;
+            otherwise falls back to whichever one last answered this user.
+
+            Returns (kind, full_config_dict) or (None, None).
+            """
+            try:
+                predictions = [p for p in json.loads((ws_meta or {}).get("predictions", "[]")) if p.get("enabled", True)]
+                anomalies = [a for a in json.loads((ws_meta or {}).get("anomalies", "[]")) if a.get("enabled", True)]
+                if predictions or anomalies:
+                    def _sql_tables(sql):
+                        return ", ".join(dict.fromkeys(
+                            m.split(".")[-1].strip("[]")
+                            for m in re.findall(r"\b(?:FROM|JOIN)\s+([\w.\[\]]+)", sql or "", re.I)
+                        )) or None
+                    configs = (
+                        [{"kind": "prediction", "type": p.get("type"), "name": p.get("prediction_name") or p.get("type"),
+                          "table": p.get("table_names") or _sql_tables(p.get("sql_query")),
+                          "predicts": (p.get("parameters") or {}).get("target"),
+                          "justification": p.get("justification")} for p in predictions]
+                        + [{"kind": "anomaly", "type": a.get("type"), "name": a.get("anomaly_name") or a.get("type"),
+                            "table": a.get("table_name") or _sql_tables(a.get("sql_query")),
+                            "justification": a.get("justification")} for a in anomalies]
+                    )
+                    # tables=[] — this only ever reads the matched-existing-
+                    # check branch of match_analysis_config, which doesn't
+                    # need a real table list; skips the extra DB round trip
+                    # match_analysis_config's "suggest a new table" branch
+                    # would otherwise need.
+                    match = vn.match_analysis_config(question_en, configs, [])
+                    if match.get("matched"):
+                        kind = match["kind"]
+                        cfg_type = match["type"]
+                        full_cfg = next(
+                            (c for c in (predictions if kind == "prediction" else anomalies) if c.get("type") == cfg_type),
+                            None,
+                        )
+                        if full_cfg:
+                            return kind, full_cfg
+                if workspace_id and username:
+                    last_run = self._last_prediction_or_anomaly_run_for(workspace_id, username)
+                    if last_run:
+                        return last_run["kind"], last_run["config"]
+            except Exception as analysis_match_exc:
+                logger.warning(f"Analysis methodology matching failed: {analysis_match_exc}")
+            return None, None
+
+        self._try_match_analysis_methodology = _try_match_analysis_methodology
+
         def _handle_query_message(question_raw, previous_sql, workspace, ctx=None, parent_question_id=None):
             """
             Core RAG/text-to-SQL pipeline: validates input, translates, routes read
@@ -2395,6 +2529,77 @@ class VannaFlaskAPI:
                 return body, status
 
             # ────────────────────────────────────────────────
+            # Methodology short-circuit: "how is this calculated?" / "what's
+            # the formula?" / "how does this work?" following a performance,
+            # prediction, or anomaly answer is a question ABOUT the check,
+            # not a new data question — generate_sql has no table/column to
+            # ground a question like that in and either hallucinates SQL or
+            # asks a narrowing clarifying question forever. Checked before
+            # the performance-check short-circuit below (a methodology
+            # question about "revenue month over month" would otherwise
+            # itself get matched as if it were asking for that metric's
+            # current value). Prefers a check the question itself names
+            # (e.g. "how is revenue month over month calculated?" always
+            # explains THAT metric, even right after a different one was
+            # just answered); only falls back to whichever check answered
+            # this user's last question when the question itself names
+            # nothing — a bare "how is it calculated?"/"what's the formula
+            # for this?" always means "that answer I'm looking at". Tries
+            # performance configs first, then prediction/anomaly — a
+            # methodology question has no way to say which KIND of check it
+            # means, so whichever actually matches (by name, or by being the
+            # last thing answered) wins; it's extremely unlikely for both to
+            # match the same question at once.
+            # ────────────────────────────────────────────────
+            try:
+                if _METHODOLOGY_CUE.search(question_en):
+                    methodology_configs = None
+                    enabled_performance = [
+                        p for p in json.loads((ws_meta or {}).get("performance", "[]"))
+                        if p.get("enabled", True)
+                    ]
+                    if enabled_performance:
+                        perf_configs = [
+                            {"type": p.get("type"), "name": p.get("name") or p.get("type"), "description": p.get("description")}
+                            for p in enabled_performance
+                        ]
+                        perf_match = vn.match_performance_config(question_en, perf_configs)
+                        matched_types = perf_match.get("types") or []
+                        methodology_configs = [p for p in enabled_performance if p.get("type") in matched_types] or None
+                    if not methodology_configs and clarification_workspace_id and clarification_username:
+                        last_perf_run = self._last_performance_run_for(
+                            clarification_workspace_id, clarification_username
+                        )
+                        if last_perf_run:
+                            methodology_configs = last_perf_run.get("config")
+                    if methodology_configs:
+                        explanation = vn.generate_performance_methodology_explanation(question_en, methodology_configs)
+                        if explanation:
+                            return {
+                                "type": "text",
+                                "text": explanation,
+                                "detected_language": detected_language,
+                                "was_translated": was_translated,
+                            }, 200
+
+                    analysis_kind, analysis_config = _try_match_analysis_methodology(
+                        question_en, ws_meta, clarification_workspace_id, clarification_username
+                    )
+                    if analysis_config:
+                        explanation = vn.generate_analysis_methodology_explanation(
+                            question_en, analysis_kind, analysis_config
+                        )
+                        if explanation:
+                            return {
+                                "type": "text",
+                                "text": explanation,
+                                "detected_language": detected_language,
+                                "was_translated": was_translated,
+                            }, 200
+            except Exception as methodology_exc:
+                logger.warning(f"Methodology explanation failed: {methodology_exc}")
+
+            # ────────────────────────────────────────────────
             # Performance-check short-circuit: before deciding follow-up vs.
             # fresh SQL generation, see if one of this workspace's admin-
             # curated performance configs (validated SQL for a specific
@@ -2416,62 +2621,16 @@ class VannaFlaskAPI:
             # LLM judgment call with "no match" as its safe default, so this
             # can only skip SQL generation — never block or alter it.
             # ────────────────────────────────────────────────
-            try:
-                enabled_performance = [
-                    p for p in json.loads((ws_meta or {}).get("performance", "[]"))
-                    if p.get("enabled", True)
-                ]
-                # Skip the LLM match call entirely when this question is
-                # already an exact trained dataset question — find_trained_sql
-                # is a free, deterministic lookup, and generate_sql below will
-                # hit the same exact match anyway, so there's no reason to pay
-                # for an extra classification call on top of it.
-                if enabled_performance and not _is_trained_question(question_en, workspace):
-                    perf_configs = [
-                        {"type": p.get("type"), "name": p.get("name") or p.get("type"), "description": p.get("description")}
-                        for p in enabled_performance
-                    ]
-                    perf_match = vn.match_performance_config(question_en, perf_configs)
-                    matched_types = perf_match.get("types") or []
-                    matched_perf_cfgs = [p for p in enabled_performance if p.get("type") in matched_types]
-
-                    # One match or several, always answered the same way —
-                    # see _run_performance_configs_and_summarize's docstring
-                    # for why unifying this (rather than giving a single match
-                    # the old raw-SQL/chart treatment) was the fix for single-
-                    # metric answers looking like an unfinished, different
-                    # feature from the "how is the warehouse doing?" case.
-                    if matched_perf_cfgs:
-                        summary_text, result_df, ran_types = _run_performance_configs_and_summarize(
-                            matched_perf_cfgs, question_en, workspace
-                        )
-                        if result_df is not None:
-                            logger.info(
-                                f"Answered performance question '{question_en}' using: {ran_types}"
-                            )
-                            if clarification_workspace_id and clarification_username:
-                                _clarification_streak_reset(f"{clarification_workspace_id}:{clarification_username}")
-                                # Remembered the same way a prediction/anomaly
-                                # answer is (see _remember_analysis_run) — so a
-                                # bare "send this" or "notify me if..." right
-                                # after this answer can re-run these exact
-                                # configs later without needing a stored SQL
-                                # string, same mechanism predictions already use.
-                                self._remember_analysis_run(
-                                    f"{clarification_workspace_id}:{clarification_username}",
-                                    question_en, "performance", matched_perf_cfgs,
-                                )
-                            return {
-                                "type": "text",
-                                "text": summary_text,
-                                "detected_language": detected_language,
-                                "was_translated": was_translated,
-                            }, 200
-                        # Matched config(s) found, but none returned data —
-                        # fall through to ordinary SQL generation below rather
-                        # than dead-ending on an empty result.
-            except Exception as perf_exc:
-                logger.warning(f"Performance config matching failed: {perf_exc}")
+            perf_summary_text = _try_match_performance_config(
+                question_en, workspace, ws_meta, clarification_workspace_id, clarification_username
+            )
+            if perf_summary_text is not None:
+                return {
+                    "type": "text",
+                    "text": perf_summary_text,
+                    "detected_language": detected_language,
+                    "was_translated": was_translated,
+                }, 200
 
             # ────────────────────────────────────────────────
             # Decide ID + call generate_sql
@@ -10258,6 +10417,34 @@ Runs {e(schedule_desc)}.</div></td></tr>
                 return None
             return run
 
+        def _last_performance_run_for(workspace_id, username):
+            """The user's most recent remembered performance-check answer,
+            regardless of its exact question text — unlike
+            _last_analysis_run_for above (used for "send this"/conditional-
+            alert follow-ups, which must match the prior question verbatim),
+            a methodology question ("how is this calculated?") is itself a
+            NEW question, not a repeat of the old one, so requiring an exact
+            match would never find anything."""
+            with _last_analysis_runs_lock:
+                run = _last_analysis_runs.get(f"{workspace_id}:{username}")
+            if not run or run.get("kind") != "performance":
+                return None
+            if time.time() - run["created_at"] > _LAST_ANALYSIS_RUN_TTL_SECONDS:
+                return None
+            return run
+
+        def _last_prediction_or_anomaly_run_for(workspace_id, username):
+            """Same as _last_performance_run_for, but for the user's most
+            recent remembered prediction OR anomaly answer — the fallback
+            used when a methodology question names no specific check."""
+            with _last_analysis_runs_lock:
+                run = _last_analysis_runs.get(f"{workspace_id}:{username}")
+            if not run or run.get("kind") not in ("prediction", "anomaly"):
+                return None
+            if time.time() - run["created_at"] > _LAST_ANALYSIS_RUN_TTL_SECONDS:
+                return None
+            return run
+
         def _run_analysis_check(workspace_id, kind, config, question, workspace_name):
             """Runs a stored prediction/anomaly/performance check once, without
             any chat state. Returns (reply_text, rows), or (None, error_text)
@@ -10289,6 +10476,8 @@ Runs {e(schedule_desc)}.</div></td></tr>
             return reply["text"], rows or []
 
         self._last_analysis_run_for = _last_analysis_run_for
+        self._last_performance_run_for = _last_performance_run_for
+        self._last_prediction_or_anomaly_run_for = _last_prediction_or_anomaly_run_for
         self._run_analysis_check = _run_analysis_check
         self._remember_analysis_run = _remember_analysis_run
 
@@ -10363,6 +10552,26 @@ Runs {e(schedule_desc)}.</div></td></tr>
                 return {"type": "text", "text": apology_text}, 200
 
             if pending and time.time() - pending.get("created_at", 0) <= _PENDING_ANALYSIS_CONFIRMATION_TTL_SECONDS:
+                # "How is this calculated?" right after the "want me to save
+                # this?" prompt is the single most direct case there is for a
+                # methodology question — pending["config"] IS literally what
+                # "this" refers to, with no matching/fallback needed at all.
+                # Found live: before this check, this exact message ("predict
+                # next month's order volume" -> "how is this calculated")
+                # fell through to the yes/no handling below, which isn't a
+                # yes or no, so it would have gone through the generic
+                # reroute path and come out as "the question is too vague" —
+                # the ad-hoc check was never saved, so
+                # _try_match_analysis_methodology's own last-run fallback
+                # inside _handle_query_message never got a chance to run,
+                # since this whole branch is reached BEFORE _handle_query_message
+                # is ever called for a message while a confirmation is pending.
+                if _METHODOLOGY_CUE.search(raw_text):
+                    explanation = vn.generate_analysis_methodology_explanation(
+                        raw_text, pending["kind"], pending["config"]
+                    )
+                    if explanation:
+                        return {"type": "text", "text": explanation}, 200
                 if raw_text.strip().lower() in _AFFIRMATIVE_ANALYSIS_REPLIES:
                     saved = _save_analysis_config(workspace_id, pending["kind"], pending["config"])
                     if saved:
@@ -10384,7 +10593,8 @@ Runs {e(schedule_desc)}.</div></td></tr>
                 # discard above.
                 try:
                     reroute_initialized, _reroute_err = self.ensure_vanna_initialized(workspace_id)
-                    ws_name = (get_workspace_metadata(self, workspace_id) or {}).get("name")
+                    reroute_ws_meta = get_workspace_metadata(self, workspace_id) or {}
+                    ws_name = reroute_ws_meta.get("name")
                     if not reroute_initialized or _dataset_route(clean_question(raw_text), ws_name):
                         route = "query"   # a dataset question isn't an answer to "save this check?"
                     else:
@@ -10392,6 +10602,7 @@ Runs {e(schedule_desc)}.</div></td></tr>
                 except Exception as reroute_exc:
                     logger.warning(f"Re-routing after stale analysis confirmation failed: {reroute_exc}")
                     route = "query"
+                    reroute_ws_meta = {}
                 if route == "schedule":
                     # "send this to X" here means the prediction answer just given.
                     last_run = _last_analysis_run_for(workspace_id, username, None)
@@ -10401,7 +10612,24 @@ Runs {e(schedule_desc)}.</div></td></tr>
                     )
                 if route != "prediction":
                     return self._handle_query_message(raw_text, None, workspace_id)
-                # route == "prediction": fall through to the normal fresh-match logic below.
+                # route == "prediction": a saved performance config is always a
+                # better answer than an ad-hoc one when both could apply (same
+                # rationale as route_message's "prediction" branch) — try one
+                # before falling through to the normal fresh-match logic below.
+                # Found live: a stale "want to save this?" confirmation from
+                # an earlier, unrelated prediction/anomaly question left this
+                # reroute as the ONLY path a later message like "are exceptions
+                # trending up or down?" went through (the early
+                # _has_pending_analysis_confirmation check in route_message
+                # sends straight here, skipping route_message's own "prediction"
+                # branch entirely) — so this path needs the same safety net,
+                # not just that one.
+                perf_summary_text = self._try_match_performance_config(
+                    raw_text, ws_name or workspace_id, reroute_ws_meta, workspace_id, username
+                )
+                if perf_summary_text is not None:
+                    return {"type": "text", "text": perf_summary_text}, 200
+                # no performance config matched: fall through to the normal fresh-match logic below.
 
             initialized, init_err = self.ensure_vanna_initialized(workspace_id)
             if not initialized:
@@ -10680,7 +10908,8 @@ Runs {e(schedule_desc)}.</div></td></tr>
                 return jsonify({"type": "error", "error": init_err}), 400
 
             # Trained question → its stored SQL, never an LLM re-route.
-            ws_name = (get_workspace_metadata(self, workspace_id) or {}).get("name")
+            ws_meta = get_workspace_metadata(self, workspace_id) or {}
+            ws_name = ws_meta.get("name")
             if _dataset_route(clean_question(raw_text), ws_name):
                 route = "query"
             else:
@@ -10688,7 +10917,43 @@ Runs {e(schedule_desc)}.</div></td></tr>
             if route == "schedule":
                 body, status = _handle_schedule_message(workspace_id, raw_text, prior_question, username, previous_sql, main_question=main_question, prior_kind=data.get('prior_kind'))
             elif route == "prediction":
-                body, status = _handle_prediction_message(workspace_id, raw_text, username)
+                # classify_message_route reads "trend"/"abnormal pattern"
+                # language the same way for a management performance
+                # question ("are exceptions trending up or down?") as it
+                # does for a genuine ad-hoc anomaly request — found live,
+                # this sent a question a saved performance config already
+                # answers exactly into _handle_prediction_message, which has
+                # no concept of performance configs and built an unrelated
+                # ad-hoc check instead. An admin-validated performance config
+                # is always a better answer than an ad-hoc one when both
+                # could apply, so try it first and only fall back to the
+                # ad-hoc prediction/anomaly pipeline when nothing matches.
+                perf_summary_text = self._try_match_performance_config(
+                    raw_text, ws_name or workspace, ws_meta, workspace_id, username
+                )
+                analysis_explanation = None
+                if perf_summary_text is None and _METHODOLOGY_CUE.search(raw_text):
+                    # A methodology question can carry a prediction/anomaly cue
+                    # word itself ("how is the order volume FORECAST
+                    # calculated?", "how is this ANOMALY check done?") — found
+                    # live: without this, that question matched its own saved
+                    # config by name and _handle_prediction_message actually
+                    # RE-RAN the forecast/anomaly check instead of explaining
+                    # it, the same "explain vs. re-answer" confusion already
+                    # fixed for _handle_query_message's methodology block.
+                    analysis_kind, analysis_config = self._try_match_analysis_methodology(
+                        raw_text, ws_meta, workspace_id, username
+                    )
+                    if analysis_config:
+                        analysis_explanation = vn.generate_analysis_methodology_explanation(
+                            raw_text, analysis_kind, analysis_config
+                        )
+                if perf_summary_text is not None:
+                    body, status = {"type": "text", "text": perf_summary_text}, 200
+                elif analysis_explanation:
+                    body, status = {"type": "text", "text": analysis_explanation}, 200
+                else:
+                    body, status = _handle_prediction_message(workspace_id, raw_text, username)
             else:
                 body, status = self._handle_query_message(raw_text, previous_sql, workspace)
             return jsonify(body), status

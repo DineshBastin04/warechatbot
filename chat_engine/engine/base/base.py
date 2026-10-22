@@ -2302,6 +2302,196 @@ class VannaBase(ABC):
         # line packed tight with no breathing room between points.
         return "\n\n".join(normalized_lines)
 
+    def generate_performance_methodology_explanation(self, question: str, configs: list, **kwargs) -> str:
+        """
+        Explains, in plain business language, HOW one or more performance
+        checks compute their metric — for a methodology question like "how
+        is this calculated?" or "what's the formula?" following a
+        performance-check answer (see _METHODOLOGY_CUE in engine/flask).
+
+        Unlike generate_performance_summary (which explains what the DATA
+        says), this explains what the QUERY does — but the audience is the
+        same management reader, so the same no-SQL, no-jargon, plain-text-
+        bullets contract applies: the admin-authored sql_query is given to
+        the model as ground truth for the logic, never shown to the reader
+        verbatim.
+
+        configs: the matched performance config dict(s) — each with at least
+        "name" and "sql_query" (see the Performance Checks admin panel).
+
+        Returns the explanation text, or None on failure.
+        """
+        if not configs:
+            return None
+
+        config_blocks = []
+        for cfg in configs:
+            config_blocks.append(
+                f"Metric: {cfg.get('name') or cfg.get('type')}\n"
+                f"Description: {cfg.get('description') or '(none provided)'}\n"
+                f"SQL that computes it:\n{cfg.get('sql_query') or ''}"
+            )
+        configs_text = "\n\n".join(config_blocks)
+
+        system = (
+            f"A member of senior management asked: '{question}'\n\n"
+            "They want to understand HOW the metric(s) below are calculated — not "
+            "the data result itself, the methodology behind it. Here is the "
+            "admin-authored SQL that computes each one, as ground truth for the "
+            "logic (the reader will never see this SQL):\n\n"
+            f"{configs_text}\n\n"
+        )
+
+        user_p = (
+            "Explain the calculation in plain business language, following these "
+            "rules exactly:\n"
+            "1. If there's more than one metric above, give each its own short "
+            "group: start with its plain-language name on its own line, then its "
+            "bullets below it.\n"
+            "2. Within each metric, use 2-4 bullets covering: (a) what data it "
+            "draws from and the time window compared (e.g. 'this calendar month "
+            "vs. the previous one'), (b) the formula in plain words (e.g. "
+            "'percentage change is the difference divided by the prior period's "
+            "value'), and (c) any caveat a reader needs to trust the number (e.g. "
+            "if the comparison anchors to the latest available data rather than "
+            "today's date, or if a warehouse with no prior-period data is shown "
+            "as having no comparison rather than a 0% change).\n"
+            "3. NEVER mention SQL, tables, columns, or any database/technical "
+            "term by its literal name — translate every one into a plain "
+            "business phrase (e.g. 'wh_id' -> 'warehouse', 'invoice_total' -> "
+            "'invoice amount', 'tran_date' -> 'invoice date').\n"
+            "4. One point per line, each starting with '• ' — never a hyphen, "
+            "asterisk, numbered list, or narrative paragraph. This text is "
+            "rendered as plain text with no markdown support, so use no bold, "
+            "italics, or headings — a metric's name on its own line is enough "
+            "to set it apart.\n"
+            "5. Be concrete and specific to the actual logic above — never a "
+            "generic, could-apply-to-anything explanation.\n"
+            "Respond with ONLY the explanation — no preamble, no closing remark."
+        )
+        user_p += self._response_language()
+
+        messages = [self.system_message(system), self.user_message(user_p)]
+        try:
+            result = self.submit_prompt(messages, **kwargs)
+            text = result[0] if isinstance(result, tuple) and len(result) in (2, 5) else str(result)
+        except Exception as e:
+            logger.warning(f"generate_performance_methodology_explanation failed: {e}")
+            text = None
+        text = (text or "").strip()
+        if not text:
+            return None
+
+        # Same defensive plain-text normalization as generate_performance_summary.
+        normalized_lines = []
+        for line in text.splitlines():
+            stripped = line.strip()
+            if not stripped:
+                continue
+            stripped = re.sub(r"^[-*]\s+", "• ", stripped)
+            stripped = re.sub(r"^•\s*", "• ", stripped)
+            stripped = re.sub(r"\*\*(.+?)\*\*", r"\1", stripped)
+            stripped = re.sub(r"(?<!\*)\*([^*]+)\*(?!\*)", r"\1", stripped)
+            normalized_lines.append(stripped)
+        return "\n\n".join(normalized_lines)
+
+    # Plain-language, non-technical gloss for each algorithm a saved
+    # prediction/anomaly config can use (see get_prediction_suggestions/
+    # get_anomaly_suggestions above for the authoritative algorithm lists).
+    # Given to generate_analysis_methodology_explanation as ground truth so
+    # the model doesn't have to guess what e.g. "dbscan" means in plain
+    # English — wrong guesses here would be a management-facing credibility
+    # problem the same way a wrong formula would be.
+    _ANALYSIS_ALGORITHM_GLOSS = {
+        "mean": "projects a future/typical value as the historical average of the target, adjusted by the given rate",
+        "standard_deviation": "flags or projects values based on how far they sit from the historical average, measured in standard deviations",
+        "linear_regression": "a statistical model trained on historical data that projects a future numeric value by fitting a straight-line trend",
+        "logistic_regression": "a statistical model trained on historical data that estimates the probability of a specific outcome (e.g. likely vs. unlikely)",
+        "z_score": "flags records whose value is statistically far from the typical range for that data (a z-score outlier check)",
+        "isolation_forest": "a machine-learning method that flags records whose overall combination of values looks unlike the rest of the data",
+        "dbscan": "a machine-learning method that groups similar records together and flags the ones that don't fit naturally into any group",
+        "custom": "uses a specific admin-defined rule or condition rather than a general statistical method",
+    }
+
+    def generate_analysis_methodology_explanation(self, question: str, kind: str, config: dict, **kwargs) -> str:
+        """
+        Explains, in plain business language, HOW a saved prediction or
+        anomaly check works — the prediction/anomaly counterpart to
+        generate_performance_methodology_explanation above (see its
+        docstring for the full rationale: same methodology-question trigger,
+        same no-SQL/no-jargon/plain-text-bullets contract, same audience).
+
+        config: the single matched prediction/anomaly config dict (as stored
+        — see _handle_prediction_message), with "algorithm", "parameters",
+        "sql_query", and a "..._name"/justification field.
+        """
+        if not config:
+            return None
+
+        algorithm = (config.get("algorithm") or "").strip()
+        algorithm_gloss = self._ANALYSIS_ALGORITHM_GLOSS.get(algorithm.lower(), None)
+        name = config.get("prediction_name") or config.get("anomaly_name") or config.get("type") or kind
+
+        system = (
+            f"A member of senior management asked: '{question}'\n\n"
+            f"They want to understand HOW this saved {kind} check works — not its "
+            "result, the methodology behind it. Here is the admin-authored "
+            "configuration as ground truth (the reader will never see this "
+            "directly):\n\n"
+            f"Name: {name}\n"
+            f"Algorithm: {algorithm or '(not specified)'}"
+            + (f" — in plain terms, this {algorithm_gloss}.\n" if algorithm_gloss else "\n")
+            + f"Parameters: {json.dumps(config.get('parameters') or {})}\n"
+            f"Why this check exists: {config.get('justification') or '(none provided)'}\n"
+            f"SQL that pulls the data it runs on:\n{config.get('sql_query') or '(none)'}\n\n"
+        )
+
+        user_p = (
+            "Explain the methodology in plain business language, following these "
+            "rules exactly:\n"
+            "1. 2-4 bullets covering: (a) what data it's built on (translate the "
+            "SQL's intent into plain words — what records/time window it pulls, "
+            "never the literal table/column names), (b) what kind of method it "
+            "uses and what that means in practice (use the plain-terms gloss "
+            "given above for the algorithm, phrased naturally — don't just "
+            "repeat it verbatim), and (c) what the parameters control, described "
+            "by what they mean for the result, not their literal field names.\n"
+            "2. NEVER mention SQL, tables, columns, JSON, or any database/"
+            "technical term by its literal name — translate every one into a "
+            "plain business phrase.\n"
+            "3. One point per line, each starting with '• ' — never a hyphen, "
+            "asterisk, numbered list, or narrative paragraph. This text is "
+            "rendered as plain text with no markdown support, so use no bold, "
+            "italics, or headings.\n"
+            "4. Be concrete and specific to the actual configuration above — "
+            "never a generic, could-apply-to-anything explanation.\n"
+            "Respond with ONLY the explanation — no preamble, no closing remark."
+        )
+        user_p += self._response_language()
+
+        messages = [self.system_message(system), self.user_message(user_p)]
+        try:
+            result = self.submit_prompt(messages, **kwargs)
+            text = result[0] if isinstance(result, tuple) and len(result) in (2, 5) else str(result)
+        except Exception as e:
+            logger.warning(f"generate_analysis_methodology_explanation failed: {e}")
+            text = None
+        text = (text or "").strip()
+        if not text:
+            return None
+
+        normalized_lines = []
+        for line in text.splitlines():
+            stripped = line.strip()
+            if not stripped:
+                continue
+            stripped = re.sub(r"^[-*]\s+", "• ", stripped)
+            stripped = re.sub(r"^•\s*", "• ", stripped)
+            stripped = re.sub(r"\*\*(.+?)\*\*", r"\1", stripped)
+            stripped = re.sub(r"(?<!\*)\*([^*]+)\*(?!\*)", r"\1", stripped)
+            normalized_lines.append(stripped)
+        return "\n\n".join(normalized_lines)
+
     def _get_live_table_columns(self, table, **kwargs) -> dict:
         """
         Real, current column names for one or more tables (comma-separated string
