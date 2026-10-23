@@ -9973,52 +9973,85 @@ Runs {e(schedule_desc)}.</div></td></tr>
             # match), so trying it can only ADD a correct match.
             run = _last_analysis_run_for(workspace_id, username, prior_question) if prior_question else None
 
-            if conditional_text and run and run.get("kind") == "performance":
-                # A threshold on the SAME remembered performance check, not a
-                # brand-new data question to generate SQL for — checked even
-                # when extracted_question ALSO came back non-empty, since a
-                # clause like "any warehouse's occupancy exceeds 90%" reads
-                # just as plausibly as a standalone question to
-                # extract_schedule_request, which has no way to know it's
-                # really qualifying the check just answered. Only committed
-                # to if the condition actually maps to one of that check's
-                # real columns (extract_numeric_condition below); otherwise
-                # falls through to the existing plain-SQL conditional path
-                # using whatever extracted_question/conditional_text already
-                # resolved to, unchanged.
-                sample_configs = run["config"] if isinstance(run["config"], list) else [run["config"]]
-                try:
-                    _sample_text, sample_df, _sample_types = self._run_performance_configs_and_summarize(
-                        sample_configs, prior_question, None
+            if conditional_text:
+                # A conditional request naming a performance metric directly
+                # ("alert me if the warehouse's performance goes below 70%")
+                # has no numeric SQL of its own to build a WHERE clause from
+                # — the threshold applies to an admin-curated performance
+                # config's OWN result columns. Two ways to find that config:
+                # a follow-up to something already answered earlier in this
+                # chat thread (remembered via `run`), or a brand-new message
+                # that names a performance metric never discussed in this
+                # thread but still matches a saved config fresh — found live:
+                # "send a mail to X if the performance of the warehouse goes
+                # below 70%", asked with no prior chat answer to refer back
+                # to, fell straight to the plain-SQL conditional path below,
+                # which has no trained example for it and refused with "no
+                # trained example covers this kind of question yet" even
+                # though the identical question answers fine as a plain
+                # (non-conditional) report.
+                if run and run.get("kind") == "performance":
+                    perf_cfgs_for_condition = run["config"]
+                else:
+                    cond_ws_meta = get_workspace_metadata(self, workspace_id) or {}
+                    perf_cfgs_for_condition = self._match_performance_configs(
+                        question_en, cond_ws_meta, cond_ws_meta.get("name") or str(workspace_id)
                     )
-                except Exception as sample_exc:
-                    logger.warning(f"Condition grounding run failed: {sample_exc}")
-                    sample_df = None
-                if sample_df is not None:
-                    numeric_cols = [
-                        c for c in sample_df.columns
-                        if pd.api.types.is_numeric_dtype(sample_df[c])
-                    ]
-                    cond = vn.extract_numeric_condition(conditional_text, numeric_cols)
-                    rule = cond.get("rule")
-                    if rule:
-                        is_safe, reason = _is_safe_eval_rule(rule, list(sample_df.columns))
-                        if is_safe:
-                            analysis = {
-                                "kind": "performance", "config": run["config"],
-                                "condition_rule": rule, "condition_text": conditional_text,
-                            }
-                            # question_en must stay the ORIGINAL question (what's
-                            # being checked), never conditional_text (the rule) —
-                            # otherwise every fire's display/subject would read
-                            # as the raw condition instead of what's monitored.
-                            question_en = prior_question
-                            context_sql = None
-                        else:
-                            logger.warning(
-                                f"extract_numeric_condition produced an unsafe rule, "
-                                f"discarding: {rule!r} ({reason})"
-                            )
+
+                if perf_cfgs_for_condition:
+                    # Checked even when extracted_question ALSO came back
+                    # non-empty, since a clause like "any warehouse's
+                    # occupancy exceeds 90%" reads just as plausibly as a
+                    # standalone question to extract_schedule_request, which
+                    # has no way to know it's really qualifying a performance
+                    # check. Only committed to if the condition actually maps
+                    # to one of that check's real columns (extract_numeric_
+                    # condition below); otherwise falls through to the
+                    # existing plain-SQL conditional path using whatever
+                    # extracted_question/conditional_text already resolved
+                    # to, unchanged.
+                    sample_configs = (
+                        perf_cfgs_for_condition if isinstance(perf_cfgs_for_condition, list)
+                        else [perf_cfgs_for_condition]
+                    )
+                    try:
+                        _sample_text, sample_df, _sample_types = self._run_performance_configs_and_summarize(
+                            sample_configs, prior_question or question_en, None
+                        )
+                    except Exception as sample_exc:
+                        logger.warning(f"Condition grounding run failed: {sample_exc}")
+                        sample_df = None
+                    if sample_df is not None:
+                        numeric_cols = [
+                            c for c in sample_df.columns
+                            if pd.api.types.is_numeric_dtype(sample_df[c])
+                        ]
+                        cond = vn.extract_numeric_condition(conditional_text, numeric_cols)
+                        rule = cond.get("rule")
+                        if rule:
+                            is_safe, reason = _is_safe_eval_rule(rule, list(sample_df.columns))
+                            if is_safe:
+                                analysis = {
+                                    "kind": "performance", "config": perf_cfgs_for_condition,
+                                    "condition_rule": rule, "condition_text": conditional_text,
+                                }
+                                # question_en must stay the ORIGINAL question
+                                # (what's being checked), never conditional_text
+                                # (the rule) — otherwise every fire's display/
+                                # subject would read as the raw condition
+                                # instead of what's monitored. Only needed for
+                                # the `run` case: a fresh match already has a
+                                # proper question_en from extraction, since
+                                # this isn't a bare follow-up with nothing else
+                                # said.
+                                if run and run.get("kind") == "performance":
+                                    question_en = prior_question
+                                context_sql = None
+                            else:
+                                logger.warning(
+                                    f"extract_numeric_condition produced an unsafe rule, "
+                                    f"discarding: {rule!r} ({reason})"
+                                )
 
             if analysis is None and not extracted_question and run:
                 # Bare "send this"/"email that" — no new question, no
@@ -10907,6 +10940,21 @@ Runs {e(schedule_desc)}.</div></td></tr>
                 return jsonify({"type": "error", "error": "workspace_id and an authenticated user are required"}), 400
             if not raw_text:
                 return jsonify({"type": "error", "error": "No message provided"}), 400
+
+            # vn is bound per-thread by ensure_vanna_initialized (see its
+            # docstring) — this route previously never called it itself,
+            # relying entirely on some earlier request having already bound
+            # vn on whichever waitress worker thread picks this one up.
+            # Found live: a worker thread that hadn't yet served a request
+            # going through classify_message_route_endpoint/route_message
+            # (which do call it) hit "'_OpenAIVanna' object has no attribute
+            # 'client'" the moment _try_performance_or_methodology_before_
+            # prediction's performance-config match tried its first LLM
+            # call — exactly the failure mode ensure_vanna_initialized exists
+            # to prevent everywhere else in this file.
+            initialized, init_err = self.ensure_vanna_initialized(workspace_id)
+            if not initialized:
+                return jsonify({"type": "error", "error": init_err}), 400
 
             # A pending "save this check?" confirmation must be resolved by
             # _handle_prediction_message directly — a bare "yes"/"no" reply
