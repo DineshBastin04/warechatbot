@@ -2185,6 +2185,41 @@ class VannaFlaskAPI:
 
         self._run_performance_configs_and_summarize = _run_performance_configs_and_summarize
 
+        def _match_performance_configs(question_en, ws_meta, workspace):
+            """
+            Matches question_en against this workspace's admin-curated
+            performance configs and returns the matched config list, or None
+            if nothing matches (or a trained SQL example already covers the
+            question — generate_sql should answer those directly rather than
+            a performance config stepping in).
+
+            Shared by _try_match_performance_config (chat/route_message,
+            which immediately runs+summarizes the match) and
+            _handle_schedule_message (which only needs the config list to
+            store on the schedule record — _run_analysis_check runs it fresh
+            at every fire, same as a remembered "send this" check).
+            """
+            try:
+                enabled_performance = [
+                    p for p in json.loads((ws_meta or {}).get("performance", "[]"))
+                    if p.get("enabled", True)
+                ]
+                if not enabled_performance or _is_trained_question(question_en, workspace):
+                    return None
+                perf_configs = [
+                    {"type": p.get("type"), "name": p.get("name") or p.get("type"), "description": p.get("description")}
+                    for p in enabled_performance
+                ]
+                perf_match = vn.match_performance_config(question_en, perf_configs)
+                matched_types = perf_match.get("types") or []
+                matched_perf_cfgs = [p for p in enabled_performance if p.get("type") in matched_types]
+                return matched_perf_cfgs or None
+            except Exception as perf_exc:
+                logger.warning(f"Performance config matching failed: {perf_exc}")
+                return None
+
+        self._match_performance_configs = _match_performance_configs
+
         def _try_match_performance_config(question_en, workspace, ws_meta, workspace_id, username):
             """
             Checks whether one of this workspace's admin-curated performance
@@ -2212,19 +2247,7 @@ class VannaFlaskAPI:
             never an error.
             """
             try:
-                enabled_performance = [
-                    p for p in json.loads((ws_meta or {}).get("performance", "[]"))
-                    if p.get("enabled", True)
-                ]
-                if not enabled_performance or _is_trained_question(question_en, workspace):
-                    return None
-                perf_configs = [
-                    {"type": p.get("type"), "name": p.get("name") or p.get("type"), "description": p.get("description")}
-                    for p in enabled_performance
-                ]
-                perf_match = vn.match_performance_config(question_en, perf_configs)
-                matched_types = perf_match.get("types") or []
-                matched_perf_cfgs = [p for p in enabled_performance if p.get("type") in matched_types]
+                matched_perf_cfgs = _match_performance_configs(question_en, ws_meta, workspace)
                 if not matched_perf_cfgs:
                     return None
 
@@ -10003,6 +10026,25 @@ Runs {e(schedule_desc)}.</div></td></tr>
                 # regardless of kind.
                 analysis = {"kind": run["kind"], "config": run["config"]}
                 context_sql = None
+
+            # A freshly typed scheduling request ("every Monday, send me a
+            # report on the warehouse's performance") has no prior chat
+            # answer to fall back on — the `run` lookup above only covers
+            # "send this"-style references to something already answered.
+            # Without this, such a request fell straight to generate_sql,
+            # which has no trained example for an admin-curated performance
+            # metric and delivered "Needs a clearer question" on every fire,
+            # even though the exact same question answered correctly in
+            # chat. Match it against performance configs the same way chat
+            # does before treating it as a plain data question.
+            if analysis is None and question_en:
+                schedule_ws_meta = get_workspace_metadata(self, workspace_id) or {}
+                matched_perf_cfgs = _match_performance_configs(
+                    question_en, schedule_ws_meta, schedule_ws_meta.get("name") or str(workspace_id)
+                )
+                if matched_perf_cfgs:
+                    analysis = {"kind": "performance", "config": matched_perf_cfgs}
+                    context_sql = None
 
             if not question_en:
                 return _ask_clarification("What would you like me to send you, or what should I watch for?")
