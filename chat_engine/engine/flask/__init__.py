@@ -10842,6 +10842,55 @@ Runs {e(schedule_desc)}.</div></td></tr>
         # clarification turns out to be a prediction/anomaly request instead.
         self._handle_prediction_message = _handle_prediction_message
 
+        def _try_performance_or_methodology_before_prediction(workspace_id, raw_text, username):
+            """
+            Shared gate for every entry point that has labeled a message
+            "prediction" before it reaches the ad-hoc prediction/anomaly
+            pipeline (_handle_prediction_message) — classify_message_route
+            reads "trend"/"abnormal pattern" language the same way for a
+            management performance question ("are exceptions trending up or
+            down?") as it does for a genuine ad-hoc anomaly request. An
+            admin-validated performance config, or an existing check's
+            methodology explanation, is always a better answer than a fresh
+            ad-hoc check when either applies, so try both here first.
+
+            Originally inlined in route_message's "prediction" branch only —
+            found live that the web chat UI never calls route_message for an
+            ordinary typed message at all; it calls classify_message_route_
+            endpoint to get the label, then POSTs straight to
+            run_matched_analysis_route for a "prediction" label, which had
+            none of this and went directly to _handle_prediction_message. The
+            route_message branch's fix was effectively dead for the actual
+            browser chat.
+
+            Returns (body_dict, status) if answered here, else None — None
+            means "fall through to _handle_prediction_message".
+            """
+            ws_meta = get_workspace_metadata(self, workspace_id) or {}
+            ws_name = ws_meta.get("name")
+            perf_summary_text = self._try_match_performance_config(
+                raw_text, ws_name or workspace_id, ws_meta, workspace_id, username
+            )
+            if perf_summary_text is not None:
+                return {"type": "text", "text": perf_summary_text}, 200
+            if _METHODOLOGY_CUE.search(raw_text):
+                # A methodology question can carry a prediction/anomaly cue
+                # word itself ("how is the order volume FORECAST calculated?",
+                # "how is this ANOMALY check done?") — without this,
+                # _handle_prediction_message would match its own saved config
+                # by name and actually RE-RUN the forecast/anomaly check
+                # instead of explaining it.
+                analysis_kind, analysis_config = self._try_match_analysis_methodology(
+                    raw_text, ws_meta, workspace_id, username
+                )
+                if analysis_config:
+                    analysis_explanation = vn.generate_analysis_methodology_explanation(
+                        raw_text, analysis_kind, analysis_config
+                    )
+                    if analysis_explanation:
+                        return {"type": "text", "text": analysis_explanation}, 200
+            return None
+
         @self.flask_app.route('/api/v0/run_matched_analysis', methods=['POST'])
         @self.requires_auth
         def run_matched_analysis_route(user=None):
@@ -10859,7 +10908,20 @@ Runs {e(schedule_desc)}.</div></td></tr>
             if not raw_text:
                 return jsonify({"type": "error", "error": "No message provided"}), 400
 
-            body, status = _handle_prediction_message(workspace_id, raw_text, username)
+            # A pending "save this check?" confirmation must be resolved by
+            # _handle_prediction_message directly — a bare "yes"/"no" reply
+            # (or a "how is this calculated?" about the check just shown,
+            # which _handle_prediction_message already handles against
+            # pending["config"]) isn't a fresh question to re-match against
+            # performance configs.
+            if _has_pending_analysis_confirmation(workspace_id, username):
+                result = None
+            else:
+                result = _try_performance_or_methodology_before_prediction(workspace_id, raw_text, username)
+            if result is not None:
+                body, status = result
+            else:
+                body, status = _handle_prediction_message(workspace_id, raw_text, username)
             return jsonify(body), status
 
         # ============= end prediction/anomaly chat integration =============
@@ -10959,41 +11021,12 @@ Runs {e(schedule_desc)}.</div></td></tr>
             if route == "schedule":
                 body, status = _handle_schedule_message(workspace_id, raw_text, prior_question, username, previous_sql, main_question=main_question, prior_kind=data.get('prior_kind'))
             elif route == "prediction":
-                # classify_message_route reads "trend"/"abnormal pattern"
-                # language the same way for a management performance
-                # question ("are exceptions trending up or down?") as it
-                # does for a genuine ad-hoc anomaly request — found live,
-                # this sent a question a saved performance config already
-                # answers exactly into _handle_prediction_message, which has
-                # no concept of performance configs and built an unrelated
-                # ad-hoc check instead. An admin-validated performance config
-                # is always a better answer than an ad-hoc one when both
-                # could apply, so try it first and only fall back to the
-                # ad-hoc prediction/anomaly pipeline when nothing matches.
-                perf_summary_text = self._try_match_performance_config(
-                    raw_text, ws_name or workspace, ws_meta, workspace_id, username
-                )
-                analysis_explanation = None
-                if perf_summary_text is None and _METHODOLOGY_CUE.search(raw_text):
-                    # A methodology question can carry a prediction/anomaly cue
-                    # word itself ("how is the order volume FORECAST
-                    # calculated?", "how is this ANOMALY check done?") — found
-                    # live: without this, that question matched its own saved
-                    # config by name and _handle_prediction_message actually
-                    # RE-RAN the forecast/anomaly check instead of explaining
-                    # it, the same "explain vs. re-answer" confusion already
-                    # fixed for _handle_query_message's methodology block.
-                    analysis_kind, analysis_config = self._try_match_analysis_methodology(
-                        raw_text, ws_meta, workspace_id, username
-                    )
-                    if analysis_config:
-                        analysis_explanation = vn.generate_analysis_methodology_explanation(
-                            raw_text, analysis_kind, analysis_config
-                        )
-                if perf_summary_text is not None:
-                    body, status = {"type": "text", "text": perf_summary_text}, 200
-                elif analysis_explanation:
-                    body, status = {"type": "text", "text": analysis_explanation}, 200
+                # Admin-validated performance config / methodology explanation
+                # before the ad-hoc prediction/anomaly pipeline — see
+                # _try_performance_or_methodology_before_prediction.
+                result = _try_performance_or_methodology_before_prediction(workspace_id, raw_text, username)
+                if result is not None:
+                    body, status = result
                 else:
                     body, status = _handle_prediction_message(workspace_id, raw_text, username)
             else:
