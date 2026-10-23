@@ -1,8 +1,10 @@
 import json
 import logging
 import asyncio
+import ast
 import os
 import re
+import html as html_escape_lib
 import sqlparse
 import sys
 import uuid
@@ -22,15 +24,14 @@ import io
 from datetime import datetime, timedelta
 from collections import defaultdict
 import hashlib
+from werkzeug.security import generate_password_hash
 from dateutil.relativedelta import relativedelta
 from collections import deque as _deque
 import openai
 from openai import OpenAI
 from openai import OpenAIError
 # HTTP/Network
-import aiohttp
 import requests
-from botframework.connector.aio import ConnectorClient
 
 # Data Handling and Scientific Libraries
 import pandas as pd
@@ -71,25 +72,9 @@ from flask import Flask, Response, jsonify, request, send_from_directory, render
 from flask import render_template_string
 from flask_sock import Sock
 
-# Azure/Bot Framework
-from botbuilder.core import (
-    BotFrameworkAdapter, BotFrameworkAdapterSettings, TurnContext,
-    BotFrameworkAdapter
-)
-from botbuilder.core.integration import aiohttp_error_middleware
-from botbuilder.schema import (
-    Activity, ConversationReference, ChannelAccount, ConversationAccount,
-    ActivityTypes, Attachment, ErrorResponseException
-)
-from botframework.connector import ConnectorClient as SyncConnectorClient  # Renamed to avoid conflict
-from botframework.connector.auth import (
-    MicrosoftAppCredentials, JwtTokenValidation, AuthenticationConfiguration, 
-    SimpleCredentialProvider, AuthenticationConstants
-)
-from azure.core.exceptions import DeserializationError
-
 # Custom/Project-Specific (Based on your listed imports)
 from ..base import VannaBase
+from ..base.base import DELIVERY_CUES
 from ..ollama import Ollama
 from ..openai import OpenAI_Chat
 from ..chromadb import ChromaDB_VectorStore
@@ -98,6 +83,9 @@ from .auth import AuthInterface, NoAuth, BasicAuth
 from .config import index_template
 from .prediction_page import prediction_template
 from .anomaly_page import anomaly_template
+from .vn_registry import VannaRegistry, VnRouter
+from .chat_context import ChatContext, friendly_sql_error
+from .access_control import install_access_control, ADMIN_ROLES, _wants_json, normalize_role
 from ..warehouse_perf import create_warehouse_perf
 
 import io, uuid, logging
@@ -119,27 +107,13 @@ except Exception:
 import pickle
 import pandas as pd
 import time
-import threading 
-# Bot Framework Imports
-from botbuilder.core import BotFrameworkAdapter, BotFrameworkAdapterSettings, TurnContext
-from botbuilder.schema import Activity
-from azure.core.exceptions import DeserializationError
+import threading
 import asyncio
 
 
 from threading import Thread
 from flask import request, jsonify, make_response
-from botbuilder.schema import Activity
-
-from botbuilder.core import TurnContext, BotFrameworkAdapter
-from botbuilder.schema import ConversationReference
-from botframework.connector import ConnectorClient
-from botframework.connector.auth import MicrosoftAppCredentials
-from botbuilder.core import BotFrameworkAdapter, BotFrameworkAdapterSettings
-from botbuilder.schema import ActivityTypes
-from botbuilder.core import TurnContext
 from urllib.parse import urlparse
-from azure.core.exceptions import DeserializationError
 
 
 
@@ -222,6 +196,82 @@ _pending_analysis_confirmations = {}
 _pending_analysis_confirmations_lock = None   # initialised after Lock is imported below
 _PENDING_ANALYSIS_CONFIRMATION_TTL_SECONDS = 600
 
+# The prediction/anomaly check behind each user's latest prediction answer,
+# keyed like the dicts above. "send this to X" right after a prediction refers
+# to that answer, which has no SQL of its own: the schedule stores this check
+# and re-runs it at fire time instead of asking what to send.
+_last_analysis_runs = {}
+_LAST_ANALYSIS_RUN_TTL_SECONDS = 3600
+
+# "How is this calculated?" / "how does this work?" / "what's the formula?" —
+# a methodology question about a performance-check answer, never itself a new
+# data question. Left to fall through to generate_sql, this produced either a
+# clarifying question or hallucinated SQL, since "how is it calculated" names
+# no table or column generate_sql could ground itself in. Cheap regex gate
+# first (same rationale as _ROUTE_CUES in base.py) — most messages have no
+# methodology cue at all, so this never costs an LLM round trip for them.
+_METHODOLOGY_CUE = re.compile(
+    r"\bhow\b.{0,30}\b(calculat|comput|deriv|measur|formula|work(s|ed|ing)?|done|arriv|determin)"
+    r"|\b(what('?s| is)) the (formula|methodology|logic)\b"
+    r"|\bwhere does (this|that|the) (number|data|figure|value) come from\b",
+    re.IGNORECASE,
+)
+
+# An ordinary data question that generate_sql couldn't answer (its own
+# anti-hallucination guard fired — no trained example/documentation covers
+# this shape of question, so it returned the literal "Insufficient data for
+# query." instead of guessing at columns) — previously just dead-ended the
+# user there. Same shape/rationale as _pending_schedule_clarifications above:
+# keyed by "{workspace_id}:{username}", the next message is treated as the
+# answer to the clarifying question rather than a brand-new query, merged
+# with the original question and retried through the normal generate_sql path.
+_pending_query_clarifications = {}
+_pending_query_clarifications_lock = None   # initialised after Lock is imported below
+_PENDING_QUERY_CLARIFICATION_TTL_SECONDS = 600
+_MAX_QUERY_CLARIFICATION_ATTEMPTS = 1
+
+# Hard cap on consecutive clarifying questions shown to one user in one
+# workspace, independent of _MAX_QUERY_CLARIFICATION_ATTEMPTS above. That
+# per-thread counter only increments when a reply is judged to MERGE with
+# the prior clarification — but is_fresh_topic_change (the judgment call
+# that decides merge-vs-new) can misjudge a loosely-phrased real answer as
+# a "new question", which resets the per-thread counter to 0 and lets the
+# cap be bypassed indefinitely, one misjudged reset at a time. This streak
+# counter tracks "how many clarifying questions in a row has this user been
+# asked, regardless of how each one was classified" and is the backstop
+# that actually guarantees the conversation can't loop forever — reset to 0
+# only by an actual answer (a real "sql" response), not by any judgment
+# call about merging.
+_clarification_streaks = {}   # key -> {"count": int, "last_at": float}
+_CLARIFICATION_STREAK_WINDOW_SECONDS = 300
+_MAX_CLARIFICATION_STREAK = 2
+
+
+def _clarification_streak_count(key):
+    """Current consecutive-clarification count for this user/workspace, 0 if
+    none yet or the window since the last one has expired."""
+    with _clarification_streaks_lock:
+        entry = _clarification_streaks.get(key)
+    if not entry or time.time() - entry.get("last_at", 0) > _CLARIFICATION_STREAK_WINDOW_SECONDS:
+        return 0
+    return entry.get("count", 0)
+
+
+def _clarification_streak_increment(key):
+    with _clarification_streaks_lock:
+        entry = _clarification_streaks.get(key)
+        count = (
+            entry.get("count", 0)
+            if entry and time.time() - entry.get("last_at", 0) <= _CLARIFICATION_STREAK_WINDOW_SECONDS
+            else 0
+        )
+        _clarification_streaks[key] = {"count": count + 1, "last_at": time.time()}
+
+
+def _clarification_streak_reset(key):
+    with _clarification_streaks_lock:
+        _clarification_streaks.pop(key, None)
+
 # A prediction/anomaly config's SQL query is written by an LLM (or, worse,
 # generated on the fly with no human review yet) and can come back unaggregated
 # against a large table — seen live: a 1.17M-row full-table pull that hung the
@@ -270,6 +320,9 @@ _unpick_log_lock = Lock()
 _pending_writes_lock = Lock()
 _pending_schedule_clarifications_lock = Lock()
 _pending_analysis_confirmations_lock = Lock()
+_last_analysis_runs_lock = Lock()
+_pending_query_clarifications_lock = Lock()
+_clarification_streaks_lock = Lock()
 _schedule_records_locks_guard = Lock()
 
 
@@ -388,6 +441,19 @@ def _ensure_feedback_schema(user_mgmt_config):
             "DRIVER={ODBC Driver 17 for SQL Server};"
             f"SERVER={server_part};DATABASE=master;UID={username};PWD={password};"
         )
+        # A database name can't be a bind parameter — it's an identifier, so it has
+        # to be interpolated. Constrain it to a plain identifier first: the value is
+        # operator-supplied config rather than user input, but nothing downstream
+        # would stop a name containing "]" from closing the brackets and appending
+        # its own statement.
+        if not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]{0,127}", database or ""):
+            logger.warning(
+                f"Feedback DB schema auto-provisioning skipped: {database!r} is not a plain "
+                "identifier (letters, digits and underscore only).",
+                extra={"admin": True},
+            )
+            return
+
         with pyodbc.connect(master_conn_str, timeout=15, autocommit=True) as conn:
             cursor = conn.cursor()
             cursor.execute(f"IF DB_ID(N'{database}') IS NULL CREATE DATABASE [{database}]")
@@ -403,7 +469,14 @@ def _ensure_feedback_schema(user_mgmt_config):
                 IF OBJECT_ID('dbo.users', 'U') IS NULL
                 BEGIN
                     CREATE TABLE dbo.users (
-                        question_id         VARCHAR(100)   NOT NULL PRIMARY KEY,
+                        -- UNIQUEIDENTIFIER, not VARCHAR(100): existing deployments
+                        -- have this column as uniqueidentifier, and the mismatch is
+                        -- what let SQL Server error 8169 ("conversion from a
+                        -- character string to uniqueidentifier failed") reach
+                        -- production unnoticed — a freshly provisioned VARCHAR
+                        -- database accepted the bad value and never reproduced it.
+                        -- Every writer already supplies str(uuid.uuid4()).
+                        question_id         UNIQUEIDENTIFIER NOT NULL PRIMARY KEY,
                         question             NVARCHAR(4000) NULL,
                         sql_query            NVARCHAR(4000) NULL,
                         summary              NVARCHAR(4000) NULL,
@@ -419,9 +492,17 @@ def _ensure_feedback_schema(user_mgmt_config):
                         output_tokens        INT            NULL,
                         cached_input_tokens  INT            NULL,
                         cost_usd             FLOAT          NULL,
-                        model_name           NVARCHAR(100)  NULL
+                        model_name           NVARCHAR(100)  NULL,
+                        parent_question_id   NVARCHAR(100)  NULL
                     )
                 END
+            """)
+            # log_user_activity writes parent_question_id and the history query
+            # reads it, but tables created before it existed don't have it — every
+            # insert then failed and fell back to user_activity_log_backup.txt.
+            cursor.execute("""
+                IF COL_LENGTH('dbo.users', 'parent_question_id') IS NULL
+                    ALTER TABLE dbo.users ADD parent_question_id NVARCHAR(100) NULL
             """)
             cursor.execute("""
                 IF OBJECT_ID('dbo.user_feedback', 'U') IS NULL
@@ -447,6 +528,79 @@ def _ensure_feedback_schema(user_mgmt_config):
         )
 
 
+# USD per 1M tokens: OpenAI standard-tier list prices. One table for every cost
+# calculation — billing and the agent-suggestion token counter each used to
+# keep their own copy, both well above list price. Keys are matched as the
+# longest prefix of the reported model (dated snapshots like
+# "gpt-4.1-mini-2025-04-14" resolve to "gpt-4.1-mini"). Re-check against
+# https://openai.com/api/pricing when adding a model or if your contract differs.
+MODEL_PRICING = {
+    "gpt-4.1":      {"input": 2.00,  "cached_input": 0.50,   "output": 8.00},
+    "gpt-4.1-mini": {"input": 0.40,  "cached_input": 0.10,   "output": 1.60},
+    "gpt-4.1-nano": {"input": 0.10,  "cached_input": 0.025,  "output": 0.40},
+    "gpt-4o":       {"input": 2.50,  "cached_input": 1.25,   "output": 10.00},
+    "gpt-4o-mini":  {"input": 0.15,  "cached_input": 0.075,  "output": 0.60},
+    "gpt-5":        {"input": 1.25,  "cached_input": 0.125,  "output": 10.00},
+    "gpt-5-mini":   {"input": 0.25,  "cached_input": 0.025,  "output": 2.00},
+    "gpt-5-nano":   {"input": 0.05,  "cached_input": 0.005,  "output": 0.40},
+    "gpt-5.1":      {"input": 1.25,  "cached_input": 0.125,  "output": 10.00},
+    "o3":           {"input": 2.00,  "cached_input": 0.50,   "output": 8.00},
+    "o3-mini":      {"input": 1.10,  "cached_input": 0.55,   "output": 4.40},
+    "o4-mini":      {"input": 1.10,  "cached_input": 0.275,  "output": 4.40},
+    "o1":           {"input": 15.00, "cached_input": 7.50,   "output": 60.00},
+}
+
+
+def compute_cost_usd(normalized_model, input_tokens, output_tokens, cached_input_tokens=0):
+    """Cost of one call. Cached input is billed at its discounted rate, not free;
+    an unknown model costs 0 (logged by the caller's model name, not guessed)."""
+    price = MODEL_PRICING.get(normalized_model)
+    if not price:
+        return 0.0
+    cached = max(0, min(cached_input_tokens or 0, input_tokens or 0))
+    uncached = max(0, (input_tokens or 0) - cached)
+    return round(
+        uncached / 1_000_000 * price["input"]
+        + cached / 1_000_000 * price["cached_input"]
+        + (output_tokens or 0) / 1_000_000 * price["output"],
+        8,
+    )
+
+
+def session_cookie_settings(env):
+    """(Flask config to apply, whether the Teams tab is on without a Secure
+    cookie, whether SESSION_COOKIE_SECURE was left unconfigured entirely).
+
+    SESSION_COOKIE_SECURE decides explicitly; unset, it follows TEAMS_TAB_ENABLED.
+    See the call site in VannaFlaskApp.__init__ for why the two are separate.
+    """
+    def _flag(name):
+        return str(env.get(name, "")).strip().lower()
+
+    teams_tab_enabled = _flag("TEAMS_TAB_ENABLED") in ("1", "true", "yes")
+    secure_env = _flag("SESSION_COOKIE_SECURE")
+    secure_unconfigured = secure_env not in ("0", "false", "no", "1", "true", "yes")
+    if secure_env in ("0", "false", "no"):
+        use_secure = False
+    elif secure_env in ("1", "true", "yes"):
+        use_secure = True
+    else:
+        use_secure = teams_tab_enabled
+
+    if use_secure:
+        config = {
+            "SESSION_COOKIE_SAMESITE": "None",
+            "SESSION_COOKIE_SECURE": True,
+            "SESSION_COOKIE_PARTITIONED": True,
+        }
+    else:
+        # SameSite is set explicitly even on the non-Secure path — this used to
+        # be left to Flask's own (version-dependent) default, so a Flask
+        # upgrade could silently change actual browser behavior here.
+        config = {"SESSION_COOKIE_SAMESITE": "Lax"}
+    return config, (teams_tab_enabled and not use_secure), (secure_unconfigured and not use_secure)
+
+
 TRANSLATE_API_KEY = os.getenv("GOOGLE_TRANSLATE_API_KEY")
 
 
@@ -454,36 +608,11 @@ TRANSLATE_API_KEY = os.getenv("GOOGLE_TRANSLATE_API_KEY")
 
 
 
-MICROSOFT_APP_ID = os.getenv("MICROSOFT_APP_ID", "")
-MICROSOFT_APP_PASSWORD = os.getenv("MICROSOFT_APP_PASSWORD", "")
-
-MICROSOFT_APP_TENANT_ID = os.getenv("MICROSOFT_APP_TENANT_ID", "")  # from logs
-
-
-# Initialize Bot Framework Adapter
-adapter_settings = BotFrameworkAdapterSettings(
-    app_id=MICROSOFT_APP_ID,
-    app_password=MICROSOFT_APP_PASSWORD,
-    channel_auth_tenant=MICROSOFT_APP_TENANT_ID
-)
-
-
-adapter = BotFrameworkAdapter(adapter_settings)
-
-# Error handler
-async def on_error(context: TurnContext, error: Exception):
-    logger.error(f"[on_turn_error]: {error}", exc_info=True)
-    await context.send_activity("Sorry, something went wrong. Please try again.")
-
-adapter.on_turn_error = on_error
-
-# Global conversation references
-conversation_references = {}
-
-#incoming webhook for actual demo — must be set via env; no hardcoded fallback
-# (the URL previously hardcoded here is a live secret and must be rotated in Teams)
-INCOMING_WEBHOOK_URL = os.getenv("TEAMS_INCOMING_WEBHOOK_URL", "")
-vn = None
+# One Vanna instance per workspace, and a proxy standing in for the old
+# single shared global — see vn_registry.py. Every existing `vn.<attr>` call
+# resolves to the instance for the current caller's workspace.
+_vanna_registry = VannaRegistry()
+vn = VnRouter(_vanna_registry)
 
 
 def translate_text(response: str, user_language: str) -> str:
@@ -1046,9 +1175,9 @@ class MemoryCache(Cache):
         self.last_ids[uid][wid] = value
 
     # UPDATED set() for consistent anonymous handling:
-    def set(self, id, field, value, user_id: Optional[str] = None):
+    def set(self, id, field, value, user_id: Optional[str] = None, workspace_id: Optional[str] = None):
         logger.info(f"set - {field}", extra={"flow": True})
-        uid, wid = self._resolve_user_workspace(user_id, None)
+        uid, wid = self._resolve_user_workspace(user_id, workspace_id)
         
         # Consistent anonymous handling
         if uid is None or wid is None:
@@ -1096,11 +1225,11 @@ class MemoryCache(Cache):
 
 
     # UPDATED get() method with better error handling:
-    def get(self, id, field, user_id: Optional[str] = None):
+    def get(self, id, field, user_id: Optional[str] = None, workspace_id: Optional[str] = None):
         global vn
 
         logger.info(f"get for field: {field}", extra={"flow": True})
-        uid, wid = self._resolve_user_workspace(user_id, None)
+        uid, wid = self._resolve_user_workspace(user_id, workspace_id)
         
         # Handle anonymous users consistently
         if uid is None or wid is None:
@@ -1157,8 +1286,8 @@ class MemoryCache(Cache):
         return entry.get(field, None)
 
     # UPDATED get_all() to update access times:
-    def get_all(self, field_list, user_id: Optional[str] = None) -> list:
-        uid, wid = self._resolve_user_workspace(user_id, None)
+    def get_all(self, field_list, user_id: Optional[str] = None, workspace_id: Optional[str] = None) -> list:
+        uid, wid = self._resolve_user_workspace(user_id, workspace_id)
         
         # Handle anonymous users
         if uid is None or wid is None:
@@ -1185,8 +1314,8 @@ class MemoryCache(Cache):
         return ALL
 
     # UPDATED delete() for consistent handling:
-    def delete(self, id, user_id: Optional[str] = None):
-        uid, wid = self._resolve_user_workspace(user_id, None)
+    def delete(self, id, user_id: Optional[str] = None, workspace_id: Optional[str] = None):
+        uid, wid = self._resolve_user_workspace(user_id, workspace_id)
         
         # Handle anonymous users
         if uid is None or wid is None:
@@ -1324,11 +1453,28 @@ class MemoryCache(Cache):
     
 
 #for agent mails 
+_CSV_FORMULA_PREFIXES = ("=", "+", "-", "@")
+
+
+def _csv_safe_value(value):
+    """
+    Prefixes a leading '=' / '+' / '-' / '@' with a single quote — Excel's own
+    "treat as text" escape — so a cell sourced from warehouse data (a customer
+    name, address, free-text comment, anything not typed by this app) can
+    never be opened as a live formula ("CSV injection"/"formula injection").
+    Only touches strings; numbers/dates/None pass through unchanged.
+    """
+    if isinstance(value, str) and value.startswith(_CSV_FORMULA_PREFIXES):
+        return "'" + value
+    return value
+
+
 def _rows_to_csv(rows):
     if not rows: return None
     out = io.StringIO()
+    safe_rows = [{k: _csv_safe_value(v) for k, v in row.items()} for row in rows]
     w = csv.DictWriter(out, fieldnames=rows[0].keys())
-    w.writeheader(); w.writerows(rows)
+    w.writeheader(); w.writerows(safe_rows)
     return out.getvalue()
 
 # Send email using SMTP (e.g., Gmail)
@@ -1502,133 +1648,131 @@ def _send_email(recipients, subject, body, rows, filename, html=None, inline_ima
 
     raise ValueError(f"Unsupported email provider: {provider}")
 
+class _OpenAIVanna(ChromaDB_VectorStore, OpenAI_Chat):
+    def __init__(self, config=None):
+        ChromaDB_VectorStore.__init__(self, config=config)
+        OpenAI_Chat.__init__(self, config=config)
+
+
+class _OllamaVanna(ChromaDB_VectorStore, Ollama):
+    def __init__(self, config=None):
+        ChromaDB_VectorStore.__init__(self, config=config)
+        Ollama.__init__(self, config=config)
+
+
+def _build_bare_vanna():
+    """No LLM client and no DB connection — only the ChromaDB side, for
+    training-data operations when no workspace is connected."""
+    return _OpenAIVanna(config={'allow_llm_to_see_data': 'True'})
+
+
+def build_vanna_instance(llm_details, db_details, db_details_b=None):
+    """Build a connected Vanna instance from a workspace's LLM + DB config.
+    Raises ValueError with a user-facing reason for missing/unsupported config."""
+    llm_details = llm_details or {}
+    model_type = llm_details.get('model_type')
+    if model_type == 'openai':
+        if not llm_details.get('api_key'):
+            logger.warning("API key missing for OpenAI model", extra={"admin": True})
+            raise ValueError("API key is required for OpenAI models")
+        instance = _OpenAIVanna(config={
+            'api_key': llm_details['api_key'],
+            'model': llm_details.get('model_name'),
+            'allow_llm_to_see_data': True
+        })
+    elif model_type == 'ollama':
+        instance = _OllamaVanna(config={
+            'model': llm_details.get('model_name'),
+            'allow_llm_to_see_data': True
+        })
+    else:
+        raise ValueError("Unsupported or missing LLM model type — configure an AI provider for this workspace.")
+
+    if not db_details or not all(db_details.get(k) for k in ("serverName", "port", "databaseName", "username", "password")):
+        raise ValueError("Incomplete database connection details — configure the workspace DB connection.")
+
+    odbc_conn_str = (
+        f"DRIVER={{ODBC Driver 17 for SQL Server}};"
+        f"SERVER={db_details['serverName']},{db_details['port']};"
+        f"DATABASE={db_details['databaseName']};"
+        f"UID={db_details['username']};"
+        f"PWD={db_details['password']};"
+    )
+    logger.info(f"Connecting to MSSQL database {db_details['databaseName']} on {db_details['serverName']}", extra={"admin": True})
+    instance.connect_to_mssql(odbc_conn_str=odbc_conn_str)
+
+    # Record primary/secondary DB aliases for cross-DB SQL qualification
+    # (see get_sql_prompt). No live connection to the secondary DB — it's
+    # reached either via same-instance three-part naming (if both databases
+    # share the same server+port) or a linked server (if genuinely separate
+    # servers) — get_sql_prompt picks the right form using same_instance.
+    # strip(): an alias typed with a stray space ("secondarydb ") never matched
+    # the db tags in table_relevance/query_mapping.
+    instance.primary_db_alias = (db_details.get("db_alias") or "").strip() or "PRIMARY"
+    instance.primary_db_name = db_details.get("databaseName")
+    if db_details_b and db_details_b.get("databaseName"):
+        instance.secondary_db_alias = (db_details_b.get("db_alias") or "").strip() or "SECONDARY"
+        instance.secondary_db_name = db_details_b.get("databaseName")
+        instance.same_instance = (
+            str(db_details_b.get("serverName") or "").strip().lower()
+                == str(db_details.get("serverName") or "").strip().lower()
+            and str(db_details_b.get("port") or "").strip()
+                == str(db_details.get("port") or "").strip()
+        )
+    else:
+        instance.secondary_db_alias = None
+        instance.secondary_db_name = None
+        instance.same_instance = False
+    return instance
+
+
 def initialize_vanna_instance(workspace_id, llm_details, db_details, db_details_b=None):
-            global vn
-            try:
-                # Initialize Vanna based on LLM type
-                if llm_details['model_type'] == 'openai':
-                    if not llm_details['api_key']:
-                        logger.warning("API key missing for OpenAI model", extra={"admin": True})
-                        logger.warning("API key missing for OpenAI model", extra={"user": True})
-                        return {"success": False, "error": "API key is required for OpenAI models"}
+    """Build an instance from explicit details, register it for workspace_id
+    and bind it to the current thread/request. Returns {"success", ...}."""
+    try:
+        instance = build_vanna_instance(llm_details, db_details, db_details_b)
+    except ValueError as e:
+        return {"success": False, "error": str(e)}
+    except Exception as e:
+        logger.error(f"Failed to initialize Vanna: {str(e)}", exc_info=True, extra={"admin": True})
+        return {"success": False, "error": f"Failed to initialize Vanna: {str(e)}"}
+    _vanna_registry.put(workspace_id, instance)
+    vn.bind_instance(instance)
+    logger.info(f"Vanna initialized for workspace {workspace_id}", extra={"admin": True})
+    return {"success": True, "message": "Vanna initialized successfully."}
 
-                    class MyVanna(ChromaDB_VectorStore, OpenAI_Chat):
-                        def __init__(self, config=None):
-                            ChromaDB_VectorStore.__init__(self, config=config)
-                            OpenAI_Chat.__init__(self, config=config)
 
-                    vn = MyVanna(config={
-                        'api_key': llm_details['api_key'],
-                        'model': llm_details['model_name'],
-                        'allow_llm_to_see_data': True
-                    })
-                elif llm_details['model_type'] == 'ollama':
-                    class MyVanna(ChromaDB_VectorStore, Ollama):
-                        def __init__(self, config=None):
-                            ChromaDB_VectorStore.__init__(self, config=config)
-                            Ollama.__init__(self, config=config)
-
-                    vn = MyVanna(config={
-                        'model': llm_details['model_name'],
-                        'allow_llm_to_see_data': True
-                    })
-                else:
-                    return {"success": False, "error": "Unsupported LLM model type."}
-
-                # Use the same ODBC connection string as /connect-vanna
-                odbc_conn_str = (
-                    f"DRIVER={{ODBC Driver 17 for SQL Server}};"
-                    f"SERVER={db_details['serverName']},{db_details['port']};"
-                    f"DATABASE={db_details['databaseName']};"
-                    f"UID={db_details['username']};"
-                    f"PWD={db_details['password']};"
-                )
-                logger.info(f"Connecting to MSSQL with: {odbc_conn_str.replace(db_details['password'], '****')}", extra={"admin": True})
-                vn.connect_to_mssql(odbc_conn_str=odbc_conn_str)
-
-                # Record primary/secondary DB aliases for cross-DB SQL qualification
-                # (see get_sql_prompt). No live connection to the secondary DB — it's
-                # reached either via same-instance three-part naming (if both databases
-                # share the same server+port) or a linked server (if genuinely separate
-                # servers) — get_sql_prompt picks the right form using vn.same_instance.
-                vn.primary_db_alias = db_details.get("db_alias") or "PRIMARY"
-                vn.primary_db_name = db_details.get("databaseName")
-                if db_details_b and db_details_b.get("databaseName"):
-                    vn.secondary_db_alias = db_details_b.get("db_alias") or "SECONDARY"
-                    vn.secondary_db_name = db_details_b.get("databaseName")
-                    vn.same_instance = (
-                        str(db_details_b.get("serverName") or "").strip().lower()
-                            == str(db_details.get("serverName") or "").strip().lower()
-                        and str(db_details_b.get("port") or "").strip()
-                            == str(db_details.get("port") or "").strip()
-                    )
-                else:
-                    vn.secondary_db_alias = None
-                    vn.secondary_db_name = None
-                    vn.same_instance = False
-
-                # Optionally store vn in vanna_api if needed
-                # vanna_api.vn = vn  # Uncomment if vanna_api is a valid object
-                logger.info(f"Vanna initialized for workspace {workspace_id}", extra={"admin": True})
-                return {"success": True, "message": "Vanna initialized successfully."}
-            except Exception as e:
-                logger.error(f"Failed to initialize Vanna: {str(e)}", exc_info=True, extra={"admin": True})
-                return {"success": False, "error": f"Failed to initialize Vanna: {str(e)}"}
+_initialize_vanna_instance_module = initialize_vanna_instance
+_vanna_registry.configure(bare_factory=_build_bare_vanna)
 
 
 
 class VannaFlaskAPI:
     flask_app = None
 
-    #for agent initlaization
-    def ensure_vanna_initialized(self, workspace_id):
-            global vn
-            logger.info("ensure vanna function")
-            
-            workspace = get_workspace_metadata(self, workspace_id)
-            if not workspace:
-                return False, "Workspace not found"
-            logger.info(f"Workspace inside ensure {workspace}")
-            llm_config = json.loads(workspace.get("llm_config", "{}"))
-            db_config = json.loads(workspace.get("db_config", "{}"))
-            db_config_b = json.loads(workspace.get("db_config_b", "{}"))
-            logger.info(f"ensure vanna function {llm_config} {db_config}")
+    def _build_vanna_for_workspace(self, workspace_id):
+        """Vanna registry loader: build workspace_id's instance from its saved
+        LLM + DB config. Raises ValueError with a user-facing reason."""
+        workspace = get_workspace_metadata(self, workspace_id)
+        if not workspace:
+            raise ValueError("Workspace not found")
+        llm_config = json.loads(workspace.get("llm_config") or "{}")
+        db_config = json.loads(workspace.get("db_config") or "{}")
+        db_config_b = json.loads(workspace.get("db_config_b") or "{}")
+        return build_vanna_instance(
+            llm_config, db_config, db_config_b if db_config_b.get("databaseName") else None
+        )
 
-            data_to_send = {
-                "workspace_id": workspace_id,
-                "llm_details": {
-                    "model_name": llm_config.get("model_name"),
-                    "model_type": llm_config.get("model_type"),
-                    "api_key": llm_config.get("api_key"),
-                    "base_url": llm_config.get("base_url")
-                },
-                "db_details": {
-                    "serverName": db_config.get("serverName"),
-                    "port": db_config.get("port"),
-                    "databaseName": db_config.get("databaseName"),
-                    "username": db_config.get("username"),
-                    "password": db_config.get("password"),
-                    "db_alias": db_config.get("db_alias")
-                },
-                "db_details_b": {
-                    "databaseName": db_config_b.get("databaseName"),
-                    "db_alias": db_config_b.get("db_alias"),
-                    "serverName": db_config_b.get("serverName"),
-                    "port": db_config_b.get("port")
-                } if db_config_b.get("databaseName") else None
-            }
-            result = initialize_vanna_instance(
-                workspace_id, data_to_send["llm_details"], data_to_send["db_details"],
-                data_to_send["db_details_b"]
-            )
-            if not result["success"]:
-                return False, result["error"]
-
-            # CRITICAL: Update self.vn to point to the globally initialized instance
-            self.vn = vn
-            logger.info("ensure_vanna_initialized: self.vn updated directly from global vn")
-
-            return True, None
+    def ensure_vanna_initialized(self, workspace_id, refresh=False):
+        """Make workspace_id's instance the one `vn` resolves to on this thread —
+        for the rest of this request, or for this background job. Reuses the
+        cached instance unless refresh=True (config saves invalidate the cache)."""
+        instance, err = _vanna_registry.get_or_build(workspace_id, refresh=refresh)
+        if instance is None:
+            return False, err
+        vn.bind_instance(instance)
+        self.vn = vn
+        return True, None
     
    
 
@@ -1697,6 +1841,11 @@ class VannaFlaskAPI:
                 user = self.auth.get_user(request)
 
             if not user:
+                # API callers (fetch/XHR) can't follow a redirect to an HTML login
+                # page — they'd parse it as a broken response. Same rule the
+                # access-control layer uses: JSON 401 for them, redirect for pages.
+                if _wants_json(request.path):
+                    return jsonify({"type": "error", "error": "Authentication required"}), 401
                 return redirect(url_for("login"))
 
             # Put user into kwargs only if not present
@@ -1720,10 +1869,14 @@ class VannaFlaskAPI:
                     user = self.auth.get_user(request)
 
                 if not user:
+                    if _wants_json(request.path):  # see requires_auth
+                        return jsonify({"type": "error", "error": "Authentication required"}), 401
                     return redirect(url_for("login"))
 
                 # Prefer role from kwargs/session/user
-                role = kwargs.get("role") or session.get("role") or getattr(user, "role", None) or user.get("role", None)
+                role = normalize_role(
+                    kwargs.get("role") or session.get("role") or getattr(user, "role", None) or user.get("role", None)
+                )
 
                 logger.debug("requires_role check: required=%s role=%s user=%s", allowed_roles, role, getattr(user, "id", None) or user.get("id", None))
 
@@ -1752,13 +1905,18 @@ class VannaFlaskAPI:
     def __init__(
         self,
         #vn: VannaBase,
-        cache: Cache = MemoryCache(),
-        auth: AuthInterface = NoAuth(),
+        cache: Cache = None,
+        auth: AuthInterface = None,
         debug=False,
         allow_llm_to_see_data=False,
         chart=True,
     ):
         global vn
+        # Defaults are built here, not in the signature: a default argument is
+        # evaluated once at import, so merely importing this module started a
+        # cache-eviction thread and (for BasicAuth) wrote users into ChromaDB.
+        cache = cache if cache is not None else MemoryCache()
+        auth = auth if auth is not None else NoAuth()
         """
         Expose a Flask API that can be used to interact with a Vanna instance.
 
@@ -1779,6 +1937,13 @@ class VannaFlaskAPI:
         # different set) — resolved against the working directory, which main.py
         # sets to the project root.
         self.flask_app = Flask(__name__, template_folder=os.path.join(os.getcwd(), "templates"))
+
+        # A request that ensured a specific workspace binds its Vanna instance
+        # to the serving thread — Waitress reuses threads, so drop the binding
+        # when the request ends rather than leaking it into the next one.
+        @self.flask_app.teardown_request
+        def _unbind_vanna_instance(_exc):
+            vn.unbind_instance()
 
         self.swagger = Swagger(
           self.flask_app, template={"info": {"title": "Tychons API"}}
@@ -1920,13 +2085,259 @@ class VannaFlaskAPI:
                     }
                 )
 
-        def _handle_query_message(question_raw, previous_sql, workspace, parent_question_id=None):
+        def _run_performance_configs_and_summarize(configs, question_en, workspace_name):
+            """
+            Runs one or more admin-curated performance-check configs (see
+            match_performance_config / the Performance Checks admin panel),
+            merges their results, applies any named-entity filter the
+            question implies (see match_entity_filter — e.g. "...in
+            Manhattan" when no such entity exists), and summarizes for a
+            management audience (see generate_performance_summary).
+
+            Single source of truth for this, shared by the live chat answer,
+            "send this" re-runs (_run_analysis_check's "performance" kind),
+            and conditional scheduled-agent polls — one metric or several
+            merged are handled identically everywhere, so a question like
+            "what's our storage occupancy?" and "how is the warehouse
+            performing?" get the same bulleted, percentage-led treatment
+            instead of the single-metric case looking like a different,
+            less-finished feature.
+
+            Returns (summary_text_with_any_disclaimer, combined_df, ran_types)
+            — combined_df is None (and summary_text a plain explanation) if
+            nothing could be run.
+            """
+            combined_df = None
+            ran_types = []
+            for cfg in configs:
+                is_safe, reason = vn.is_select_only_sql(cfg.get("sql_query") or "")
+                if not is_safe:
+                    logger.warning(f"Performance config '{cfg.get('type')}' failed SQL validation: {reason}")
+                    continue
+                try:
+                    cfg_df = vn.run_sql(cfg["sql_query"])
+                except Exception as run_exc:
+                    logger.warning(f"Performance config '{cfg.get('type')}' failed to run: {run_exc}")
+                    continue
+                if cfg_df is None or cfg_df.empty:
+                    continue
+                # SQL Server's DECIMAL columns (every _pct column these
+                # configs compute) come back from the DB driver as Python
+                # decimal.Decimal objects, which pandas stores as dtype
+                # "object" — invisible to pd.api.types.is_numeric_dtype().
+                # Found live: this silently dropped every percentage column
+                # from match_entity_filter's and extract_numeric_condition's
+                # numeric-column detection, so a condition like "occupied
+                # location PERCENTAGE above 90" could only ever match a raw
+                # count column instead, a wrong-but-plausible-looking answer.
+                # pd.to_numeric safely converts Decimal (and numeric strings)
+                # to float; a genuinely non-numeric column (warehouse_id)
+                # raises and is left untouched (errors="ignore" was removed
+                # in pandas 3.x — "invalid error value specified" — so a
+                # plain try/except is the only way to do this that works
+                # across pandas versions).
+                for col in cfg_df.columns:
+                    if cfg_df[col].dtype == object:
+                        try:
+                            cfg_df[col] = pd.to_numeric(cfg_df[col])
+                        except (ValueError, TypeError):
+                            pass
+                ran_types.append(cfg.get("type"))
+                if combined_df is None:
+                    combined_df = cfg_df
+                elif "warehouse_id" in cfg_df.columns and "warehouse_id" in combined_df.columns:
+                    combined_df = combined_df.merge(
+                        cfg_df, on="warehouse_id", how="outer", suffixes=("", f"_{cfg.get('type')}")
+                    )
+                else:
+                    combined_df = pd.concat([combined_df, cfg_df], axis=1)
+
+            if combined_df is None or combined_df.empty:
+                return "None of the matched performance checks returned any data.", None, []
+
+            entity_filter = {"mentioned": False}
+            try:
+                entity_filter = vn.match_entity_filter(question_en, combined_df)
+            except Exception as ef_exc:
+                logger.warning(f"match_entity_filter failed: {ef_exc}")
+
+            disclaimer = ""
+            if entity_filter.get("mentioned") and not entity_filter.get("column"):
+                term = entity_filter.get("mentioned_term") or "that"
+                disclaimer = (
+                    f"I don't have anything in this data specifically labeled '{term}' — "
+                    "here's the full breakdown in case one of these matches what you mean:\n\n"
+                )
+            if entity_filter.get("column"):
+                combined_df = combined_df[
+                    combined_df[entity_filter["column"]].astype(str) == entity_filter["matched_value"]
+                ]
+
+            try:
+                summary_text = vn.generate_performance_summary(question=question_en, df=combined_df)
+            except Exception as summary_exc:
+                logger.warning(f"Performance summary generation failed: {summary_exc}")
+                summary_text = None
+            if not summary_text:
+                summary_text = combined_df.to_string(index=False)
+
+            return disclaimer + summary_text, combined_df, ran_types
+
+        self._run_performance_configs_and_summarize = _run_performance_configs_and_summarize
+
+        def _match_performance_configs(question_en, ws_meta, workspace):
+            """
+            Matches question_en against this workspace's admin-curated
+            performance configs and returns the matched config list, or None
+            if nothing matches (or a trained SQL example already covers the
+            question — generate_sql should answer those directly rather than
+            a performance config stepping in).
+
+            Shared by _try_match_performance_config (chat/route_message,
+            which immediately runs+summarizes the match) and
+            _handle_schedule_message (which only needs the config list to
+            store on the schedule record — _run_analysis_check runs it fresh
+            at every fire, same as a remembered "send this" check).
+            """
+            try:
+                enabled_performance = [
+                    p for p in json.loads((ws_meta or {}).get("performance", "[]"))
+                    if p.get("enabled", True)
+                ]
+                if not enabled_performance or _is_trained_question(question_en, workspace):
+                    return None
+                perf_configs = [
+                    {"type": p.get("type"), "name": p.get("name") or p.get("type"), "description": p.get("description")}
+                    for p in enabled_performance
+                ]
+                perf_match = vn.match_performance_config(question_en, perf_configs)
+                matched_types = perf_match.get("types") or []
+                matched_perf_cfgs = [p for p in enabled_performance if p.get("type") in matched_types]
+                return matched_perf_cfgs or None
+            except Exception as perf_exc:
+                logger.warning(f"Performance config matching failed: {perf_exc}")
+                return None
+
+        self._match_performance_configs = _match_performance_configs
+
+        def _try_match_performance_config(question_en, workspace, ws_meta, workspace_id, username):
+            """
+            Checks whether one of this workspace's admin-curated performance
+            configs answers question_en outright, runs it, and remembers the
+            run for a later "send this"/conditional-alert reference — the
+            same unconditional check _handle_query_message always ran before
+            generate_sql, pulled out so route_message can run it too.
+
+            Found live: a management question like "are operational
+            exceptions trending up or down this month?" — a question a saved
+            performance config (exception_trend) answers exactly — was
+            classified "prediction" by classify_message_route (it reads
+            trend/abnormal-pattern language the same way "any unusual
+            inventory movement" does) and went straight to
+            _handle_prediction_message, which never looks at performance
+            configs at all. It ran its own ad-hoc anomaly analysis against an
+            unrelated table ("error message frequency") instead of the
+            validated, on-point answer that already existed. Performance
+            configs are admin-validated and more specific than an ad-hoc
+            LLM-built check, so they should win whenever they match, even on
+            a message classify_message_route guessed was "prediction".
+
+            Returns the summary text (str) if a configured check answered
+            it, else None — None means "let the normal pipeline handle this",
+            never an error.
+            """
+            try:
+                matched_perf_cfgs = _match_performance_configs(question_en, ws_meta, workspace)
+                if not matched_perf_cfgs:
+                    return None
+
+                summary_text, result_df, ran_types = _run_performance_configs_and_summarize(
+                    matched_perf_cfgs, question_en, workspace
+                )
+                if result_df is None:
+                    # Matched config(s) found, but none returned data — let
+                    # the caller fall through to its normal pipeline instead
+                    # of dead-ending on an empty result.
+                    return None
+
+                logger.info(f"Answered performance question '{question_en}' using: {ran_types}")
+                if workspace_id and username:
+                    _clarification_streak_reset(f"{workspace_id}:{username}")
+                    self._remember_analysis_run(
+                        f"{workspace_id}:{username}", question_en, "performance", matched_perf_cfgs,
+                    )
+                return summary_text
+            except Exception as perf_exc:
+                logger.warning(f"Performance config matching failed: {perf_exc}")
+                return None
+
+        self._try_match_performance_config = _try_match_performance_config
+
+        def _try_match_analysis_methodology(question_en, ws_meta, workspace_id, username):
+            """
+            Counterpart to _try_match_performance_config, for the methodology
+            short-circuit's prediction/anomaly branch (see
+            generate_analysis_methodology_explanation) — never used to answer
+            a question with actual data, only to find which saved check a
+            methodology question is asking about. Same priority as the
+            performance branch: a check the question explicitly names wins;
+            otherwise falls back to whichever one last answered this user.
+
+            Returns (kind, full_config_dict) or (None, None).
+            """
+            try:
+                predictions = [p for p in json.loads((ws_meta or {}).get("predictions", "[]")) if p.get("enabled", True)]
+                anomalies = [a for a in json.loads((ws_meta or {}).get("anomalies", "[]")) if a.get("enabled", True)]
+                if predictions or anomalies:
+                    def _sql_tables(sql):
+                        return ", ".join(dict.fromkeys(
+                            m.split(".")[-1].strip("[]")
+                            for m in re.findall(r"\b(?:FROM|JOIN)\s+([\w.\[\]]+)", sql or "", re.I)
+                        )) or None
+                    configs = (
+                        [{"kind": "prediction", "type": p.get("type"), "name": p.get("prediction_name") or p.get("type"),
+                          "table": p.get("table_names") or _sql_tables(p.get("sql_query")),
+                          "predicts": (p.get("parameters") or {}).get("target"),
+                          "justification": p.get("justification")} for p in predictions]
+                        + [{"kind": "anomaly", "type": a.get("type"), "name": a.get("anomaly_name") or a.get("type"),
+                            "table": a.get("table_name") or _sql_tables(a.get("sql_query")),
+                            "justification": a.get("justification")} for a in anomalies]
+                    )
+                    # tables=[] — this only ever reads the matched-existing-
+                    # check branch of match_analysis_config, which doesn't
+                    # need a real table list; skips the extra DB round trip
+                    # match_analysis_config's "suggest a new table" branch
+                    # would otherwise need.
+                    match = vn.match_analysis_config(question_en, configs, [])
+                    if match.get("matched"):
+                        kind = match["kind"]
+                        cfg_type = match["type"]
+                        full_cfg = next(
+                            (c for c in (predictions if kind == "prediction" else anomalies) if c.get("type") == cfg_type),
+                            None,
+                        )
+                        if full_cfg:
+                            return kind, full_cfg
+                if workspace_id and username:
+                    last_run = self._last_prediction_or_anomaly_run_for(workspace_id, username)
+                    if last_run:
+                        return last_run["kind"], last_run["config"]
+            except Exception as analysis_match_exc:
+                logger.warning(f"Analysis methodology matching failed: {analysis_match_exc}")
+            return None, None
+
+        self._try_match_analysis_methodology = _try_match_analysis_methodology
+
+        def _handle_query_message(question_raw, previous_sql, workspace, ctx=None, parent_question_id=None):
             """
             Core RAG/text-to-SQL pipeline: validates input, translates, routes read
             vs write (vn.classify_intent), generates SQL, caches, and logs
             billing/activity. Shared by generate_sql (GET, question/sql/workspace
-            query params) and route_message (POST, natural-language dispatch) so
-            both entry points run identical logic.
+            query params), route_message (POST, natural-language dispatch) and
+            run_chat_turn (Teams) so every entry point runs identical logic.
+
+            ctx (ChatContext) supplies identity for callers with no Flask session;
+            when None, identity comes from the session as before.
 
             parent_question_id, when the caller identifies this as a follow-up, is
             stored on the new cache entry so the FAQ/history sidebar can group a
@@ -1935,6 +2346,9 @@ class VannaFlaskAPI:
 
             Returns (body_dict, status_code).
             """
+            session_user_id = ctx.user_id if ctx else session.get('user_id')
+            session_username = ctx.username if ctx else session.get('username', None)
+            cache_scope = {"user_id": ctx.user_id, "workspace_id": ctx.workspace_id} if ctx else {}
             # ────────────────────────────────────────────────
             #  Validation
             # ────────────────────────────────────────────────
@@ -1943,6 +2357,148 @@ class VannaFlaskAPI:
 
             if not workspace:
                 return {"type": "error", "error": "No workspace provided"}, 400
+
+            # ────────────────────────────────────────────────
+            # Ensure vn is ready before touching it. vn is a lazily-
+            # initialized, process-wide global (not per-session) — found live:
+            # both this function and route_message's classifier branch could
+            # crash with AttributeError: 'NoneType' object has no attribute
+            # '...' when reached before any prior request in this process had
+            # initialized vn for this workspace (e.g. a fresh process, or a
+            # client that never calls connect-vanna first). _handle_schedule_
+            # message/_handle_prediction_message already self-protect this
+            # way; this was the one shared entry point missing it.
+            # ────────────────────────────────────────────────
+            # Teams/voice callers pass ctx and run on a worker thread with no
+            # Flask request — touching flask.session there raises "Working
+            # outside of request context". Take their workspace from ctx.
+            workspace_id_for_init = ctx.workspace_id if ctx else flask.session.get("workspace_id")
+            if not workspace_id_for_init and not ctx:
+                # No workspace bound in this session yet (fresh login, or a client
+                # that never called /connect-vanna). This used to fall through to a
+                # process-global default — whichever workspace anyone connected last
+                # — and, with none, to an unconfigured instance that crashed with
+                # "'_OpenAIVanna' object has no attribute 'client'". Resolve the
+                # workspace this request names instead, and remember it.
+                workspace_id_for_init = self._workspace_id_from_ref(workspace)
+                if not workspace_id_for_init:
+                    return {"type": "error", "error": f"Workspace '{workspace}' was not found."}, 404
+                user_for_check = self.auth.get_user(flask.request) or {"role": session.get("role")}
+                if not self._user_can_access_workspace(user_for_check, workspace_id_for_init):
+                    return {"type": "error", "error": "You don't have access to this workspace"}, 403
+                session["workspace_id"] = workspace_id_for_init
+            if workspace_id_for_init:
+                initialized, init_err = self.ensure_vanna_initialized(workspace_id_for_init)
+                if not initialized:
+                    return {"type": "error", "error": init_err}, 400
+
+            # The trained dataset lives in a collection named after the workspace
+            # NAME. Some callers (the prediction pipeline's fallback) pass the
+            # workspace ID instead — that searched an empty collection, so every
+            # question there missed the dataset and ended in a clarifying question.
+            #
+            # get_workspace_metadata itself only looks up by ID (workspace_
+            # collection.get(ids=[...])) — but the real chat UI's generate_sql
+            # call passes the workspace NAME (see its "workspace: workspaceName"
+            # fetch param), not the ID. Found live: that silently returned
+            # ws_meta=None, which meant performance-config matching below always
+            # saw an empty config list and never even attempted a match — a
+            # question like "how is warehouse performing" fell all the way
+            # through to generate_sql's own clarification loop instead, with no
+            # error or warning anywhere to point at why. _workspace_id_from_ref
+            # already resolves an id/name/display_name ambiguously for other
+            # callers in this file; reuse it here so ws_meta resolves correctly
+            # regardless of which form the caller passed.
+            ws_meta = get_workspace_metadata(self, self._workspace_id_from_ref(workspace) or workspace)
+            if ws_meta and ws_meta.get("name"):
+                workspace = ws_meta["name"]
+
+            # ────────────────────────────────────────────────
+            # Resume a pending query clarification, if one is open for this
+            # user — treat this message as the answer, merged with the
+            # original question that generate_sql couldn't ground, rather than
+            # a brand-new query on its own (a bare "the pick table" reply
+            # wouldn't make sense as a standalone question). Same pattern as
+            # _pending_schedule_clarifications: keyed by workspace_id+username,
+            # popped (not just peeked) here since this is the actual consumer.
+            # ────────────────────────────────────────────────
+            clarification_workspace_id = workspace_id_for_init
+            clarification_username = session_username  # ctx-aware, see top of function
+            query_clarification_attempts = 0
+            if clarification_workspace_id and clarification_username:
+                clarification_key = f"{clarification_workspace_id}:{clarification_username}"
+                with _pending_query_clarifications_lock:
+                    pending_clarification = _pending_query_clarifications.pop(clarification_key, None)
+
+                # Defense in depth, mirrors the discard added to
+                # _handle_schedule_message/_handle_prediction_message: reaching
+                # this function means the message is being treated as a query,
+                # so any stale schedule/prediction clarification for this same
+                # user shouldn't be left to silently merge into a later message
+                # if some future caller ever reaches _handle_query_message
+                # without going through the usual pending-state-aware routing
+                # in route_message/classify_message_route_endpoint.
+                with _pending_schedule_clarifications_lock:
+                    _pending_schedule_clarifications.pop(clarification_key, None)
+                with _pending_analysis_confirmations_lock:
+                    _pending_analysis_confirmations.pop(clarification_key, None)
+
+                # A complete trained question isn't an answer to the clarifying
+                # question — it's a new question. Merging it produced things like
+                # "what does that means?? Which items are most likely to run out…",
+                # which then matched nothing in the dataset.
+                # (Short replies like "Warehouse ATH1" are still answers to the
+                # clarifying question, even if some trained entry is that bare text.)
+                reply = clean_question(question_raw)
+                if pending_clarification and len(reply.split()) >= 4 and _is_trained_question(reply, workspace):
+                    pending_clarification = None
+                # The trained-question check above only catches one narrow case
+                # of "this is actually a new question" — any other unrelated
+                # fresh question (not verbatim-trained) used to get silently
+                # glued onto the stale clarification's text instead. Ask the
+                # same question an LLM can answer cheaply: does this reply read
+                # like an answer to the specific clarifying question that was
+                # asked, or like its own new question? Only checked when the
+                # narrow check above didn't already decide, and defaults to
+                # "treat as an answer" (False) on any doubt — this can only
+                # discard a stale clarification, never create new merge risk.
+                if pending_clarification:
+                    try:
+                        if vn.is_fresh_topic_change(reply, pending_clarification.get("clarifying_question") or ""):
+                            logger.info(
+                                f"Discarding stale query clarification — '{reply}' reads as a new "
+                                f"question, not an answer to '{pending_clarification.get('clarifying_question')}'"
+                            )
+                            pending_clarification = None
+                    except Exception as topic_exc:
+                        logger.warning(f"is_fresh_topic_change check failed: {topic_exc}")
+
+                if pending_clarification and time.time() - pending_clarification.get("created_at", 0) <= _PENDING_QUERY_CLARIFICATION_TTL_SECONDS:
+                    question_raw = f"{pending_clarification['raw_text']} {question_raw}".strip()
+                    query_clarification_attempts = pending_clarification.get("attempts", 0)
+
+                    # The original question was classified "query" before it
+                    # ever reached here, but the clarifying reply can reveal
+                    # the true intent was actually scheduling/prediction all
+                    # along — e.g. "...and notify me whenever that happens"
+                    # only shows up in the answer, not the original question.
+                    # Re-check the MERGED text rather than blindly trusting
+                    # the earlier classification; if it's changed, hand off
+                    # to the right pipeline instead of forcing an unrelated
+                    # data question through this one.
+                    try:
+                        reclassified_route = vn.classify_message_route(question_raw)
+                    except Exception as reclassify_exc:
+                        logger.warning(f"Query clarification re-classification failed: {reclassify_exc}")
+                        reclassified_route = "query"
+                    if reclassified_route == "schedule":
+                        return self._handle_schedule_message(
+                            clarification_workspace_id, question_raw, None, clarification_username, previous_sql
+                        )
+                    if reclassified_route == "prediction":
+                        return self._handle_prediction_message(
+                            clarification_workspace_id, question_raw, clarification_username
+                        )
 
             # Clean + prepare
             question_clean = clean_question(question_raw)
@@ -1982,18 +2538,122 @@ class VannaFlaskAPI:
             # and returned for confirmation — never auto-executed, unlike reads.
             # ────────────────────────────────────────────────
             if vn.classify_intent(question_en) == "write":
-                workspace_id_for_write = flask.session.get("workspace_id")
+                workspace_id_for_write = ctx.workspace_id if ctx else flask.session.get("workspace_id")
                 if not workspace_id_for_write:
                     return {
                         "type": "error",
                         "error": "Workspace is not fully connected (no workspace_id in session) — cannot stage a write.",
                     }, 400
-                body, status = _stage_pending_write(vn, workspace, workspace_id_for_write, question_en, original_question)
+                body, status = self._stage_pending_write(vn, workspace, workspace_id_for_write, question_en, original_question)
                 if status == 200 and body.get("type") == "write_confirmation":
                     body["detected_language"] = detected_language
                     body["was_translated"] = was_translated
                     body["translated_question"] = question_en if was_translated else None
                 return body, status
+
+            # ────────────────────────────────────────────────
+            # Methodology short-circuit: "how is this calculated?" / "what's
+            # the formula?" / "how does this work?" following a performance,
+            # prediction, or anomaly answer is a question ABOUT the check,
+            # not a new data question — generate_sql has no table/column to
+            # ground a question like that in and either hallucinates SQL or
+            # asks a narrowing clarifying question forever. Checked before
+            # the performance-check short-circuit below (a methodology
+            # question about "revenue month over month" would otherwise
+            # itself get matched as if it were asking for that metric's
+            # current value). Prefers a check the question itself names
+            # (e.g. "how is revenue month over month calculated?" always
+            # explains THAT metric, even right after a different one was
+            # just answered); only falls back to whichever check answered
+            # this user's last question when the question itself names
+            # nothing — a bare "how is it calculated?"/"what's the formula
+            # for this?" always means "that answer I'm looking at". Tries
+            # performance configs first, then prediction/anomaly — a
+            # methodology question has no way to say which KIND of check it
+            # means, so whichever actually matches (by name, or by being the
+            # last thing answered) wins; it's extremely unlikely for both to
+            # match the same question at once.
+            # ────────────────────────────────────────────────
+            try:
+                if _METHODOLOGY_CUE.search(question_en):
+                    methodology_configs = None
+                    enabled_performance = [
+                        p for p in json.loads((ws_meta or {}).get("performance", "[]"))
+                        if p.get("enabled", True)
+                    ]
+                    if enabled_performance:
+                        perf_configs = [
+                            {"type": p.get("type"), "name": p.get("name") or p.get("type"), "description": p.get("description")}
+                            for p in enabled_performance
+                        ]
+                        perf_match = vn.match_performance_config(question_en, perf_configs)
+                        matched_types = perf_match.get("types") or []
+                        methodology_configs = [p for p in enabled_performance if p.get("type") in matched_types] or None
+                    if not methodology_configs and clarification_workspace_id and clarification_username:
+                        last_perf_run = self._last_performance_run_for(
+                            clarification_workspace_id, clarification_username
+                        )
+                        if last_perf_run:
+                            methodology_configs = last_perf_run.get("config")
+                    if methodology_configs:
+                        explanation = vn.generate_performance_methodology_explanation(question_en, methodology_configs)
+                        if explanation:
+                            return {
+                                "type": "text",
+                                "text": explanation,
+                                "detected_language": detected_language,
+                                "was_translated": was_translated,
+                            }, 200
+
+                    analysis_kind, analysis_config = _try_match_analysis_methodology(
+                        question_en, ws_meta, clarification_workspace_id, clarification_username
+                    )
+                    if analysis_config:
+                        explanation = vn.generate_analysis_methodology_explanation(
+                            question_en, analysis_kind, analysis_config
+                        )
+                        if explanation:
+                            return {
+                                "type": "text",
+                                "text": explanation,
+                                "detected_language": detected_language,
+                                "was_translated": was_translated,
+                            }, 200
+            except Exception as methodology_exc:
+                logger.warning(f"Methodology explanation failed: {methodology_exc}")
+
+            # ────────────────────────────────────────────────
+            # Performance-check short-circuit: before deciding follow-up vs.
+            # fresh SQL generation, see if one of this workspace's admin-
+            # curated performance configs (validated SQL for a specific
+            # operational metric — e.g. warehouse storage occupancy, order
+            # cycle time, order execution time) already answers this question
+            # outright. Checked unconditionally on the new message text
+            # (question_en), REGARDLESS of whether a previous_sql/follow-up
+            # context is attached — a self-contained, answerable question
+            # like "how is the warehouse performing?" means exactly the same
+            # thing whether it's the first message of a chat or the tenth.
+            # Originally this only ran in the fresh-question branch, on the
+            # theory that a wrong match mid-conversation would be worse than
+            # no match — but in practice, most real chat messages DO carry a
+            # previous_sql (any ongoing thread), so performance questions
+            # almost never reached this check at all, and instead fell into
+            # generate_sql's follow-up interpretation, which has no concept
+            # of these configs and just kept asking narrowing clarifying
+            # questions indefinitely. match_performance_config is still an
+            # LLM judgment call with "no match" as its safe default, so this
+            # can only skip SQL generation — never block or alter it.
+            # ────────────────────────────────────────────────
+            perf_summary_text = _try_match_performance_config(
+                question_en, workspace, ws_meta, clarification_workspace_id, clarification_username
+            )
+            if perf_summary_text is not None:
+                return {
+                    "type": "text",
+                    "text": perf_summary_text,
+                    "detected_language": detected_language,
+                    "was_translated": was_translated,
+                }, 200
 
             # ────────────────────────────────────────────────
             # Decide ID + call generate_sql
@@ -2036,19 +2696,19 @@ class VannaFlaskAPI:
             # ────────────────────────────────────────────────
             # Cache – store both original and translated question
             # ────────────────────────────────────────────────
-            self.cache.set(id=cache_id, field="question",           value=original_question)
-            self.cache.set(id=cache_id, field="translated_question", value=question_en)
-            self.cache.set(id=cache_id, field="sql",                value=sql)
-            self.cache.set(id=cache_id, field="workspace",          value=workspace)
-            self.cache.set(id=cache_id, field="detected_language",  value=detected_language)
-            self.cache.set(id=cache_id, field="was_translated",     value=was_translated)
-            self.cache.set(id=cache_id, field="parent_question_id", value=parent_question_id)
+            self.cache.set(id=cache_id, field="question",           value=original_question, **cache_scope)
+            self.cache.set(id=cache_id, field="translated_question", value=question_en, **cache_scope)
+            self.cache.set(id=cache_id, field="sql",                value=sql, **cache_scope)
+            self.cache.set(id=cache_id, field="workspace",          value=workspace, **cache_scope)
+            self.cache.set(id=cache_id, field="detected_language",  value=detected_language, **cache_scope)
+            self.cache.set(id=cache_id, field="was_translated",     value=was_translated, **cache_scope)
+            self.cache.set(id=cache_id, field="parent_question_id", value=parent_question_id, **cache_scope)
 
             # Token-related fields (for UI/debugging/billing)
-            self.cache.set(id=cache_id, field="token_total",   value=total_tokens)
-            self.cache.set(id=cache_id, field="token_input",   value=input_tokens)
-            self.cache.set(id=cache_id, field="token_output",  value=output_tokens)
-            self.cache.set(id=cache_id, field="model_name",    value=model_name)
+            self.cache.set(id=cache_id, field="token_total",   value=total_tokens, **cache_scope)
+            self.cache.set(id=cache_id, field="token_input",   value=input_tokens, **cache_scope)
+            self.cache.set(id=cache_id, field="token_output",  value=output_tokens, **cache_scope)
+            self.cache.set(id=cache_id, field="model_name",    value=model_name, **cache_scope)
 
             logger.info(
                 f"Tokens | id:{cache_id} | total={total_tokens} in={input_tokens} out={output_tokens} model={model_name}",
@@ -2067,7 +2727,7 @@ class VannaFlaskAPI:
                     output_tokens=output_tokens,
                     model_name=model_name,
                     cached_input_tokens=0,          # can be improved later
-                    user_id=session.get('user_id')
+                    user_id=session_user_id
                 )
             except Exception as e:
                 logger.error(f"Billing calculation failed: {e}")
@@ -2078,8 +2738,8 @@ class VannaFlaskAPI:
                     question=original_question,
                     sql_query=sql,
                     workspace_name=workspace,
-                    user_role=session.get('username', None),
-                    user_id=session.get('user_id', None),
+                    user_role=session_username,
+                    user_id=session_user_id,
                     token_count=total_tokens,
                     input_tokens=input_tokens,
                     output_tokens=output_tokens,
@@ -2087,7 +2747,8 @@ class VannaFlaskAPI:
                     cached_input_tokens=0,
                     cost_usd=cost_usd,
                     detected_language=detected_language,
-                    parent_question_id=parent_question_id
+                    workspace_id=ctx.workspace_id if ctx else None,
+                    parent_question_id=parent_question_id,
                 )
             except Exception as e:
                 logger.error(f"User activity logging failed: {e}")
@@ -2099,6 +2760,81 @@ class VannaFlaskAPI:
             sql_text = sql[0] if isinstance(sql, tuple) else sql
 
             response_type = "sql" if vn.is_sql_valid(sql=sql_text) else "text"
+
+            # A real answer resets the clarification streak — the user got
+            # unstuck, so the next dead-end (if any) starts counting fresh
+            # rather than inheriting frustration from an unrelated earlier
+            # exchange.
+            if response_type == "sql" and clarification_workspace_id and clarification_username:
+                _clarification_streak_reset(f"{clarification_workspace_id}:{clarification_username}")
+
+            # generate_sql's own anti-hallucination guard fires when no trained
+            # example/documentation covers this question's shape — sometimes as
+            # the exact literal "Insufficient data for query.", but observed
+            # live to also come back as a free-form explanation ("the database
+            # tables listed do not appear to contain X data..."), so match on
+            # "any non-SQL text response" rather than that one exact phrase.
+            # The one explicit exclusion is the DDL/DML write-refusal message —
+            # a write request slipping past classify_intent isn't a data-
+            # availability problem a clarifying question could fix. Previously
+            # every other case just dead-ended the user with the raw text. Try
+            # turning it into a clarifying question instead (same idea as the
+            # scheduling clarification flow), capped at a few attempts so a
+            # genuinely untrained area of the schema doesn't loop forever.
+            _write_refusal_text = "cannot perform ddl or dml functions"
+            if response_type == "text" and (sql_text or "").strip().rstrip(".").lower() != _write_refusal_text:
+                streak_key = (
+                    f"{clarification_workspace_id}:{clarification_username}"
+                    if clarification_workspace_id and clarification_username else None
+                )
+                # The per-thread attempt counter (query_clarification_attempts)
+                # only increments when a reply is judged to MERGE with the
+                # prior clarification — is_fresh_topic_change can misjudge a
+                # loosely-phrased real answer as "a new question", which
+                # resets that counter to 0 and would otherwise let the cap be
+                # bypassed one misjudged reset at a time. The streak count
+                # below is the backstop: it counts every clarifying question
+                # asked in a row regardless of how each reply was classified,
+                # and is only cleared by an actual answer (see the "sql"
+                # reset above) — so the conversation can't loop forever even
+                # if the merge/fresh judgment keeps getting it wrong.
+                streak_count = _clarification_streak_count(streak_key) if streak_key else 0
+                if (
+                    clarification_workspace_id and clarification_username
+                    and query_clarification_attempts < _MAX_QUERY_CLARIFICATION_ATTEMPTS
+                    and streak_count < _MAX_CLARIFICATION_STREAK
+                ):
+                    try:
+                        tables_df = vn.run_sql("SELECT TABLE_NAME FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_TYPE='BASE TABLE'")
+                        real_tables = tables_df["TABLE_NAME"].tolist() if tables_df is not None and not tables_df.empty else []
+                    except Exception as table_exc:
+                        logger.warning(f"Could not list tables for query clarification: {table_exc}")
+                        real_tables = []
+                    suggestion = vn.suggest_query_clarification(question_en, real_tables)
+                    if suggestion.get("ask_user") and suggestion.get("clarifying_question"):
+                        with _pending_query_clarifications_lock:
+                            _pending_query_clarifications[streak_key] = {
+                                "raw_text": original_question,
+                                "created_at": time.time(),
+                                "attempts": query_clarification_attempts + 1,
+                                "clarifying_question": suggestion["clarifying_question"],
+                            }
+                        _clarification_streak_increment(streak_key)
+                        sql_text = suggestion["clarifying_question"]
+                    else:
+                        sql_text = suggestion.get("reason") or sql_text
+                elif clarification_workspace_id and clarification_username and (
+                    query_clarification_attempts >= _MAX_QUERY_CLARIFICATION_ATTEMPTS
+                    or streak_count >= _MAX_CLARIFICATION_STREAK
+                ):
+                    # Already asked enough times without landing on something
+                    # answerable — stop looping and say so plainly instead of
+                    # surfacing generate_sql's raw (sometimes blunt, sometimes
+                    # LLM-variable) refusal text.
+                    sql_text = (
+                        "I still don't have enough to answer that — it may need a trained "
+                        "example added, or try rephrasing the whole question in one message."
+                    )
 
             return {
                 "type":               response_type,
@@ -2126,8 +2862,12 @@ class VannaFlaskAPI:
             previous_sql = flask.request.args.get("sql")
             workspace = flask.request.args.get("workspace")
             parent_question_id = flask.request.args.get("parent_question_id")
-            body, status = _handle_query_message(question_raw, previous_sql, workspace, parent_question_id)
+            body, status = _handle_query_message(question_raw, previous_sql, workspace, parent_question_id=parent_question_id)
             return jsonify(body), status
+
+        # Published so routes defined in VannaFlaskApp.__init__ (route_message,
+        # run_chat_turn) can reach it — a nested function here isn't in their scope.
+        self._handle_query_message = _handle_query_message
 
         @self.flask_app.route("/api/get_user/<username>", methods=["GET"])
         @self.requires_auth
@@ -2135,9 +2875,12 @@ class VannaFlaskAPI:
             """
             Get the user configuration including enabled agent scenarios.
             """
-            # Security check: ensure requesting user matches username or is admin
+            # Security check: ensure requesting user matches username or is admin.
+            # Compare against ADMIN_ROLES — a bare != "admin" also locked out
+            # superadmins, who outrank admins everywhere else in the app.
             current_user = user # from requires_auth
-            if current_user.get("username") != username and current_user.get("role") != "admin":
+            if (current_user.get("username") != username
+                    and str(current_user.get("role") or "").lower() not in ADMIN_ROLES):
                  return jsonify({"type": "error", "error": "Unauthorized access to user config"}), 403
 
             agent_config = []
@@ -2208,22 +2951,15 @@ class VannaFlaskAPI:
                      except Exception as e:
                         logger.error(f"run_agent_query: Error resolving workspace name: {e}")
 
-            # Auto-connect logic
-            if not hasattr(self, 'vn') or self.vn is None:
-                logger.info("run_agent_query: self.vn is None. Attempting auto-initialization...")
-                
-                # internal helper to get workspace_id from session/args
-                user_id = flask.session.get('user_id')
-                
-                if target_workspace_id:
-                    logger.info(f"run_agent_query: initializing with workspace_id {target_workspace_id}")
-                    success, err = self.ensure_vanna_initialized(target_workspace_id)
-                    if not success:
-                        logger.error(f"run_agent_query: Auto-init failed: {err}")
-                        return jsonify({"type": "error", "error": f"Auto-init failed: {err}"}), 500
-                else:
-                    logger.error("run_agent_query: Could not determine workspace_id for auto-init")
-                    return jsonify({"type": "error", "error": "Vanna not initialized and no workspace_id found"}), 500
+            # Bind this request to the target workspace's instance.
+            if target_workspace_id:
+                success, err = self.ensure_vanna_initialized(target_workspace_id)
+                if not success:
+                    logger.error(f"run_agent_query: Auto-init failed: {err}")
+                    return jsonify({"type": "error", "error": f"Auto-init failed: {err}"}), 500
+            elif not getattr(vn, "run_sql_is_set", False):
+                logger.error("run_agent_query: Could not determine workspace_id for auto-init")
+                return jsonify({"type": "error", "error": "Vanna not initialized and no workspace_id found"}), 500
 
             # Map frontend keys to backend keys
             MAPPING = {
@@ -2286,11 +3022,6 @@ class VannaFlaskAPI:
 
             try:
                 # Execute SQL
-                # Use self.vn instance
-                if not hasattr(self, 'vn') or self.vn is None:
-                     logger.error(f"run_agent_query: self.vn is None. Vanna not initialized/connected.")
-                     return jsonify({"type": "error", "error": "Vanna not initialized (self.vn is None)"}), 500
-                     
                 df = self.vn.run_sql(sql=sql)
                 
                 # Cache the dataframe for generate_insight
@@ -2527,13 +3258,11 @@ class VannaFlaskAPI:
                                     break
                      except Exception: pass
 
-            # --- Auto-connect Logic (Reused) ---
-            if not hasattr(self, 'vn') or self.vn is None:
-                user_id = flask.session.get('user_id')
-                if target_workspace_id:
-                    self.ensure_vanna_initialized(target_workspace_id)
-            
-            if not hasattr(self, 'vn') or self.vn is None:
+            # --- Bind this request to the target workspace's instance ---
+            if target_workspace_id:
+                self.ensure_vanna_initialized(target_workspace_id)
+
+            if not getattr(vn, "run_sql_is_set", False):
                  return jsonify({"type": "error", "error": "Vanna not initialized"}), 500
             # -----------------------------------
 
@@ -3725,19 +4454,29 @@ class VannaFlaskAPI:
             chart_instructions = flask.request.args.get('chart_instructions')
 
             try:
-                # If chart_instructions is not set then attempt to retrieve the code from the cache
+                # If chart_instructions is not set then attempt to retrieve the spec from the cache.
+                # The cached value here used to be raw Python ("plotly code") executed via exec() —
+                # now it's a JSON-encoded chart spec (see generate_chart_spec/render_chart_figure).
+                # A stale/legacy cache entry (or one written by the saved-"function" flow a few
+                # lines up, which still populates this same field) that isn't valid JSON just
+                # yields spec=None, which render_chart_figure already treats as "no spec" and
+                # falls back to its dtype-based heuristic — never passed anywhere it could be exec'd.
                 if chart_instructions is None or len(chart_instructions) == 0:
-                    code = self.cache.get(id=id, field="plotly_code")
+                    cached_spec = self.cache.get(id=id, field="plotly_code")
+                    try:
+                        spec = json.loads(cached_spec) if cached_spec else None
+                    except (TypeError, ValueError):
+                        spec = None
                 else:
                     question = f"{question}. When generating the chart, use these special instructions: {chart_instructions}"
-                    code = vn.generate_plotly_code(
+                    spec = vn.generate_chart_spec(
                         question=question,
                         sql=sql,
                         df_metadata=f"Running df.dtypes gives:\n {df.dtypes}",
                     )
-                    self.cache.set(id=id, field="plotly_code", value=code)
+                    self.cache.set(id=id, field="plotly_code", value=json.dumps(spec))
 
-                fig = vn.get_plotly_figure(plotly_code=code, df=df, dark_mode=False)
+                fig = vn.render_chart_figure(spec=spec, df=df, dark_mode=False)
                 fig_json = fig.to_json()
 
                 self.cache.set(id=id, field="fig_json", value=fig_json)
@@ -3821,6 +4560,7 @@ class VannaFlaskAPI:
             
 
         @self.flask_app.route("/api/v0/remove_training_data", methods=["POST"])
+        @self.requires_role(list(ADMIN_ROLES))  # on the route too, not only in access_control's list
         @self.requires_auth
         def remove_training_data(user: any):
             """
@@ -3841,13 +4581,24 @@ class VannaFlaskAPI:
                     success:
                       type: boolean
             """
-            # Get id from the JSON body
-            id = flask.request.json.get("id")
+            body = flask.request.get_json(silent=True) or {}
+            id = body.get("id")
 
             if id is None:
                 return jsonify({"type": "error", "error": "No id provided"})
 
-            if vn.remove_training_data(id=id):
+            # SQL/doc entries live in the per-workspace collection, so without a
+            # workspace the vector store can only fail them (-ddl is global).
+            # Take it from the body, else the caller's session workspace (stored
+            # as an id; the collection is keyed by the workspace's name).
+            workspace = body.get("workspace") or body.get("workspace_name")
+            if not workspace and session.get("workspace_id"):
+                meta = get_workspace_metadata(self, session["workspace_id"]) or {}
+                workspace = meta.get("name")
+            if workspace and not self._user_can_access_workspace(user, workspace):
+                return jsonify({"type": "error", "error": "You don't have access to this workspace"}), 403
+
+            if vn.remove_training_data(id=id, workspace=workspace):
                 return jsonify({"success": True})
             else:
                 return jsonify(
@@ -4305,29 +5056,7 @@ class VannaFlaskAPI:
             except Exception:
                 normalized_model = model_name or "unknown"
 
-            # -----------------------------
-            # Pricing table (same as billing)
-            # -----------------------------
-            MODEL_PRICING = {
-                "gpt-4.1": {"input": 5.00, "output": 15.00},
-                "gpt-4.1-mini": {"input": 0.60, "output": 2.40},
-                "gpt-4.1-preview": {"input": 3.00, "output": 10.00},
-                "o3": {"input": 1.00, "output": 3.00},
-                "o1": {"input": 6.00, "output": 18.00},
-                "o1-preview": {"input": 6.00, "output": 18.00},
-                "gpt-5.1": {"input": 1.25, "output": 10.00},
-            }
-
-            price_in = MODEL_PRICING.get(normalized_model, {}).get("input", 0.0)
-            price_out = MODEL_PRICING.get(normalized_model, {}).get("output", 0.0)
-
-            billable_input = max(0, input_tokens - cached_input_tokens)
-
-            cost_usd = round(
-                (billable_input / 1_000_000) * price_in +
-                (output_tokens / 1_000_000) * price_out,
-                8,
-            )
+            cost_usd = compute_cost_usd(normalized_model, input_tokens, output_tokens, cached_input_tokens)
 
             # -----------------------------
             # Metadata keys
@@ -4766,6 +5495,10 @@ class VannaFlaskAPI:
             if not workspace_id or not question_id:
                 return jsonify({"status": "error", "error": "workspace_id and question_id are required"}), 400
 
+            question_id = _canonical_question_id(question_id)
+            if question_id is None:
+                return jsonify({"status": "error", "error": "question_id is not a valid id"}), 400
+
             if rating is not None:
                 try:
                     rating = int(rating)
@@ -4823,6 +5556,10 @@ class VannaFlaskAPI:
             sql          = request.args.get('sql')
 
             if not workspace_id or not question_id:
+                return jsonify({"exists": False})
+
+            question_id = _canonical_question_id(question_id)
+            if question_id is None:
                 return jsonify({"exists": False})
 
             try:
@@ -5048,8 +5785,8 @@ class VannaFlaskApp(VannaFlaskAPI):
     def __init__(
         self,
         #vn: VannaBase,  # Allow `vn` to be None
-        cache: Cache = MemoryCache(),
-        auth: AuthInterface = BasicAuth(),
+        cache: Cache = None,  # MemoryCache() — built below, see VannaFlaskAPI.__init__
+        auth: AuthInterface = None,  # BasicAuth()
         debug=False,
         allow_llm_to_see_data=True,
         logo="http://tychons.com/wp-content/uploads/2025/09/warehouse_logo-2.png",
@@ -5105,16 +5842,71 @@ class VannaFlaskApp(VannaFlaskAPI):
         Returns:
             None
         """
+        cache = cache if cache is not None else MemoryCache()
+        auth = auth if auth is not None else BasicAuth()
         super().__init__(cache, auth, debug, allow_llm_to_see_data, chart, **kwargs)
          
 
-        self.flask_app.secret_key = os.environ.get("FLASK_SECRET_KEY", os.urandom(24))
+        # A fixed key is required: a random per-process key silently logs every
+        # user out on each restart and breaks sessions across a Teams tab reload.
+        secret_key = os.environ.get("FLASK_SECRET_KEY", "")
+        if not secret_key:
+            # Name the exact file: this aborts startup, so the operator sees no
+            # login page at all and has nothing else to go on.
+            _env_file = os.path.join(
+                os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), ".env"
+            )
+            raise RuntimeError(
+                f"FLASK_SECRET_KEY is not set — the server cannot start. Add a long random "
+                f"value to {_env_file}, e.g.\n"
+                "    python -c \"import secrets; print(secrets.token_hex(32))\""
+            )
+        self.flask_app.secret_key = secret_key
+
+        # Inside a Teams tab the app runs in a third-party iframe: the session
+        # cookie must be SameSite=None; Secure (HTTPS only) to be sent at all,
+        # and Partitioned so browsers that block third-party cookies keep it.
+        #
+        # But a Secure cookie is dropped outright over plain HTTP, and this was
+        # keyed only off TEAMS_TAB_ENABLED — so turning the tab on silently broke
+        # login for anyone reaching the app at http://127.0.0.1:<port>: the POST
+        # validated, the cookie never persisted, and the next request bounced
+        # straight back to the login page with no error shown. SESSION_COOKIE_SECURE
+        # now decides it explicitly, defaulting to the tab setting so HTTPS
+        # deployments are unchanged.
+        _cookie_config, _tab_without_secure, _secure_unconfigured = session_cookie_settings(os.environ)
+        self.flask_app.config.update(_cookie_config)
+        if _tab_without_secure:
+            # Both can't be satisfied at once: the tab needs SameSite=None;Secure,
+            # plain HTTP can't carry it. Say so rather than leaving the tab to fail
+            # later with an unexplained empty session.
+            logger.warning(
+                "TEAMS_TAB_ENABLED is on but SESSION_COOKIE_SECURE is disabled — password "
+                "login works over plain HTTP, but the Teams tab will not hold a session. "
+                "Drop SESSION_COOKIE_SECURE from .env (and use the HTTPS URL) before using the tab.",
+                extra={"admin": True},
+            )
+        if _secure_unconfigured:
+            # Fine for local/plain-HTTP testing (this is the default so that keeps
+            # working with zero config) but a real deployment reachable over the
+            # network should opt in explicitly — nudge rather than silently leave
+            # the session cookie sniffable over an unencrypted connection.
+            logger.warning(
+                "Session cookie is not marked Secure (SESSION_COOKIE_SECURE is not set "
+                "in .env). Set SESSION_COOKIE_SECURE=true for any deployment reachable "
+                "over the network, not just localhost.",
+                extra={"admin": True},
+            )
+
+        install_access_control(self.flask_app)
+
         # Initialize ChromaDB client and collections
         self.client = chromadb.PersistentClient(path="admin_store")
         self.config_collection = self.client.get_or_create_collection(name="LLM_config")
         self.db_collection = self.client.get_or_create_collection(name="DB_connections")
         self.workspace_collection = self.client.get_or_create_collection(name="Workspaces") # New collection for workspaces
-        self.users_collection = self.client.get_or_create_collection(name="users") 
+        self.users_collection = self.client.get_or_create_collection(name="users")
+        _vanna_registry.configure(loader=self._build_vanna_for_workspace)
         openai_ef = embedding_functions.OpenAIEmbeddingFunction(api_key=os.getenv("OPENAI_API_KEY"),model_name="text-embedding-3-large")
         self.sop_collection = self.client.get_or_create_collection(name="SOP_documents", embedding_function=openai_ef) #sop agents
 
@@ -6007,6 +6799,42 @@ class VannaFlaskApp(VannaFlaskAPI):
                 "Tychons WI"
             )
 
+        # Same palette/table-based layout as the Warehouse Performance Agent's
+        # report emails (engine/warehouse_perf/exec_report.py) so every email
+        # this app sends looks like it came from one product, not several.
+        _SCHED_INK, _SCHED_INK_2, _SCHED_INK_3, _SCHED_LINE, _SCHED_BG = (
+            "#1a1a19", "#52514e", "#76756f", "#e7e6e2", "#f5f5f3"
+        )
+
+        def _scheduled_email_html(kind_label, question, status_label, status_colour, status_icon, main_html, schedule_desc, question_label="You asked"):
+            """
+            Styled HTML counterpart to _scheduled_email_body: table-based, inline
+            styles only, 640px, no scripts/external resources, so it renders
+            consistently across email clients and still reads fine if images/CSS
+            are stripped. Sent as the "html" alternative alongside the plain-text
+            body (the source of truth for Teams delivery and for clients that
+            can't render HTML) — never the only copy of the content.
+
+            `question` and `schedule_desc` are escaped here; `main_html` is
+            caller-built markup (already escaped internally) so it can include
+            paragraphs/line breaks instead of being flattened to one block of text.
+            """
+            e = html_escape_lib.escape
+            return f"""<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width"></head><body style="margin:0;padding:0;background:{_SCHED_BG}">
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:{_SCHED_BG}"><tr><td align="center" style="padding:20px 10px">
+<table role="presentation" width="640" cellpadding="0" cellspacing="0" style="width:100%;max-width:640px;background:#ffffff;border:1px solid {_SCHED_LINE};border-radius:8px;font-family:Segoe UI,Arial,sans-serif">
+<tr><td style="padding:20px 24px 8px"><div style="font-size:12px;color:{_SCHED_INK_3};text-transform:uppercase;letter-spacing:.06em">{e(kind_label)} &middot; Tychons WI</div></td></tr>
+<tr><td style="padding:6px 24px 14px"><table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="border-left:6px solid {status_colour};background:#fafaf8;border-radius:4px"><tr><td style="padding:12px 16px">
+<div style="font-size:13px;font-weight:700;color:{_SCHED_INK}">{status_icon} {e(status_label)}</div></td></tr></table></td></tr>
+<tr><td style="padding:0 24px 6px"><div style="font-size:12px;font-weight:700;color:{_SCHED_INK_3};text-transform:uppercase;letter-spacing:.04em">{e(question_label)}</div>
+<div style="font-size:15px;color:{_SCHED_INK};margin-top:4px;padding:10px 14px;background:#fafaf8;border:1px solid {_SCHED_LINE};border-radius:4px;font-style:italic">&ldquo;{e(question)}&rdquo;</div></td></tr>
+<tr><td style="padding:14px 24px 0;font-size:14px;color:{_SCHED_INK};line-height:1.55">{main_html}</td></tr>
+<tr><td style="padding:20px 24px 22px"><div style="border-top:1px solid {_SCHED_LINE};padding-top:12px;font-size:12px;color:{_SCHED_INK_3};line-height:1.5">
+&#9432; This report was generated automatically by an AI-powered reporting agent — please verify any figures before acting on them.<br>
+Runs {e(schedule_desc)}.</div></td></tr>
+<tr><td style="padding:0 24px 22px;font-size:13px;color:{_SCHED_INK_2}">Regards,<br>Tychons WI</td></tr>
+</table></td></tr></table></body></html>"""
+
         def _scheduled_email_filename(schedule_id):
             # Date/time leads so files sort and scan chronologically in an inbox or
             # download folder; schedule_id stays as a suffix for traceability back
@@ -6039,6 +6867,22 @@ class VannaFlaskApp(VannaFlaskAPI):
                 metadatas=[metadata],
                 documents=[f"Workspace: {metadata.get('name', workspace_id)}"],
             )
+
+        def _deliver_to_teams(record, text, rows=None):
+            """Push a scheduled agent's result into the Teams conversation it was
+            created from. No chat-inbox fallback on failure — see the "unassigned"
+            handling in _deliver/_deliver_condition_matches/_fail for why that
+            silent-drop mechanism was removed; a failed Teams send is just logged,
+            same as an unassigned agent's result."""
+            sender = getattr(self, "teams_proactive_sender", None)
+            if sender is None:
+                logger.warning(f"Scheduled question {record.get('schedule_id')}: Teams delivery unavailable (bot not running).")
+                return
+            try:
+                if not sender(record["teams_aad_id"], text, rows):
+                    logger.warning(f"Scheduled question {record.get('schedule_id')}: Teams delivery failed.")
+            except Exception as teams_exc:
+                logger.exception(f"Scheduled question {record.get('schedule_id')}: Teams delivery failed: {teams_exc}")
 
         def _run_scheduled_question(workspace_id, schedule_id):
             # Thin locking wrapper — see _get_schedule_records_lock: holds the
@@ -6091,11 +6935,14 @@ class VannaFlaskApp(VannaFlaskAPI):
                                 [],
                                 _scheduled_email_filename(schedule_id),
                             )
+                        elif record.get("channel") == "teams" and record.get("teams_aad_id"):
+                            _deliver_to_teams(record, failure_note)
                         else:
-                            record.setdefault("chat_inbox", []).append({
-                                "text": failure_note,
-                                "created_at": time.time(),
-                            })
+                            # Unassigned — the failure is already recorded in
+                            # last_status/last_error, visible in the Scheduled
+                            # Agents admin panel. No chat-inbox fallback (see
+                            # _deliver above for why).
+                            logger.info(f"Scheduled question {schedule_id}: no recipient assigned yet — failure notice not delivered.")
                     except Exception as notify_exc:
                         logger.exception(f"Scheduled question {schedule_id} failure-notice delivery also failed: {notify_exc}")
 
@@ -6117,28 +6964,191 @@ class VannaFlaskApp(VannaFlaskAPI):
                     record["enabled"] = False
                     return _fail("rejected", "Re-classified as a write request at fire time — agent disabled.")
 
+                # "Send this" after a prediction/anomaly/performance answer:
+                # re-run the check that produced it (it has no SQL to
+                # regenerate) and mail its summary. A performance check
+                # scheduled CONDITIONALLY (analysis.condition_rule set — see
+                # _handle_schedule_message's extract_numeric_condition
+                # wiring) is handled separately below: only notify when a
+                # NEW row starts satisfying the rule, same new-match diffing
+                # a plain-SQL conditional schedule already uses (matched_keys
+                # / _condition_row_key), rather than delivering every poll.
+                analysis = record.get("analysis")
+                if (
+                    analysis and analysis.get("config")
+                    and (analysis.get("kind") or "prediction") == "performance"
+                    and analysis.get("condition_rule")
+                    and schedule.get("type") == "conditional"
+                ):
+                    configs = analysis["config"] if isinstance(analysis["config"], list) else [analysis["config"]]
+                    try:
+                        _text, result_df, _types = self._run_performance_configs_and_summarize(
+                            configs, record["question_en"], record["workspace_name"]
+                        )
+                    except Exception as run_exc:
+                        return _fail("error", f"The check failed to run: {run_exc}")
+                    if result_df is None:
+                        return _fail("error", "The check returned no data this cycle.")
+
+                    condition_rule = analysis["condition_rule"]
+                    is_safe, reason = _is_safe_eval_rule(condition_rule, list(result_df.columns))
+                    if not is_safe:
+                        return _fail("error", f"Saved condition is no longer valid: {reason}")
+                    try:
+                        mask = result_df.eval(condition_rule)
+                    except Exception as eval_exc:
+                        return _fail("error", f"Condition evaluation failed: {eval_exc}")
+
+                    matching_rows = result_df[mask].to_dict(orient="records")
+                    key_to_row = {}
+                    for row in matching_rows:
+                        key = _condition_row_key(row)
+                        if key is not None:
+                            key_to_row.setdefault(key, row)
+                    current_keys = set(key_to_row)
+                    previous_keys = set(record.get("matched_keys") or [])
+                    new_keys = current_keys - previous_keys
+                    record["matched_keys"] = sorted(current_keys)
+                    record["last_condition_state"] = bool(current_keys)
+
+                    if new_keys:
+                        new_rows = [key_to_row[k] for k in sorted(new_keys)]
+                        try:
+                            alert_summary = vn.generate_performance_summary(
+                                question=record["question_en"], df=pd.DataFrame(new_rows)
+                            )
+                        except Exception:
+                            alert_summary = None
+                        e = html_escape_lib.escape
+                        subject = f"[Alert] {record['display_question']}"
+                        base_line = (
+                            f"{len(new_rows)} new record(s) now match: {analysis.get('condition_text', condition_rule)} "
+                            f"({len(current_keys)} matching in total)."
+                        )
+                        body = f"{alert_summary}\n\n{base_line}" if alert_summary else base_line
+                        main_html = (
+                            (f"<p style=\"margin:0 0 10px\">{e(alert_summary)}</p>" if alert_summary else "")
+                            + f"<p style=\"margin:0\">{len(new_rows)} new record(s) now match "
+                              f"({len(current_keys)} matching in total) — attached as CSV.</p>"
+                        )
+                        if record.get("channel") == "email" and record.get("email_recipients"):
+                            try:
+                                _send_email(
+                                    record["email_recipients"], subject, _scheduled_email_body(body), new_rows,
+                                    _scheduled_email_filename(schedule_id),
+                                    html=_scheduled_email_html(
+                                        "Scheduled Alert", record["display_question"], "New match(es) found",
+                                        "#c98500", "&#9888;", main_html, _describe_schedule(record.get("schedule") or {}),
+                                        question_label="Watching for",
+                                    ),
+                                )
+                            except Exception as email_exc:
+                                logger.exception(f"Scheduled question {schedule_id} email delivery failed: {email_exc}")
+                        elif record.get("channel") == "teams" and record.get("teams_aad_id"):
+                            _deliver_to_teams(record, body, new_rows)
+                        else:
+                            logger.info(f"Scheduled question {schedule_id}: no recipient assigned yet — match not delivered.")
+
+                    record["last_status"] = "ok"
+                    record["last_error"] = None
+                    record["last_run_at"] = time.time()
+                    record["run_count"] = record.get("run_count", 0) + 1
+                    _save_schedule_records(workspace_id, metadata, records)
+                    return
+
+                if analysis and analysis.get("config"):
+                    reply_text, rows = self._run_analysis_check(
+                        workspace_id, analysis.get("kind") or "prediction", analysis["config"],
+                        record["question_en"], record["workspace_name"],
+                    )
+                    if reply_text is None:
+                        return _fail("error", f"The check failed to run: {rows}")
+                    e = html_escape_lib.escape
+                    body = f"You asked: {record['display_question']}\n\n{reply_text}"
+                    if rows:
+                        body += f"\n\n({len(rows)} row(s) attached as CSV.)"
+                    main_html = "".join(
+                        f"<p style=\"margin:0 0 10px\">{e(part)}</p>" for part in reply_text.split("\n\n") if part.strip()
+                    )
+                    if record.get("channel") == "email" and record.get("email_recipients"):
+                        try:
+                            _send_email(
+                                record["email_recipients"],
+                                f"[Scheduled] {record['display_question']}",
+                                _scheduled_email_body(body),
+                                rows,
+                                _scheduled_email_filename(schedule_id),
+                                html=_scheduled_email_html(
+                                    "Scheduled Report", record["display_question"],
+                                    "Answered", "#0ca30c", "&#10003;", main_html,
+                                    _describe_schedule(record.get("schedule") or {}),
+                                ),
+                            )
+                        except Exception as email_exc:
+                            logger.exception(f"Scheduled question {schedule_id} email delivery failed: {email_exc}")
+                    elif record.get("channel") == "teams" and record.get("teams_aad_id"):
+                        _deliver_to_teams(record, body, rows)
+                    else:
+                        logger.info(f"Scheduled question {schedule_id}: no recipient assigned yet — result not delivered.")
+                    record["last_status"] = "ok"
+                    record["last_error"] = None
+                    record["last_run_at"] = time.time()
+                    record["run_count"] = record.get("run_count", 0) + 1
+                    if schedule.get("type") == "date":
+                        record["enabled"] = False
+                    _save_schedule_records(workspace_id, metadata, records)
+                    return
+
                 # A follow-up question ("show me top 4") is meaningless on its own —
                 # resolve it against the SQL it was originally asked against, exactly
                 # as the interactive follow-up branch does. .get() keeps agents created
                 # before this field existed working (they simply have no context).
-                if record.get("context_sql"):
-                    sql_result = vn.generate_sql(
-                        question=record["context_sql"],        # previous context
+                total_tokens = input_tokens = output_tokens = 0
+                model_name = "unknown"
+
+                def _generate(**kwargs):
+                    # Token counts add up across retries so billing covers every call.
+                    nonlocal total_tokens, input_tokens, output_tokens, model_name
+                    sql_result = vn.generate_sql(workspace=record["workspace_name"], **kwargs)
+                    if isinstance(sql_result, tuple) and len(sql_result) == 5:
+                        sql_text, total, inp, out, model_name = sql_result
+                    elif isinstance(sql_result, tuple) and len(sql_result) == 2:
+                        sql_text, total = sql_result
+                        inp = out = 0
+                    else:
+                        sql_text, total, inp, out = sql_result, 0, 0, 0
+                    total_tokens += int(total or 0)
+                    input_tokens += int(inp or 0)
+                    output_tokens += int(out or 0)
+                    return str(sql_text)
+
+                context_sql = record.get("context_sql")
+                if context_sql:
+                    sql = _generate(
+                        question=context_sql,                  # previous context
                         followup_sql=record["question_en"],    # the follow-up itself
-                        workspace=record["workspace_name"],
                     )
                 else:
-                    sql_result = vn.generate_sql(question=record["question_en"], workspace=record["workspace_name"])
-                if isinstance(sql_result, tuple) and len(sql_result) == 5:
-                    sql, total_tokens, input_tokens, output_tokens, model_name = sql_result
-                elif isinstance(sql_result, tuple) and len(sql_result) == 2:
-                    sql, total_tokens = sql_result
-                    input_tokens = output_tokens = 0
-                    model_name = "unknown"
-                else:
-                    sql = str(sql_result)
-                    total_tokens = input_tokens = output_tokens = 0
-                    model_name = "unknown"
+                    sql = _generate(question=record["question_en"])
+
+                # "Send this by mail" right after a chat answer stores that answer's
+                # SQL as context. When the question was already self-contained, the
+                # follow-up prompt (question + whole previous SQL) skews retrieval
+                # toward unrelated tables, and the model answers "Insufficient data
+                # for query." even though the chat answered the same question fine.
+                # Retry it on its own, then fall back to the SQL the user was shown.
+                if context_sql and not vn.is_sql_valid(sql):
+                    logger.warning(
+                        f"Scheduled question {schedule_id}: follow-up generation failed "
+                        f"({sql[:120]!r}) — retrying as a standalone question."
+                    )
+                    sql = _generate(question=record["question_en"])
+                    if not vn.is_sql_valid(sql) and vn.is_sql_valid(context_sql):
+                        logger.warning(
+                            f"Scheduled question {schedule_id}: standalone generation failed too — "
+                            f"running the SQL this agent was created from."
+                        )
+                        sql = context_sql
                 no_training_example = False
                 if not vn.is_sql_valid(sql):
                     if not _is_no_training_example(sql):
@@ -6192,15 +7202,47 @@ class VannaFlaskApp(VannaFlaskAPI):
 
                 def _deliver(rows):
                     summary_text = _summarize(df)
+                    e = html_escape_lib.escape
+                    # Always lead with the actual question this agent was created to
+                    # answer — display_question, never a link/id/last-seen-message —
+                    # so every email is self-explanatory on its own, without having to
+                    # dig through chat history to know what it's even about.
+                    question_line = f"You asked: {record['display_question']}"
                     if not rows:
-                        # A genuinely executed, valid query that just found nothing —
-                        # distinct wording from the row-count fallback below so this
-                        # reads as "no data found," not as a failure of any kind.
-                        body = f"No data found for: {record['display_question']}"
+                        if no_training_example:
+                            # Not "no data" — the question itself couldn't be understood
+                            # well enough to even run (no trained example covers it). A
+                            # vague/under-specified question looks identical to "nothing
+                            # found" to an unsuspecting recipient unless this is spelled
+                            # out, and the fix (rephrase) is different from "wait for
+                            # data to show up."
+                            status_label, status_colour, status_icon = "Needs a clearer question", "#c98500", "&#9888;"
+                            explain = (
+                                "I wasn't able to understand this well enough to answer it — "
+                                "try recreating this agent with a more specific question (name "
+                                "the exact data, table, or condition you want checked)."
+                            )
+                            body = f"{question_line}\n\n{explain}"
+                            main_html = f"<p style=\"margin:0\">{e(explain)}</p>"
+                        else:
+                            # A genuinely executed, valid query that just found nothing this
+                            # run — distinct wording from the case above so a recurring
+                            # agent's "nothing to report this time" doesn't read as a failure.
+                            status_label, status_colour, status_icon = "No Records Found", "#76756f", "&#9675;"
+                            no_data_text = "No records currently match this request."
+                            body = f"{question_line}\n\n{no_data_text}"
+                            main_html = f"<p style=\"margin:0\">{no_data_text}</p>"
                     elif summary_text:
-                        body = f"{summary_text}\n\n({len(rows)} row(s) attached as CSV.)"
+                        status_label, status_colour, status_icon = "Answered", "#0ca30c", "&#10003;"
+                        body = f"{question_line}\n\n{summary_text}\n\n({len(rows)} row(s) attached as CSV.)"
+                        main_html = (
+                            f"<p style=\"margin:0 0 10px\">{e(summary_text)}</p>"
+                            f"<p style=\"margin:0;color:{_SCHED_INK_3};font-size:13px\">{len(rows)} row(s) attached as CSV.</p>"
+                        )
                     else:
-                        body = f"{len(rows)} row(s) for: {record['display_question']}"
+                        status_label, status_colour, status_icon = "Answered", "#0ca30c", "&#10003;"
+                        body = f"{question_line}\n\n{len(rows)} row(s) found — attached as CSV."
+                        main_html = f"<p style=\"margin:0\">{len(rows)} row(s) found — attached as CSV.</p>"
                     if record.get("channel") == "email" and record.get("email_recipients"):
                         try:
                             _send_email(
@@ -6209,16 +7251,30 @@ class VannaFlaskApp(VannaFlaskAPI):
                                 _scheduled_email_body(body),
                                 rows,
                                 _scheduled_email_filename(schedule_id),
+                                html=_scheduled_email_html(
+                                    "Scheduled Report", record["display_question"],
+                                    status_label, status_colour, status_icon, main_html,
+                                    _describe_schedule(record.get("schedule") or {}),
+                                ),
                             )
                         except Exception as email_exc:
                             logger.exception(f"Scheduled question {schedule_id} email delivery failed: {email_exc}")
+                    elif record.get("channel") == "teams" and record.get("teams_aad_id"):
+                        _deliver_to_teams(record, body, rows)
                     else:
-                        record.setdefault("chat_inbox", []).append({
-                            "text": body,
-                            "created_at": time.time(),
-                        })
+                        # Unassigned (no recipient yet) — the check still runs and
+                        # last_status/last_run_at still update below, but nothing
+                        # is sent anywhere. Chat delivery isn't a supported ongoing
+                        # channel: it used to silently drop into the owner's chat
+                        # inbox here, which looked like a broken/unassigned agent
+                        # (because it was) and wasn't reliably seen anyway — the
+                        # inbox only drains while that owner happens to have the
+                        # chat page open. An admin assigns a real recipient from
+                        # the Scheduled Agents panel; nothing fires until then.
+                        logger.info(f"Scheduled question {schedule_id}: no recipient assigned yet — result not delivered.")
 
                 def _deliver_condition_matches(new_rows, total_matching):
+                    e = html_escape_lib.escape
                     subject = f"[Alert] {record['display_question']}"
                     base_line = (
                         f"{len(new_rows)} new record(s) now match: {record['display_question']} "
@@ -6226,6 +7282,11 @@ class VannaFlaskApp(VannaFlaskAPI):
                     )
                     summary_text = _summarize(pd.DataFrame(new_rows))
                     body = f"{summary_text}\n\n{base_line}" if summary_text else base_line
+                    main_html = (
+                        (f"<p style=\"margin:0 0 10px\">{e(summary_text)}</p>" if summary_text else "")
+                        + f"<p style=\"margin:0\">{len(new_rows)} new record(s) now match "
+                          f"({total_matching} matching in total) — attached as CSV.</p>"
+                    )
                     if record.get("channel") == "email" and record.get("email_recipients"):
                         try:
                             _send_email(
@@ -6234,14 +7295,23 @@ class VannaFlaskApp(VannaFlaskAPI):
                                 _scheduled_email_body(body),
                                 new_rows,
                                 _scheduled_email_filename(schedule_id),
+                                html=_scheduled_email_html(
+                                    "Scheduled Alert", record["display_question"],
+                                    "New match(es) found", "#c98500", "&#9888;", main_html,
+                                    _describe_schedule(record.get("schedule") or {}),
+                                    question_label="Watching for",
+                                ),
                             )
                         except Exception as email_exc:
                             logger.exception(f"Scheduled question {schedule_id} email delivery failed: {email_exc}")
+                    elif record.get("channel") == "teams" and record.get("teams_aad_id"):
+                        _deliver_to_teams(record, body, new_rows)
                     else:
-                        record.setdefault("chat_inbox", []).append({
-                            "text": body,
-                            "created_at": time.time(),
-                        })
+                        # Unassigned — see the matching comment in _deliver above.
+                        # matched_keys/last_condition_state still get tracked below
+                        # regardless, so nothing is missed once a recipient is
+                        # assigned — only the notification itself is withheld.
+                        logger.info(f"Scheduled question {schedule_id}: no recipient assigned yet — match not delivered.")
 
                 if schedule.get("type") == "conditional" and no_training_example:
                     # The query couldn't even be generated this cycle (training-data
@@ -6475,7 +7545,7 @@ class VannaFlaskApp(VannaFlaskAPI):
             except Exception as e:
                 print("Error fetching Ollama models:", e)
                 local_models = []
-            return local_models, local_models + ["gpt-3.5-turbo", "gpt-4", "gpt-4o", "o3"]
+            return local_models, local_models + ["gpt-4.1-mini", "gpt-4.1", "gpt-3.5-turbo", "gpt-4", "gpt-4o", "o3"]
 
 
 
@@ -6497,7 +7567,11 @@ class VannaFlaskApp(VannaFlaskAPI):
             else:
                 return jsonify({"error": "Workspace not found for user"}), 404
         @self.flask_app.route("/admin", endpoint="admin")
-        @self.requires_role("admin")
+        # list(ADMIN_ROLES), not the bare string "admin": requires_role compares
+        # with == when given a string, so a superadmin — who outranks an admin and
+        # whom access_control already admits here — was being 403'd off the admin
+        # dashboard. Every other admin route uses the list form.
+        @self.requires_role(list(ADMIN_ROLES))
         @self.requires_auth
         def admin(**kwargs):
             """Render the admin dashboard."""
@@ -6510,7 +7584,7 @@ class VannaFlaskApp(VannaFlaskAPI):
             return render_template("superadmin.html")
 
         @self.flask_app.route("/workspace", endpoint="workspace")
-        @self.requires_role("admin")
+        @self.requires_role(list(ADMIN_ROLES))  # see /admin above — excluded superadmin
         @self.requires_auth
         def index(**kwargs):
             """Render index page with available models and last saved config."""
@@ -6664,7 +7738,7 @@ class VannaFlaskApp(VannaFlaskAPI):
                 return jsonify({"error": "All fields are required"}), 400
 
             success, message = test_db_connection(server, port, database, username, password)
-            logger.info(f"vanna connection sql - {server}, {port}, {database}, {username}, {password}")
+            logger.info(f"Tested DB connection to {database} on {server},{port} as {username}: {success}")
             if success:
                 # vn.connect_to_mssql(odbc_conn_str=f'DRIVER={{ODBC Driver 17 for SQL Server}};SERVER={server},{port};DATABASE={database};UID={username};PWD={password}')
 
@@ -6714,139 +7788,53 @@ class VannaFlaskApp(VannaFlaskAPI):
 
 
 
-        vanna_api = VannaFlaskAPI()
         @self.flask_app.route("/connect-vanna", methods=["POST"])
         def connect_vanna():
-            global vn  # Use the global vn instance
+            """
+            Connect the caller's session to a workspace: its Vanna instance is
+            built from the workspace's *saved* LLM + DB config. Connection details
+            in the request body are ignored — they used to be echoed back from
+            /get_workspace, which exposed the DB password and API key to every
+            browser. A plain user may only connect their own assigned workspace.
+            """
             try:
-                # Fetch and log the incoming JSON data
-                data = request.get_json()
+                data = request.get_json(silent=True) or {}
                 workspace_id = data.get("workspace_id")
+                if not workspace_id:
+                    return jsonify({"success": False, "error": "workspace_id is required"}), 400
+
+                user = self.auth.get_user(request) or {}
+                if not self._user_can_access_workspace(user, workspace_id):
+                    return jsonify({"success": False, "error": "You don't have access to this workspace"}), 403
+
+                instance, err = _vanna_registry.get_or_build(workspace_id)
+                if instance is None:
+                    logger.warning(f"connect-vanna failed for workspace {workspace_id}: {err}", extra={"admin": True})
+                    return jsonify({"success": False, "error": err}), 400
+
                 session["workspace_id"] = workspace_id
+                vn.bind_instance(instance)
+                # No set_default_instance here: that default is process-global and
+                # was never torn down (unlike the thread-local binding above, which
+                # teardown_request clears), so the last person to connect silently
+                # became the fallback workspace for every unbound caller in the
+                # process — the cross-workspace leak this registry exists to prevent.
+                # Legitimate callers are covered: request threads bind here or
+                # resolve via session["workspace_id"], background jobs bind through
+                # ensure_vanna_initialized. Anything left falls through to bare(),
+                # which now logs instead of quietly borrowing someone's workspace.
+                self.vn = vn
 
-
-                # Extract LLM details
-                llm_details = data.get('llm_details', {})
-                model_name = llm_details.get('model_name')
-                model_type = llm_details.get('model_type')
-                api_key = llm_details.get('api_key')
-                base_url = llm_details.get('base_url')
-                logger.info(f"LLM Details - Model Name: {model_name}, Model Type: {model_type}, Base URL: {base_url}", extra={"admin": True})
-
-                # Validate model_name
-                if not model_name:
-                    logger.warning("No model name provided in llm_details", extra={"admin": True})
-                    logger.warning("No model name provided in llm_details", extra={"user": True})
-                    return jsonify({"success": False, "error": "No model selected"}), 400
-
-                # Extract DB details
-                db_details = data.get('db_details', {})
-                server_name = db_details.get('serverName')
-                port = db_details.get('port')
-                database_name = db_details.get('databaseName')
-                username = db_details.get('username')
-                password = db_details.get('password')
-                logger.info(f"DB Details -  Database: {database_name}", extra={"admin": True})
-                logger.info(f"DB Details -  Database: {database_name}", extra={"user": True})
-
-                # Optional secondary DB (dual-DB workspace): linked-server alias only,
-                # no separate live connection — reached from the primary connection
-                # via a SQL Server linked server configured between the two instances.
-                db_details_b = data.get('db_details_b') or {}
-
-                # Validate DB details
-                if not all([server_name, port, database_name, username, password]):
-                    logger.warning("Incomplete database details provided", extra={"admin": True})
-                    logger.warning("Incomplete database details provided", extra={"user": True})
-                    return jsonify({"success": False, "error": "Incomplete database connection details"}), 400
-
-                # Initialize Vanna based on model_type and model_name
-                if model_type == "openai":
-                    if not api_key:
-                        logger.warning("API key missing for OpenAI model", extra={"admin": True})
-                        logger.warning("API key missing for OpenAI model", extra={"user": True})
-                        return jsonify({"success": False, "error": "API key is required for OpenAI models"}), 400
-
-                    class MyVanna(ChromaDB_VectorStore, OpenAI_Chat):
-                        def __init__(self, config=None):
-                            ChromaDB_VectorStore.__init__(self, config=config)
-                            OpenAI_Chat.__init__(self, config=config)
-
-                    vn = MyVanna(config={
-                        'api_key': api_key,
-                        'model': model_name,
-                        'allow_llm_to_see_data': True
-                    })
-                    logger.info(f"Initialized OpenAI model: {model_name} with provided API key", extra={"admin": True})
-
-                elif model_type == "ollama":
-                    class MyVanna(ChromaDB_VectorStore, Ollama):
-                        def __init__(self, config=None):
-                            ChromaDB_VectorStore.__init__(self, config=config)
-                            Ollama.__init__(self, config=config)
-
-                    vn = MyVanna(config={
-                        'model': model_name,
-                        #'base_url': base_url if base_url else 'http://127.0.0.1:11434/',  # Default if not provided
-                        'allow_llm_to_see_data': True
-                    })
-                    logger.info(f"Connect-Vanna Initialized Ollama model: {model_name} with base URL: {base_url or 'default'}", extra={"admin": True})
-
-                else:
-                    logger.warning(f"Unsupported model type: {model_type}", extra={"admin": True})
-                    logger.warning(f"Unsupported model type: {model_type}", extra={"user": True})
-                    return jsonify({"success": False, "error": f"Unsupported model type: {model_type}"}), 400
-
-                # Construct ODBC connection string
-                odbc_conn_str = (
-                    f"DRIVER={{ODBC Driver 17 for SQL Server}};"
-                    f"SERVER={server_name},{port};"
-                    f"DATABASE={database_name};"
-                    f"UID={username};"
-                    f"PWD={password};"
+                logger.info(
+                    f"Vanna connected for workspace {workspace_id}: model={instance.config.get('model')} "
+                    f"database={getattr(instance, 'primary_db_name', None)}",
+                    extra={"admin": True},
                 )
-                logger.info(f"ODBC Connection String: {odbc_conn_str.replace(password, '****')}")  # Mask password in logs
-
-                # Connect to the database
-                vn.connect_to_mssql(odbc_conn_str=odbc_conn_str)
-                logger.info(f"Connect-Vanna Successfully connected to the MSSQL database {odbc_conn_str}")
-
-                # Record primary/secondary DB aliases on the vn instance for cross-DB
-                # SQL qualification (see get_sql_prompt). No live connection is opened
-                # to the secondary DB — it's reached either via same-instance three-part
-                # naming (if both databases share the same server+port) or a linked
-                # server (if genuinely separate servers) — get_sql_prompt picks the
-                # right form using vn.same_instance.
-                vn.primary_db_alias = db_details.get("db_alias") or "PRIMARY"
-                vn.primary_db_name = database_name
-                if db_details_b.get("databaseName"):
-                    vn.secondary_db_alias = db_details_b.get("db_alias") or "SECONDARY"
-                    vn.secondary_db_name = db_details_b.get("databaseName")
-                    vn.same_instance = (
-                        str(db_details_b.get("serverName") or "").strip().lower() == str(server_name or "").strip().lower()
-                        and str(db_details_b.get("port") or "").strip() == str(port or "").strip()
-                    )
-                else:
-                    vn.secondary_db_alias = None
-                    vn.secondary_db_name = None
-                    vn.same_instance = False
-
-                # Assign the vn instance to the global vn (assuming vanna_api.vn is for external use)
-                # If vanna_api is a module, ensure it's imported correctly
-                # For now, assuming it's a typo or external reference; we'll just set the global vn
-                vanna_api.vn = vn  # Uncomment and fix if vanna_api is defined elsewhere
-                self.vn = vn # Assign to self.vn for class usage
-
-                logger.info(f"Vanna fully initialized with model: {model_name} and database: {database_name}", extra={"admin": True})
-                user_id = session.get('user_id')
-                #RBA
-                self.cache.refresh_cache_for_user(user_id, workspace_id)
+                self.cache.refresh_cache_for_user(session.get('user_id'), workspace_id)
                 return jsonify({"success": True, "redirect": url_for('hello')}), 200
 
-
             except Exception as e:
-                logger.error(f"Failed to connect Vanna: {str(e)}", exc_info=True, extra={"admin": True})  # Include stack trace
-                logger.error(f"Failed to connect Vanna: {str(e)}", exc_info=True, extra={"user": True})  # Include stack trace
+                logger.error(f"Failed to connect Vanna: {str(e)}", exc_info=True, extra={"admin": True})
                 return jsonify({"success": False, "error": str(e)}), 500
 
         @self.flask_app.route("/_debug/cache_contents")
@@ -7116,7 +8104,6 @@ class VannaFlaskApp(VannaFlaskAPI):
                         "db_config": json.loads(metadata.get("db_config", "{}")),
                         "training_id": metadata.get("training_id")
                     }
-                    logging.info(f"Workspace Data: {workspace_data}")
                     workspace_list.append(workspace_data)
 
                 return jsonify(workspace_list), 200
@@ -7168,6 +8155,7 @@ class VannaFlaskApp(VannaFlaskAPI):
                 )
 
                 logger.info(f"Updated workspace: ID={id_str}, Name={name}", extra={"admin": True})
+                _vanna_registry.invalidate(id_str)
                 return jsonify({"message": "Workspace updated successfully"}), 200
             except Exception as e:
                 logger.error(f"Error updating workspace with ID {id}: {str(e)}", exc_info=True, extra={"admin": True})
@@ -7584,13 +8572,6 @@ class VannaFlaskApp(VannaFlaskAPI):
                 # Ensure vn is initialized
 
                 global vn
-                if vn is None:
-                    class MyVanna(ChromaDB_VectorStore, OpenAI_Chat):
-                        def __init__(self, config=None):
-                            ChromaDB_VectorStore.__init__(self, config=config)
-                            OpenAI_Chat.__init__(self, config=config)
-                    logger.info("vn is None, initializing MyVanna", extra={"admin": True})
-                    vn = MyVanna(config={'allow_llm_to_see_data': 'True'})
  
                 # Check if chroma_client is available
                 if not hasattr(vn, 'chroma_client') or vn.chroma_client is None:
@@ -7617,6 +8598,7 @@ class VannaFlaskApp(VannaFlaskAPI):
                 # Delete the workspace from the workspace collection
                 self.workspace_collection.delete(ids=[id_str])
                 logger.info(f"Successfully deleted workspace: ID={id_str}", extra={"admin": True})
+                _vanna_registry.invalidate(id_str)
  
                 # Verify deletion
                 collections_after = vn.chroma_client.list_collections()
@@ -7652,60 +8634,38 @@ class VannaFlaskApp(VannaFlaskAPI):
         @self.flask_app.route('/connect_workspace/<uuid:id>', methods=['POST'])
         @self.requires_auth
         def connect_workspace(id, user: any = None):
-            global vn
-            try:
-                id_str = str(id)
-                results = self.workspace_collection.get(ids=[id_str])
-                if not results.get("metadatas"):
-                    return jsonify({"error": f"Workspace with ID {id_str} not found"}), 404
-
-                workspace = results["metadatas"][0]
-                logger.info(f"Get-Workspace {workspace}", extra={"admin": True})
-                llm_config = json.loads(workspace.get("llm_config", "{}"))
-                db_config = json.loads(workspace.get("db_config", "{}"))
-
-                data_to_send = {
-                    "llm_details": {
-                        "model_name": llm_config.get("model_name"),
-                        "model_type": llm_config.get("model_type"),
-                        "api_key": llm_config.get("api_key"),
-                        "base_url": llm_config.get("base_url")
-                    },
-                    "db_details": {
-                        "serverName": db_config.get("serverName"),
-                        "port": db_config.get("port"),
-                        "databaseName": db_config.get("databaseName"),
-                        "username": db_config.get("username"),
-                        "password": db_config.get("password")
-                    }
-                }
-
-                response = requests.post(
-                    url_for('connect_vanna', _external=True),
-                    json=data_to_send,
-                    headers={'Content-Type': 'application/json'}
-                )
-
-                if response.status_code == 200:
-                    logger.info(f"Connected to workspace: ID={id_str}, Name={workspace.get('name')}", extra={"admin": True})
-                    return jsonify({"message": "Workspace connected successfully"}), 200
-                else:
-                    logger.error(f"Failed to connect workspace: {response.text}", extra={"admin": True})
-                    return jsonify({"error": "Failed to connect workspace", "details": response.text}), response.status_code
-            except Exception as e:
-                logger.error(f"Error connecting workspace with ID {id}: {str(e)}", exc_info=True, extra={"admin": True})
-                return jsonify({"error": "Failed to connect workspace"}), 500
+            """Admin: (re)build a workspace's Vanna instance from its saved config."""
+            id_str = str(id)
+            instance, err = _vanna_registry.get_or_build(id_str, refresh=True)
+            if instance is None:
+                logger.error(f"Failed to connect workspace {id_str}: {err}", extra={"admin": True})
+                return jsonify({"error": "Failed to connect workspace", "details": err}), 400
+            logger.info(f"Connected to workspace: ID={id_str}", extra={"admin": True})
+            return jsonify({"message": "Workspace connected successfully"}), 200
 
         @self.flask_app.route('/get_workspace/<uuid:id>', methods=['GET'])
         @self.requires_auth
         def get_workspace(id, user: any = None):
             try:
-                logger.info(f"Received ID: {id}, Type: {type(id)}")
                 id_str = str(id)
                 results = self.workspace_collection.get(ids=[id_str])
                 if not results.get("metadatas"):
                     return jsonify({"error": f"Workspace with ID {id_str} not found"}), 404
                 metadata = results["metadatas"][0]
+
+                user = self.auth.get_user(request) or {}
+                if str(user.get("role", "")).lower() not in ADMIN_ROLES:
+                    # The chat UI and user dashboard only need the name. Config
+                    # (DB password, API key) is admin-only; the empty objects
+                    # keep existing callers that read .llm_config/.db_config safe.
+                    if not self._user_can_access_workspace(user, id_str):
+                        return jsonify({"error": "You don't have access to this workspace"}), 403
+                    return jsonify({
+                        "id": id_str,
+                        "name": metadata.get("name"),
+                        "llm_config": {}, "db_config": {}, "db_config_b": {},
+                    })
+
                 response = {
                     "id": id_str,
                     "name": metadata.get("name"),
@@ -7714,7 +8674,7 @@ class VannaFlaskApp(VannaFlaskAPI):
                     "db_config_b": json.loads(metadata["db_config_b"]) if "db_config_b" in metadata else {},
                     "training_id": metadata.get("training_id")
                 }
-                logger.info(f"Returning workspace data: {response}")
+                logger.info(f"Returning workspace data for {id_str} (admin)")
                 return jsonify(response)
             except ValueError as e:
                 logger.error(f"ValueError processing ID {id}: {str(e)}", exc_info=True, extra={"admin": True})
@@ -7821,6 +8781,7 @@ class VannaFlaskApp(VannaFlaskAPI):
                 )
 
                 logger.info(f"Saved LLM config for workspace: ID={workspace_id}", extra={"admin": True})
+                _vanna_registry.invalidate(workspace_id)
                 return jsonify({"message": "LLM configuration saved successfully"}), 200
             except Exception as e:
                 logger.error(f"Error saving LLM config: {str(e)}", exc_info=True)
@@ -8008,7 +8969,7 @@ class VannaFlaskApp(VannaFlaskAPI):
             if not secondary_cfg or not secondary_cfg.get("databaseName"):
                 return True, "No secondary DB configured — nothing to sync."
 
-            alias = secondary_cfg.get("db_alias") or "SECONDARY"
+            alias = (secondary_cfg.get("db_alias") or "").strip() or "SECONDARY"
             same_instance = (
                 str(primary_cfg.get("serverName") or "").strip().lower()
                     == str(secondary_cfg.get("serverName") or "").strip().lower()
@@ -8119,6 +9080,7 @@ class VannaFlaskApp(VannaFlaskAPI):
                 )
 
                 logger.info(f"Saved DB config (slot={slot}, alias={db_alias}) for workspace: ID={workspace_id}", extra={"admin": True})
+                _vanna_registry.invalidate(workspace_id)
 
                 # Keep the SQL Server linked server in sync with whatever was just
                 # saved — either slot changing can affect it (a new primary means
@@ -8169,14 +9131,6 @@ class VannaFlaskApp(VannaFlaskAPI):
 
                 training_id = str(uuid.uuid4())
                 global vn
-                if vn is None:
-                    class MyVanna(ChromaDB_VectorStore, OpenAI_Chat):
-                        def __init__(self, config=None):
-                            ChromaDB_VectorStore.__init__(self, config=config)
-                            OpenAI_Chat.__init__(self, config=config)
-                            self.chroma_client: chromadb.Client
-                            self.collection_metadata = config.get("collection_metadata", {})
-                    vn = MyVanna(config={'allow_llm_to_see_data': 'True'})
 
                 for file in files:
                     if file_type == 'pdf':
@@ -8243,15 +9197,6 @@ class VannaFlaskApp(VannaFlaskAPI):
                     return jsonify({"type": "error", "error": "workspace_name is required"}), 400
 
                 global vn
-                if vn is None:
-                    class MyVanna(ChromaDB_VectorStore, OpenAI_Chat):
-                        def __init__(self, config=None):
-                            ChromaDB_VectorStore.__init__(self, config=config)
-                            OpenAI_Chat.__init__(self, config=config)
-                            self.chroma_client: chromadb.Client
-                            self.collection_metadata = config.get("collection_metadata", {}) 
-
-                    vn = MyVanna(config={'allow_llm_to_see_data': 'True'})
 
                 df = vn.get_training_data_module(collection_name=workspace_name)
 
@@ -8319,6 +9264,8 @@ class VannaFlaskApp(VannaFlaskAPI):
 
 
         @self.flask_app.route("/api/v0/train", methods=["POST"])
+        @self.requires_auth
+        @self.requires_role(list(ADMIN_ROLES))
         def add_training_data(user: any = None):
             logger.info(f"Received request from user: {user}")
             data = flask.request.json
@@ -8327,6 +9274,12 @@ class VannaFlaskApp(VannaFlaskAPI):
             workspace_id = data.get("workspace_id")
             if not workspace_id:
                 return jsonify({"error": "Workspace ID is required"}), 400
+
+            # workspace_id is taken straight from the request body, so authenticating
+            # the caller isn't enough — check they may actually write to THIS
+            # workspace. Training data steers generate_sql for everyone in it.
+            if not self._user_can_access_workspace(user, workspace_id):
+                return jsonify({"error": "You don't have access to this workspace"}), 403
 
             try:
                 results = self.workspace_collection.get(ids=[workspace_id])
@@ -8369,13 +9322,6 @@ class VannaFlaskApp(VannaFlaskAPI):
 
             try:
                 global vn
-                if vn is None:
-                    class MyVanna(ChromaDB_VectorStore, OpenAI_Chat):
-                        def __init__(self, config=None):
-                            ChromaDB_VectorStore.__init__(self, config=config)
-                            OpenAI_Chat.__init__(self, config=config)
-                    logger.info("vn is None, initializing MyVanna")
-                    vn = MyVanna(config={'allow_llm_to_see_data': 'True'})
 
                 trained_ids = []
                 for entry in valid_entries:
@@ -8419,14 +9365,6 @@ class VannaFlaskApp(VannaFlaskAPI):
 
             try:
                 global vn
-                if vn is None:
-                    class MyVanna(ChromaDB_VectorStore, OpenAI_Chat):
-                        def __init__(self, config=None):
-                            ChromaDB_VectorStore.__init__(self, config=config)
-                            OpenAI_Chat.__init__(self, config=config)
-                    
-                    logger.info("vn is None, initializing MyVanna")
-                    vn = MyVanna(config={'allow_llm_to_see_data': 'True'})
                 
                 for doc in documentation:
                     if doc:
@@ -8440,77 +9378,7 @@ class VannaFlaskApp(VannaFlaskAPI):
 
         # Helper function to initialize Vanna
         def initialize_vanna_instance(workspace_id, llm_details, db_details, db_details_b=None):
-            global vn
-            try:
-                # Initialize Vanna based on LLM type
-                if llm_details['model_type'] == 'openai':
-                    if not llm_details['api_key']:
-                        logger.warning("API key missing for OpenAI model", extra={"admin": True})
-                        logger.warning("API key missing for OpenAI model", extra={"user": True})
-                        return {"success": False, "error": "API key is required for OpenAI models"}
-
-                    class MyVanna(ChromaDB_VectorStore, OpenAI_Chat):
-                        def __init__(self, config=None):
-                            ChromaDB_VectorStore.__init__(self, config=config)
-                            OpenAI_Chat.__init__(self, config=config)
-
-                    vn = MyVanna(config={
-                        'api_key': llm_details['api_key'],
-                        'model': llm_details['model_name'],
-                        'allow_llm_to_see_data': True
-                    })
-                elif llm_details['model_type'] == 'ollama':
-                    class MyVanna(ChromaDB_VectorStore, Ollama):
-                        def __init__(self, config=None):
-                            ChromaDB_VectorStore.__init__(self, config=config)
-                            Ollama.__init__(self, config=config)
-
-                    vn = MyVanna(config={
-                        'model': llm_details['model_name'],
-                        'allow_llm_to_see_data': True
-                    })
-                else:
-                    return {"success": False, "error": "Unsupported LLM model type."}
-
-                # Use the same ODBC connection string as /connect-vanna
-                odbc_conn_str = (
-                    f"DRIVER={{ODBC Driver 17 for SQL Server}};"
-                    f"SERVER={db_details['serverName']},{db_details['port']};"
-                    f"DATABASE={db_details['databaseName']};"
-                    f"UID={db_details['username']};"
-                    f"PWD={db_details['password']};"
-                )
-                logger.info(f"Connecting to MSSQL with: {odbc_conn_str.replace(db_details['password'], '****')}", extra={"admin": True})
-                vn.connect_to_mssql(odbc_conn_str=odbc_conn_str)
-
-                # Record primary/secondary DB aliases for cross-DB SQL qualification
-                # (see get_sql_prompt). No live connection to the secondary DB — it's
-                # reached either via same-instance three-part naming (if both databases
-                # share the same server+port) or a linked server (if genuinely separate
-                # servers) — get_sql_prompt picks the right form using vn.same_instance.
-                vn.primary_db_alias = db_details.get("db_alias") or "PRIMARY"
-                vn.primary_db_name = db_details.get("databaseName")
-                if db_details_b and db_details_b.get("databaseName"):
-                    vn.secondary_db_alias = db_details_b.get("db_alias") or "SECONDARY"
-                    vn.secondary_db_name = db_details_b.get("databaseName")
-                    vn.same_instance = (
-                        str(db_details_b.get("serverName") or "").strip().lower()
-                            == str(db_details.get("serverName") or "").strip().lower()
-                        and str(db_details_b.get("port") or "").strip()
-                            == str(db_details.get("port") or "").strip()
-                    )
-                else:
-                    vn.secondary_db_alias = None
-                    vn.secondary_db_name = None
-                    vn.same_instance = False
-
-                # Optionally store vn in vanna_api if needed
-                # vanna_api.vn = vn  # Uncomment if vanna_api is a valid object
-                logger.info(f"Vanna initialized for workspace {workspace_id}", extra={"admin": True})
-                return {"success": True, "message": "Vanna initialized successfully."}
-            except Exception as e:
-                logger.error(f"Failed to initialize Vanna: {str(e)}", exc_info=True, extra={"admin": True})
-                return {"success": False, "error": f"Failed to initialize Vanna: {str(e)}"}
+            return _initialize_vanna_instance_module(workspace_id, llm_details, db_details, db_details_b)
 
         # Endpoint to initialize Vanna without redirect (used in Predictions section)
         @self.flask_app.route('/initialize-vanna', methods=['POST'])
@@ -8550,15 +9418,17 @@ class VannaFlaskApp(VannaFlaskAPI):
             if not workspace_id or not table_name:
                 return jsonify({"type": "error", "error": "Workspace ID and table name are required."}), 400
 
-            if workspace_id not in workspaces:
-                return jsonify({"type": "error", "error": "Workspace not found."}), 404
-
-            if not vn or not hasattr(vn, 'run_sql_is_set') or not vn.run_sql_is_set:
-                return jsonify({"type": "error", "error": "Vanna is not initialized. Please connect to Vanna first."}), 400
+            initialized, error = ensure_vanna_initialized(self, workspace_id)
+            if not initialized:
+                return jsonify({"type": "error", "error": error}), 400
 
             try:
-                # Fetch columns for the specified table
-                columns = vn.get_columns(table_name)
+                safe_table = table_name.replace("'", "''")
+                df = vn.run_sql(
+                    "SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS "
+                    f"WHERE TABLE_NAME = '{safe_table}' ORDER BY ORDINAL_POSITION"
+                )
+                columns = df["COLUMN_NAME"].tolist() if df is not None and not df.empty else []
                 if not columns:
                     return jsonify({"type": "error", "error": f"No columns found for table {table_name}."}), 404
                 return jsonify({"type": "success", "columns": columns})
@@ -8598,7 +9468,7 @@ class VannaFlaskApp(VannaFlaskAPI):
 #---------------------------------------------
 
         @self.flask_app.route('/api/v0/get_tables', methods=['GET'])
-        def get_tables(self):
+        def get_tables():
             global vn  # Use the global Vanna instance
             workspace_id = request.args.get('workspace_id')
             if not workspace_id:
@@ -8642,53 +9512,7 @@ class VannaFlaskApp(VannaFlaskAPI):
                 return None
 
         def ensure_vanna_initialized(self, workspace_id):
-            global vn
-            logger.info("ensure vanna function")
-            
-            workspace = get_workspace_metadata(self, workspace_id)
-            if not workspace:
-                return False, "Workspace not found"
-            logger.info(f"Workspace inside ensure {workspace}")
-            llm_config = json.loads(workspace.get("llm_config", "{}"))
-            db_config = json.loads(workspace.get("db_config", "{}"))
-            db_config_b = json.loads(workspace.get("db_config_b", "{}"))
-            logger.info(f"ensure vanna function {llm_config} {db_config}")
-
-            data_to_send = {
-                "workspace_id": workspace_id,
-                "llm_details": {
-                    "model_name": llm_config.get("model_name"),
-                    "model_type": llm_config.get("model_type"),
-                    "api_key": llm_config.get("api_key"),
-                    "base_url": llm_config.get("base_url")
-                },
-                "db_details": {
-                    "serverName": db_config.get("serverName"),
-                    "port": db_config.get("port"),
-                    "databaseName": db_config.get("databaseName"),
-                    "username": db_config.get("username"),
-                    "password": db_config.get("password"),
-                    "db_alias": db_config.get("db_alias")
-                },
-                "db_details_b": {
-                    "databaseName": db_config_b.get("databaseName"),
-                    "db_alias": db_config_b.get("db_alias"),
-                    "serverName": db_config_b.get("serverName"),
-                    "port": db_config_b.get("port")
-                } if db_config_b.get("databaseName") else None
-            }
-            result = initialize_vanna_instance(
-                workspace_id, data_to_send["llm_details"], data_to_send["db_details"],
-                data_to_send["db_details_b"]
-            )
-            if not result["success"]:
-                return False, result["error"]
-
-            # CRITICAL: Sync the global vn instance back to the class property self.vn
-            # This ensures that endpoints using self.vn can access the initialized model
-            self.vn = vn
-
-            return True, None
+            return VannaFlaskAPI.ensure_vanna_initialized(self, workspace_id)
 
         # ==================================================================
         # Chat-driven writes: generate (preview only) -> confirm -> execute.
@@ -8811,57 +9635,53 @@ class VannaFlaskApp(VannaFlaskAPI):
             if not initialized:
                 return jsonify({"type": "error", "error": error}), 400
 
-            body, status = _stage_pending_write(vn, workspace_id, question)
+            workspace = get_workspace_metadata(self, workspace_id) or {}
+            body, status = _stage_pending_write(vn, workspace.get("name") or workspace_id, workspace_id, question)
             return jsonify(body), status
 
-        @self.flask_app.route('/api/v0/execute_write_sql', methods=['POST'])
-        @self.requires_auth
-        @self.requires_role(["admin", "superadmin"])
-        def execute_write_sql_route(user=None):
-            """Execute a previously-generated write after explicit user confirmation.
+        def _execute_pending_write(workspace_id, write_id, user_id=None):
+            """Execute a previously-staged write after explicit confirmation.
             The SQL is looked up server-side by write_id — never accepted as a raw
             string from the client — and re-validated against the whitelist here,
-            independent of whatever generate_write_sql_route already checked."""
-            data = request.get_json() or {}
-            workspace_id = data.get('workspace_id')
-            write_id = data.get('write_id')
+            independent of whatever staging already checked. Callers must have
+            already verified the confirming user is admin/superadmin.
 
+            Returns (body_dict, http_status)."""
             if not workspace_id or not write_id:
-                return jsonify({"type": "error", "error": "workspace_id and write_id are required"}), 400
+                return {"type": "error", "error": "workspace_id and write_id are required"}, 400
 
             with _pending_writes_lock:
                 pending = _pending_writes.pop(write_id, None)
 
             if not pending or pending.get("workspace_id") != workspace_id:
-                return jsonify({"type": "error", "error": "Unknown or expired write_id"}), 404
+                return {"type": "error", "error": "Unknown or expired write_id"}, 404
 
             # A pending write is single-use and short-lived (10 minutes) — re-generate
             # if it has gone stale, so a confirmation click can't replay a write against
             # data that may have changed, or execute long after the user actually saw it.
             if time.time() - pending.get("created_at", 0) > 600:
-                return jsonify({"type": "error", "error": "This write has expired — please ask again"}), 410
+                return {"type": "error", "error": "This write has expired — please ask again"}, 410
 
             sql = pending["sql"]
             question = pending["question"]
 
             initialized, error = ensure_vanna_initialized(self, workspace_id)
             if not initialized:
-                return jsonify({"type": "error", "error": error}), 400
+                return {"type": "error", "error": error}, 400
 
             whitelist = vn.get_write_whitelist(workspace=workspace_id)
             valid, reason = vn.is_write_sql_valid(sql, whitelist)
             operation, table_ref, _ = _parse_write_statement(sql)
-            user_id = user.get("id") if isinstance(user, dict) else getattr(user, "id", None)
 
             if not valid:
                 _insert_write_audit_log(workspace_id, user_id, question, sql, table_ref, operation,
                                          None, "rejected", reason)
-                return jsonify({"type": "error", "error": reason}), 400
+                return {"type": "error", "error": reason}, 400
 
             workspace = get_workspace_metadata(self, workspace_id)
             db_config = json.loads(workspace.get("db_config", "{}")) if workspace else {}
             if not db_config:
-                return jsonify({"type": "error", "error": "Database configuration not found for workspace"}), 400
+                return {"type": "error", "error": "Database configuration not found for workspace"}, 400
 
             conn = None
             try:
@@ -8881,11 +9701,11 @@ class VannaFlaskApp(VannaFlaskAPI):
                 _insert_write_audit_log(workspace_id, user_id, question, sql, table_ref, operation,
                                          rows_affected, "executed")
 
-                return jsonify({
+                return {
                     "type": "success",
                     "message": "Write executed successfully",
                     "rows_affected": rows_affected,
-                })
+                }, 200
 
             except Exception as e:
                 if conn:
@@ -8896,7 +9716,7 @@ class VannaFlaskApp(VannaFlaskAPI):
                 logger.error(f"execute_write_sql failed: {e}", exc_info=True, extra={"admin": True})
                 _insert_write_audit_log(workspace_id, user_id, question, sql, table_ref, operation,
                                          None, "failed", str(e))
-                return jsonify({"type": "error", "error": str(e)}), 200
+                return {"type": "error", "error": str(e)}, 200
 
             finally:
                 if conn:
@@ -8905,7 +9725,33 @@ class VannaFlaskApp(VannaFlaskAPI):
                     except Exception:
                         pass
 
-        def _has_pending_clarification(workspace_id, username):
+        @self.flask_app.route('/api/v0/execute_write_sql', methods=['POST'])
+        @self.requires_auth
+        @self.requires_role(["admin", "superadmin"])
+        def execute_write_sql_route(user=None):
+            data = request.get_json() or {}
+            body, status = _execute_pending_write(
+                data.get('workspace_id'), data.get('write_id'), session.get('user_id')
+            )
+            return jsonify(body), status
+
+        # Published for handlers outside this scope (_handle_query_message lives
+        # in VannaFlaskAPI.__init__; the Teams bot uses the execute path).
+        self._stage_pending_write = _stage_pending_write
+        self._execute_pending_write = _execute_pending_write
+
+        def _user_email_for(username):
+            """The app user's own registered email (lowercased), or None."""
+            if not username:
+                return None
+            try:
+                found = self.users_collection.get(where={"username": username}, limit=1)
+                metas = found.get("metadatas") or []
+                return (metas[0].get("email") or None) if metas else None
+            except Exception:
+                return None
+
+        def _has_pending_clarification(workspace_id, username, text=None):
             """Peek (without consuming) whether (workspace_id, username) has an
             open schedule clarification — used by the routing endpoints to force
             a bare follow-up reply down the schedule path even though the reply
@@ -8914,9 +9760,14 @@ class VannaFlaskApp(VannaFlaskAPI):
             key = f"{workspace_id}:{username}"
             with _pending_schedule_clarifications_lock:
                 pending = _pending_schedule_clarifications.get(key)
+                # A fresh question instead of an answer: the user moved on, so the
+                # prompt is dropped and the question is routed as usual.
+                if pending and _is_new_question(text):
+                    _pending_schedule_clarifications.pop(key, None)
+                    return False
             return bool(pending) and time.time() - pending.get("created_at", 0) <= _PENDING_CLARIFICATION_TTL_SECONDS
 
-        def _handle_schedule_message(workspace_id, raw_text, prior_question, username, prior_sql=None):
+        def _handle_schedule_message(workspace_id, raw_text, prior_question, username, prior_sql=None, ctx=None, main_question=None, prior_kind=None):
             """
             Core scheduling/conditional-agent pipeline: fixed literals (list /
             stop <id> / email list) are handled deterministically with no LLM
@@ -8925,6 +9776,20 @@ class VannaFlaskApp(VannaFlaskAPI):
             never staged or downgraded. Shared by slash_command_route ("/"-prefixed
             POST body) and route_message (POST, natural-language dispatch) so both
             entry points run identical logic.
+
+            main_question: the ORIGINAL root question of the current follow-up
+            thread (resolved client-side by walking parent_question_id back to its
+            first question), distinct from prior_question which is just the most
+            recent message. Needed because scheduling a bare follow-up like "show
+            me top 4" stores THAT text as the agent's question — accurate for
+            re-running it (paired with prior_sql as context), but meaningless on
+            its own in a notification email sent days later. None when there is
+            no broader thread (prior_question is already the root) or no caller
+            supplies it (e.g. the Teams channel, which has no thread tracking).
+
+            prior_kind: "prediction" when prior_question was answered by the
+            prediction/anomaly pipeline. That answer has no SQL, so a bare "send
+            this" stores the check that produced it and re-runs that at fire time.
 
             Returns (body_dict, status_code).
             """
@@ -8936,6 +9801,18 @@ class VannaFlaskApp(VannaFlaskAPI):
             pending_key = f"{workspace_id}:{username}"
             with _pending_schedule_clarifications_lock:
                 pending = _pending_schedule_clarifications.pop(pending_key, None)
+
+            # Also discard any pending QUERY clarification for this user — found
+            # live: open "show me the problem orders" (query clarification
+            # pending) -> interrupt with an unrelated "/list" (routed straight
+            # here, never through _handle_query_message) -> ask a totally fresh,
+            # unrelated question minutes later -> it silently got merged with
+            # the stale "problem orders" text, since nothing had ever popped it.
+            # Any explicit trip into the scheduling pipeline means the user has
+            # moved on from whatever query clarification was open, same as a
+            # "/" command already abandons this function's own pending state.
+            with _pending_query_clarifications_lock:
+                _pending_query_clarifications.pop(pending_key, None)
 
             clarification_attempts = 0
             if (
@@ -9053,6 +9930,27 @@ class VannaFlaskApp(VannaFlaskAPI):
             first_conditional = next((s for s in schedules if s.get("type") == "conditional"), None)
             extracted_question = extraction.get("question")
             conditional_text = first_conditional.get("condition_text") if first_conditional else None
+
+            # Safety net for extract_schedule_request misreading a bare delivery
+            # command ("send mail now", "email this now") as if the command text
+            # ITSELF were the data question — found live: a schedule created from
+            # "send mail now" stored that literal phrase as display_question, so
+            # every fire tried to run "send mail now" as a question (no trained
+            # example for it, obviously) and every email read "No data found for:
+            # send mail now" instead of answering the real question that was
+            # actually being discussed beforehand. The extraction prompt is
+            # supposed to leave "question" null for a bare follow-up, but an
+            # imperative with no back-reference pronoun ("this"/"it") doesn't
+            # reliably trigger that. When prior_question is available, prefer it
+            # over an "extracted" question that's really just the command restated
+            # with nothing else added.
+            def _norm(s):
+                return re.sub(r'[^a-z0-9]+', '', (s or '').lower())
+            if prior_question and extracted_question:
+                norm_extracted, norm_body = _norm(extracted_question), _norm(body)
+                if norm_extracted and (norm_extracted == norm_body or norm_extracted in norm_body):
+                    extracted_question = None
+
             question_en = extracted_question or conditional_text or prior_question
 
             # When the request only referred back ("send this", "email that") we reuse
@@ -9062,8 +9960,140 @@ class VannaFlaskApp(VannaFlaskAPI):
             # follow-up branch does; a self-contained question needs no context and
             # gets none, so generation stays unbiased.
             context_sql = prior_sql if (not extracted_question and not conditional_text and prior_sql) else None
+            analysis = None
+            # "send this"/"notify me if..." referring back to a prior
+            # prediction/anomaly/performance chat answer has no SQL of its
+            # own to regenerate (performance: admin-curated config SQL;
+            # prediction/anomaly: an LLM-built check) — look up what actually
+            # produced it and re-run THAT at fire time, regardless of what
+            # prior_kind the caller claims (previously gated on prior_kind ==
+            # "prediction" specifically, which meant this never fired for a
+            # remembered performance answer at all) — _last_analysis_run_for
+            # is already self-contained/safe (TTL + exact question-text
+            # match), so trying it can only ADD a correct match.
+            run = _last_analysis_run_for(workspace_id, username, prior_question) if prior_question else None
+
+            if conditional_text:
+                # A conditional request naming a performance metric directly
+                # ("alert me if the warehouse's performance goes below 70%")
+                # has no numeric SQL of its own to build a WHERE clause from
+                # — the threshold applies to an admin-curated performance
+                # config's OWN result columns. Two ways to find that config:
+                # a follow-up to something already answered earlier in this
+                # chat thread (remembered via `run`), or a brand-new message
+                # that names a performance metric never discussed in this
+                # thread but still matches a saved config fresh — found live:
+                # "send a mail to X if the performance of the warehouse goes
+                # below 70%", asked with no prior chat answer to refer back
+                # to, fell straight to the plain-SQL conditional path below,
+                # which has no trained example for it and refused with "no
+                # trained example covers this kind of question yet" even
+                # though the identical question answers fine as a plain
+                # (non-conditional) report.
+                if run and run.get("kind") == "performance":
+                    perf_cfgs_for_condition = run["config"]
+                else:
+                    cond_ws_meta = get_workspace_metadata(self, workspace_id) or {}
+                    perf_cfgs_for_condition = self._match_performance_configs(
+                        question_en, cond_ws_meta, cond_ws_meta.get("name") or str(workspace_id)
+                    )
+
+                if perf_cfgs_for_condition:
+                    # Checked even when extracted_question ALSO came back
+                    # non-empty, since a clause like "any warehouse's
+                    # occupancy exceeds 90%" reads just as plausibly as a
+                    # standalone question to extract_schedule_request, which
+                    # has no way to know it's really qualifying a performance
+                    # check. Only committed to if the condition actually maps
+                    # to one of that check's real columns (extract_numeric_
+                    # condition below); otherwise falls through to the
+                    # existing plain-SQL conditional path using whatever
+                    # extracted_question/conditional_text already resolved
+                    # to, unchanged.
+                    sample_configs = (
+                        perf_cfgs_for_condition if isinstance(perf_cfgs_for_condition, list)
+                        else [perf_cfgs_for_condition]
+                    )
+                    try:
+                        _sample_text, sample_df, _sample_types = self._run_performance_configs_and_summarize(
+                            sample_configs, prior_question or question_en, None
+                        )
+                    except Exception as sample_exc:
+                        logger.warning(f"Condition grounding run failed: {sample_exc}")
+                        sample_df = None
+                    if sample_df is not None:
+                        numeric_cols = [
+                            c for c in sample_df.columns
+                            if pd.api.types.is_numeric_dtype(sample_df[c])
+                        ]
+                        cond = vn.extract_numeric_condition(conditional_text, numeric_cols)
+                        rule = cond.get("rule")
+                        if rule:
+                            is_safe, reason = _is_safe_eval_rule(rule, list(sample_df.columns))
+                            if is_safe:
+                                analysis = {
+                                    "kind": "performance", "config": perf_cfgs_for_condition,
+                                    "condition_rule": rule, "condition_text": conditional_text,
+                                }
+                                # question_en must stay the ORIGINAL question
+                                # (what's being checked), never conditional_text
+                                # (the rule) — otherwise every fire's display/
+                                # subject would read as the raw condition
+                                # instead of what's monitored. Only needed for
+                                # the `run` case: a fresh match already has a
+                                # proper question_en from extraction, since
+                                # this isn't a bare follow-up with nothing else
+                                # said.
+                                if run and run.get("kind") == "performance":
+                                    question_en = prior_question
+                                context_sql = None
+                            else:
+                                logger.warning(
+                                    f"extract_numeric_condition produced an unsafe rule, "
+                                    f"discarding: {rule!r} ({reason})"
+                                )
+
+            if analysis is None and not extracted_question and run:
+                # Bare "send this"/"email that" — no new question, no
+                # (usable) condition — reuse whatever was last answered,
+                # regardless of kind.
+                analysis = {"kind": run["kind"], "config": run["config"]}
+                context_sql = None
+
+            # A freshly typed scheduling request ("every Monday, send me a
+            # report on the warehouse's performance") has no prior chat
+            # answer to fall back on — the `run` lookup above only covers
+            # "send this"-style references to something already answered.
+            # Without this, such a request fell straight to generate_sql,
+            # which has no trained example for an admin-curated performance
+            # metric and delivered "Needs a clearer question" on every fire,
+            # even though the exact same question answered correctly in
+            # chat. Match it against performance configs the same way chat
+            # does before treating it as a plain data question.
+            if analysis is None and question_en:
+                schedule_ws_meta = get_workspace_metadata(self, workspace_id) or {}
+                matched_perf_cfgs = self._match_performance_configs(
+                    question_en, schedule_ws_meta, schedule_ws_meta.get("name") or str(workspace_id)
+                )
+                if matched_perf_cfgs:
+                    analysis = {"kind": "performance", "config": matched_perf_cfgs}
+                    context_sql = None
+
             if not question_en:
                 return _ask_clarification("What would you like me to send you, or what should I watch for?")
+
+            # question_en stays exactly what's actually re-run at fire time (the
+            # follow-up fragment, resolved against context_sql) — never rewritten
+            # for readability, or generation would be working from different text
+            # than what the user actually asked. display_question is the separate,
+            # human-facing copy everywhere else (subject lines, /list, the "You
+            # asked" box in emails): when this agent was created from mid-thread
+            # follow-up text, prefix it with the thread's original question so a
+            # notification read days later is still self-explanatory instead of
+            # just "show me top 4" with no context.
+            display_question = question_en
+            if context_sql and main_question and _norm(main_question) != _norm(question_en):
+                display_question = f"{main_question} — {question_en}"
 
             if vn.classify_intent(question_en) == "write":
                 return {
@@ -9071,37 +10101,53 @@ class VannaFlaskApp(VannaFlaskAPI):
                     "error": "That looks like a write request — scheduled agents are strictly read-only.",
                 }, 409
 
-            channel = extraction.get("channel", "chat")
+            # Email is the only real delivery channel — chat was previously a
+            # silent fallback that pinged the OWNER's own chat inbox whenever no
+            # recipient could be resolved, which looked broken (a message with
+            # nobody actually assigned to it) and wasn't reliably seen anyway (it
+            # only surfaced if the owner happened to have the chat page open at
+            # the right moment — no push/notification exists). A NAMED-but-unknown
+            # recipient ("email this to Bob" when "Bob" isn't registered) is a
+            # likely typo/mistake worth catching, so that always asks rather than
+            # silently dropping what the user asked for; see the no-recipient-at-all
+            # case below for when nothing was named.
             email_recipients = []
-            if channel == "email":
-                email_labels = extraction.get("email_labels") or []
-                registered_by_label = {e["label"].lower(): e["address"] for e in registered_emails}
+            email_labels = extraction.get("email_labels") or []
+            registered_by_label = {e["label"].lower(): e["address"] for e in registered_emails}
 
-                if any(label.lower() == "all" for label in email_labels):
-                    email_recipients = list(registered_by_label.values())
-                elif email_labels:
-                    unknown = [label for label in email_labels if label.lower() not in registered_by_label]
-                    if unknown:
-                        known_list = ", ".join(e["label"] for e in registered_emails) or "(none registered)"
-                        return _ask_clarification(
-                            f"\"{unknown[0]}\" isn't a registered recipient. You have: {known_list} — which did you mean?"
-                        )
-                    email_recipients = [registered_by_label[label.lower()] for label in email_labels]
-                elif extraction.get("email_address"):
-                    email_recipients = [extraction["email_address"]]
-                elif len(registered_emails) == 1:
-                    email_recipients = [registered_emails[0]["address"]]
-                elif len(registered_emails) == 0:
-                    return {
-                        "type": "error",
-                        "error": "No email recipients configured for this workspace — ask your "
-                                 "admin to add some in the Email Recipients section of the DB config panel.",
-                    }, 400
-                else:
-                    known_list = ", ".join(e["label"] for e in registered_emails)
+            if any(label.lower() == "all" for label in email_labels):
+                email_recipients = list(registered_by_label.values())
+            elif email_labels:
+                unknown = [label for label in email_labels if label.lower() not in registered_by_label]
+                if unknown:
+                    known_list = ", ".join(e["label"] for e in registered_emails) or "(none registered)"
                     return _ask_clarification(
-                        f"You have multiple recipients configured ({known_list}) — who should I send this to?"
+                        f"\"{unknown[0]}\" isn't a registered recipient. You have: {known_list} — which did you mean?"
                     )
+                email_recipients = [registered_by_label[label.lower()] for label in email_labels]
+            elif extraction.get("email_address"):
+                email_recipients = [extraction["email_address"]]
+            elif len(registered_emails) == 1:
+                email_recipients = [registered_emails[0]["address"]]
+            # else: no recipient named at all, and either zero or multiple
+            # recipients are registered — ask who should receive it instead of
+            # silently creating an unassigned agent, below.
+
+            # A request from Teams with no explicit email goes back into that same
+            # Teams conversation instead of needing a recipient asked for — it
+            # already has a real, reliable delivery target (unlike the old
+            # chat-inbox fallback this replaced; see _deliver_to_teams below).
+            is_teams_request = bool(ctx and ctx.channel == "teams" and ctx.teams_aad_id)
+
+            if not email_recipients and not is_teams_request:
+                if registered_emails:
+                    known_list = ", ".join(e["label"] for e in registered_emails)
+                    return _ask_clarification(f"Who should receive this — {known_list}, or another email address?")
+                return _ask_clarification(
+                    "Who should receive this? Give me an email address, or ask your admin to register one first."
+                )
+
+            channel = "email" if email_recipients else "teams"
 
             # The whole read-modify-write cycle below (get -> validate -> persist)
             # runs under the per-workspace lock so it can't lose an update racing a
@@ -9170,7 +10216,47 @@ class VannaFlaskApp(VannaFlaskAPI):
                     initial_matched_keys = None
                     condition_preview_error = None
                     condition_row_count = 0
-                    if is_conditional:
+                    if is_conditional and analysis and analysis.get("condition_rule"):
+                        # Performance-based conditional (see extract_numeric_
+                        # condition in _handle_schedule_message above) — the
+                        # "condition" is a threshold on the remembered
+                        # check's own numeric result, not a plain data
+                        # question to regenerate SQL for. question_en here is
+                        # deliberately the ORIGINAL question (what's being
+                        # checked), not the condition text, so vn.generate_sql
+                        # would either fail outright (no trained example for
+                        # "how is the warehouse performing?") or answer a
+                        # different question than the one actually being
+                        # watched — seed the baseline from the same shared
+                        # runner the live chat answer and every poll use.
+                        configs = analysis["config"] if isinstance(analysis["config"], list) else [analysis["config"]]
+                        try:
+                            _preview_text, preview_df, _preview_types = self._run_performance_configs_and_summarize(
+                                configs, question_en, metadata.get("name") or str(workspace_id)
+                            )
+                        except Exception as check_exc:
+                            condition_preview_error = f"Condition check failed: {check_exc}"
+                            preview_df = None
+                        if preview_df is not None:
+                            is_safe, reason = _is_safe_eval_rule(analysis["condition_rule"], list(preview_df.columns))
+                            if not is_safe:
+                                condition_preview_error = f"Condition is no longer valid: {reason}"
+                            else:
+                                try:
+                                    mask = preview_df.eval(analysis["condition_rule"])
+                                    matching_df = preview_df[mask]
+                                    condition_row_count = len(matching_df)
+                                    initial_condition_state = condition_row_count > 0
+                                    preview_rows = matching_df.to_dict(orient="records")
+                                    initial_matched_keys = sorted({
+                                        key for key in (_condition_row_key(r) for r in preview_rows)
+                                        if key is not None
+                                    })
+                                except Exception as eval_exc:
+                                    condition_preview_error = f"Condition evaluation failed: {eval_exc}"
+                        if condition_preview_error:
+                            raise _ScheduleRequestError({"type": "error", "error": f"{label}Couldn't set up that condition: {condition_preview_error}"}, 400)
+                    elif is_conditional:
                         sql, *_rest = vn.generate_sql(question=question_en, workspace=metadata.get("name") or str(workspace_id))
                         if not vn.is_sql_valid(sql):
                             condition_preview_error = _explain_invalid_sql(sql)
@@ -9219,8 +10305,24 @@ class VannaFlaskApp(VannaFlaskAPI):
                         "workspace_name": metadata.get("name") or str(workspace_id),
                         "question_en": question_en,
                         "context_sql": context_sql,
-                        "display_question": schedule.get("condition_text") if is_conditional else question_en,
+                        # A conditional schedule normally means "the SQL
+                        # itself is the condition" (plain data questions) —
+                        # analysis (a prediction/anomaly/performance check)
+                        # has no SQL of its own to double as that, so it's
+                        # wiped by default for a conditional schedule UNLESS
+                        # it carries its own condition_rule (performance +
+                        # extract_numeric_condition — see _handle_schedule_
+                        # message above), in which case keeping it is the
+                        # whole point: _run_scheduled_question_locked's
+                        # analysis branch uses condition_rule to do the same
+                        # new-match diffing a plain-SQL conditional does.
+                        "analysis": (
+                            analysis if (not is_conditional or (analysis and analysis.get("condition_rule")))
+                            else None
+                        ),
+                        "display_question": schedule.get("condition_text") if is_conditional else display_question,
                         "channel": channel,
+                        "teams_aad_id": ctx.teams_aad_id if channel == "teams" else None,
                         "email_recipients": email_recipients,
                         "schedule": schedule,
                         "fortnight_anchor_ts": p["fires"][0].timestamp() if schedule.get("fortnight_anchor") else None,
@@ -9261,31 +10363,45 @@ class VannaFlaskApp(VannaFlaskAPI):
 
             note = ("Note: " + "; ".join(extraction["ambiguous"]) + "\n") if extraction.get("ambiguous") else ""
 
+            delivery_note = {
+                "email": "You'll be notified by email",
+                "teams": "You'll be notified in Microsoft Teams",
+            }.get(channel, "This isn't assigned to a recipient yet, so nothing will be sent "
+                           "until an admin assigns one from the Scheduled Agents panel")
+
             def _describe_created(c):
                 schedule = c["schedule"]
                 schedule_id = c["schedule_id"]
                 if c["is_conditional"]:
                     return (
-                        f"Watching: {schedule.get('condition_text', question_en)}, "
+                        f"Watching: {schedule.get('condition_text', display_question)}, "
                         f"checked every {schedule['seconds']}s. "
                         f"Currently: {c['condition_row_count']} record(s) match. "
-                        f"You'll be notified by {channel} whenever a NEW record starts matching — "
+                        f"{delivery_note} whenever a NEW record starts matching — "
                         f"not the {c['condition_row_count']} that already match now. "
                         f"Reply `/stop {schedule_id}` to cancel."
                     )
                 fire_list = " · ".join(f.strftime("%a %d %b %H:%M") for f in c["fires"])
                 return (
-                    f"Scheduled {_describe_schedule(schedule)}, by {channel}. "
+                    f"Scheduled {_describe_schedule(schedule)}. {delivery_note}. "
                     f"Next runs: {fire_list}. "
                     f"Reply `/stop {schedule_id}` to cancel."
                 )
 
             if not multi:
-                echo = f"{note}{question_en}\n{_describe_created(created[0])}"
+                echo = f"{note}{display_question}\n{_describe_created(created[0])}"
             else:
                 lines = "\n".join(f"{i + 1}. {_describe_created(c)}" for i, c in enumerate(created))
-                echo = f"{note}{question_en} — split into {len(created)} schedules:\n{lines}"
+                echo = f"{note}{display_question} — split into {len(created)} schedules:\n{lines}"
             return {"type": "text", "text": echo}, 200
+
+        # Exposed on self so _handle_query_message (a separate closure/scope,
+        # defined earlier in VannaFlaskAPI.__init__, though it runs on the same
+        # instance) can hand off to this when a resumed query clarification
+        # turns out to actually be a scheduling request — see the matching
+        # comment in _handle_query_message. Same pattern already used for
+        # self._handle_query_message below.
+        self._handle_schedule_message = _handle_schedule_message
 
         # ============= prediction/anomaly chat integration =============
 
@@ -9299,6 +10415,17 @@ class VannaFlaskApp(VannaFlaskAPI):
             with _pending_analysis_confirmations_lock:
                 pending = _pending_analysis_confirmations.get(key)
             return bool(pending) and time.time() - pending.get("created_at", 0) <= _PENDING_ANALYSIS_CONFIRMATION_TTL_SECONDS
+
+        def _has_pending_query_clarification(workspace_id, username):
+            """Peek (without consuming) whether (workspace_id, username) was just
+            asked a clarifying question about an ordinary data query that
+            generate_sql couldn't answer — used by the routing endpoints to force
+            the next reply down the query path instead of re-classifying it. The
+            actual pop+merge happens inside _handle_query_message itself."""
+            key = f"{workspace_id}:{username}"
+            with _pending_query_clarifications_lock:
+                pending = _pending_query_clarifications.get(key)
+            return bool(pending) and time.time() - pending.get("created_at", 0) <= _PENDING_QUERY_CLARIFICATION_TTL_SECONDS
 
         def _save_analysis_config(workspace_id, kind, config):
             """Upsert one prediction/anomaly config into the workspace's saved
@@ -9348,9 +10475,93 @@ class VannaFlaskApp(VannaFlaskAPI):
             body_text = f"{summary_text}\n\n{tail}" if summary_text else tail
             return {"type": "text", "text": body_text}
 
+        def _remember_analysis_run(key, question, kind, config):
+            with _last_analysis_runs_lock:
+                _last_analysis_runs[key] = {
+                    "question": question, "kind": kind, "config": config, "created_at": time.time(),
+                }
+
+        def _last_analysis_run_for(workspace_id, username, question):
+            """The check that answered `question` for this user, if it was their
+            latest prediction answer (and recent enough to still be "this")."""
+            with _last_analysis_runs_lock:
+                run = _last_analysis_runs.get(f"{workspace_id}:{username}")
+            if not run or time.time() - run["created_at"] > _LAST_ANALYSIS_RUN_TTL_SECONDS:
+                return None
+            if question and run["question"].strip().lower() != question.strip().lower():
+                return None
+            return run
+
+        def _last_performance_run_for(workspace_id, username):
+            """The user's most recent remembered performance-check answer,
+            regardless of its exact question text — unlike
+            _last_analysis_run_for above (used for "send this"/conditional-
+            alert follow-ups, which must match the prior question verbatim),
+            a methodology question ("how is this calculated?") is itself a
+            NEW question, not a repeat of the old one, so requiring an exact
+            match would never find anything."""
+            with _last_analysis_runs_lock:
+                run = _last_analysis_runs.get(f"{workspace_id}:{username}")
+            if not run or run.get("kind") != "performance":
+                return None
+            if time.time() - run["created_at"] > _LAST_ANALYSIS_RUN_TTL_SECONDS:
+                return None
+            return run
+
+        def _last_prediction_or_anomaly_run_for(workspace_id, username):
+            """Same as _last_performance_run_for, but for the user's most
+            recent remembered prediction OR anomaly answer — the fallback
+            used when a methodology question names no specific check."""
+            with _last_analysis_runs_lock:
+                run = _last_analysis_runs.get(f"{workspace_id}:{username}")
+            if not run or run.get("kind") not in ("prediction", "anomaly"):
+                return None
+            if time.time() - run["created_at"] > _LAST_ANALYSIS_RUN_TTL_SECONDS:
+                return None
+            return run
+
+        def _run_analysis_check(workspace_id, kind, config, question, workspace_name):
+            """Runs a stored prediction/anomaly/performance check once, without
+            any chat state. Returns (reply_text, rows), or (None, error_text)
+            when it fails.
+
+            config is a single config dict for "prediction"/"anomaly", but a
+            LIST of one or more config dicts for "performance" — a remembered
+            performance answer may have come from several merged checks (see
+            _run_performance_configs_and_summarize), and re-running it later
+            (a "send this", or a conditional scheduled poll) needs to merge
+            the same way the original chat answer did."""
+            if kind == "performance":
+                configs = config if isinstance(config, list) else [config]
+                reply_text, df, _ran_types = self._run_performance_configs_and_summarize(
+                    configs, question, workspace_name
+                )
+                if df is None:
+                    return None, reply_text or "the check failed to run"
+                return reply_text, df.to_dict(orient="records")
+            if kind == "prediction":
+                body, status = _run_prediction_config(workspace_id, config=config)
+                rows = body.get("df") if status == 200 else None
+            else:
+                body, status = _run_anomaly_config(workspace_id, config=config)
+                rows = body.get("results") if status == 200 else None
+            if status != 200:
+                return None, body.get("error") or "the check failed to run"
+            reply = _summarize_analysis_result(rows, question, workspace_name, kind, config.get("sql_query"))
+            return reply["text"], rows or []
+
+        self._last_analysis_run_for = _last_analysis_run_for
+        self._last_performance_run_for = _last_performance_run_for
+        self._last_prediction_or_anomaly_run_for = _last_prediction_or_anomaly_run_for
+        self._run_analysis_check = _run_analysis_check
+        self._remember_analysis_run = _remember_analysis_run
+
         _AFFIRMATIVE_ANALYSIS_REPLIES = {
             "yes", "y", "yep", "yeah", "sure", "save", "save it", "please save",
             "ok", "okay", "confirm", "do it", "go ahead", "yes please",
+        }
+        _NEGATIVE_ANALYSIS_REPLIES = {
+            "no", "n", "nope", "nah", "don't save", "do not save", "skip", "cancel", "no thanks",
         }
 
         def _handle_prediction_message(workspace_id, raw_text, username):
@@ -9367,7 +10578,75 @@ class VannaFlaskApp(VannaFlaskAPI):
             with _pending_analysis_confirmations_lock:
                 pending = _pending_analysis_confirmations.pop(pending_key, None)
 
+            # Also discard any pending QUERY clarification — same reasoning as
+            # the matching discard in _handle_schedule_message: an explicit
+            # trip into the prediction pipeline means the user has moved on
+            # from whatever query clarification was open. A no-op when this
+            # call IS the reclassification handoff from _handle_query_message,
+            # since that already popped it before calling here.
+            with _pending_query_clarifications_lock:
+                _pending_query_clarifications.pop(pending_key, None)
+
+            def _fallback_to_query_or(apology_text):
+                """
+                classify_message_route's "prediction" label is a UX router, not
+                proof a forecast/anomaly check is actually what's needed — e.g.
+                "orders at risk of missing their delivery date" reads like the
+                classifier's own prediction example, but is really a concrete,
+                current-state condition (promised_date vs. today, not yet
+                shipped) that a plain trained SQL question can already answer,
+                same as the AI Fix Agent's SLA Risk Radar job. Rather than
+                dead-ending here when the prediction/anomaly pipeline can't
+                build a reliable check, give the ordinary query pipeline a
+                chance at the same raw text before giving up.
+                """
+                try:
+                    query_body, query_status = self._handle_query_message(raw_text, None, workspace_id)
+                except Exception as fallback_exc:
+                    logger.warning(f"Prediction-pipeline fallback to query failed: {fallback_exc}")
+                    return {"type": "text", "text": apology_text}, 200
+                if query_status == 200 and query_body.get("type") == "sql":
+                    return query_body, query_status
+                # No SQL, but the query pipeline asked the user a clarifying question
+                # (and left a pending clarification for their reply) — that's a
+                # useful answer, far better than the generic apology below.
+                with _pending_query_clarifications_lock:
+                    asked_user = pending_key in _pending_query_clarifications
+                if query_status == 200 and asked_user and query_body.get("text"):
+                    return query_body, query_status
+                # The query pipeline didn't produce an answer either (e.g. "Insufficient
+                # data for query.") — on that path _handle_query_message may have just
+                # opened a query clarification for this same user/workspace, inviting a
+                # follow-up reply. We're discarding its result in favor of the apology
+                # below, so that invitation must be discarded too — otherwise the user's
+                # NEXT, completely unrelated message would silently get merged with this
+                # probe's dead-end text (the exact "normal question doesn't answer after
+                # a prediction/anomaly question" failure mode this fallback exists to fix).
+                with _pending_query_clarifications_lock:
+                    _pending_query_clarifications.pop(pending_key, None)
+                return {"type": "text", "text": apology_text}, 200
+
             if pending and time.time() - pending.get("created_at", 0) <= _PENDING_ANALYSIS_CONFIRMATION_TTL_SECONDS:
+                # "How is this calculated?" right after the "want me to save
+                # this?" prompt is the single most direct case there is for a
+                # methodology question — pending["config"] IS literally what
+                # "this" refers to, with no matching/fallback needed at all.
+                # Found live: before this check, this exact message ("predict
+                # next month's order volume" -> "how is this calculated")
+                # fell through to the yes/no handling below, which isn't a
+                # yes or no, so it would have gone through the generic
+                # reroute path and come out as "the question is too vague" —
+                # the ad-hoc check was never saved, so
+                # _try_match_analysis_methodology's own last-run fallback
+                # inside _handle_query_message never got a chance to run,
+                # since this whole branch is reached BEFORE _handle_query_message
+                # is ever called for a message while a confirmation is pending.
+                if _METHODOLOGY_CUE.search(raw_text):
+                    explanation = vn.generate_analysis_methodology_explanation(
+                        raw_text, pending["kind"], pending["config"]
+                    )
+                    if explanation:
+                        return {"type": "text", "text": explanation}, 200
                 if raw_text.strip().lower() in _AFFIRMATIVE_ANALYSIS_REPLIES:
                     saved = _save_analysis_config(workspace_id, pending["kind"], pending["config"])
                     if saved:
@@ -9377,7 +10656,55 @@ class VannaFlaskApp(VannaFlaskAPI):
                                     f"check — you can run it again anytime by asking about it.",
                         }, 200
                     return {"type": "error", "error": "Couldn't save that check — workspace not found."}, 404
-                return {"type": "text", "text": "No problem, I won't save that as a reusable check."}, 200
+                if raw_text.strip().lower() in _NEGATIVE_ANALYSIS_REPLIES:
+                    return {"type": "text", "text": "No problem, I won't save that as a reusable check."}, 200
+                # Not a recognizable yes/no at all — the user didn't answer the save
+                # prompt, they've moved on to something else (e.g. a completely
+                # unrelated follow-up question asked within the same 10-minute
+                # window). Before this fix, that case fell through to the "no"
+                # reply below, silently discarding the user's real question as
+                # an implicit decline for up to 10 minutes. Re-route it fresh
+                # instead, same as the analogous schedule/query "moved on"
+                # discard above.
+                try:
+                    reroute_initialized, _reroute_err = self.ensure_vanna_initialized(workspace_id)
+                    reroute_ws_meta = get_workspace_metadata(self, workspace_id) or {}
+                    ws_name = reroute_ws_meta.get("name")
+                    if not reroute_initialized or _dataset_route(clean_question(raw_text), ws_name):
+                        route = "query"   # a dataset question isn't an answer to "save this check?"
+                    else:
+                        route = vn.classify_message_route(raw_text)
+                except Exception as reroute_exc:
+                    logger.warning(f"Re-routing after stale analysis confirmation failed: {reroute_exc}")
+                    route = "query"
+                    reroute_ws_meta = {}
+                if route == "schedule":
+                    # "send this to X" here means the prediction answer just given.
+                    last_run = _last_analysis_run_for(workspace_id, username, None)
+                    return self._handle_schedule_message(
+                        workspace_id, raw_text, last_run["question"] if last_run else None, username, None,
+                        prior_kind="prediction" if last_run else None,
+                    )
+                if route != "prediction":
+                    return self._handle_query_message(raw_text, None, workspace_id)
+                # route == "prediction": a saved performance config is always a
+                # better answer than an ad-hoc one when both could apply (same
+                # rationale as route_message's "prediction" branch) — try one
+                # before falling through to the normal fresh-match logic below.
+                # Found live: a stale "want to save this?" confirmation from
+                # an earlier, unrelated prediction/anomaly question left this
+                # reroute as the ONLY path a later message like "are exceptions
+                # trending up or down?" went through (the early
+                # _has_pending_analysis_confirmation check in route_message
+                # sends straight here, skipping route_message's own "prediction"
+                # branch entirely) — so this path needs the same safety net,
+                # not just that one.
+                perf_summary_text = self._try_match_performance_config(
+                    raw_text, ws_name or workspace_id, reroute_ws_meta, workspace_id, username
+                )
+                if perf_summary_text is not None:
+                    return {"type": "text", "text": perf_summary_text}, 200
+                # no performance config matched: fall through to the normal fresh-match logic below.
 
             initialized, init_err = self.ensure_vanna_initialized(workspace_id)
             if not initialized:
@@ -9390,16 +10717,28 @@ class VannaFlaskApp(VannaFlaskAPI):
 
             predictions = [p for p in json.loads(workspace.get("predictions", "[]")) if p.get("enabled", True)]
             anomalies = [a for a in json.loads(workspace.get("anomalies", "[]")) if a.get("enabled", True)]
+            def _sql_tables(sql):
+                # Saved checks often have no table/justification filled in, leaving
+                # the matcher only a name to go on — the tables its SQL actually
+                # reads say far more about what it's for.
+                return ", ".join(dict.fromkeys(
+                    m.split(".")[-1].strip("[]")
+                    for m in re.findall(r"\b(?:FROM|JOIN)\s+([\w.\[\]]+)", sql or "", re.I)
+                )) or None
+
             configs = (
                 [{
                     "kind": "prediction", "type": p.get("type"),
                     "name": p.get("prediction_name") or p.get("type"),
-                    "table": p.get("table_names"), "justification": p.get("justification"),
+                    "table": p.get("table_names") or _sql_tables(p.get("sql_query")),
+                    "predicts": (p.get("parameters") or {}).get("target"),
+                    "justification": p.get("justification"),
                 } for p in predictions]
                 + [{
                     "kind": "anomaly", "type": a.get("type"),
                     "name": a.get("anomaly_name") or a.get("type"),
-                    "table": a.get("table_name"), "justification": a.get("justification"),
+                    "table": a.get("table_name") or _sql_tables(a.get("sql_query")),
+                    "justification": a.get("justification"),
                 } for a in anomalies]
             )
 
@@ -9412,7 +10751,13 @@ class VannaFlaskApp(VannaFlaskAPI):
 
             match = vn.match_analysis_config(raw_text, configs, tables)
 
-            if match.get("matched"):
+            # A broken saved check (e.g. its features no longer match its own SQL's
+            # columns) used to surface its raw error — "Invalid features or target
+            # column." — as the whole reply. The user asked a question, not to run
+            # that check: log it for the admin, drop it, and re-match, so another
+            # saved check, a fresh one, or plain SQL can still answer. Terminates:
+            # each pass removes one config, and a match must name a remaining one.
+            while match.get("matched"):
                 kind = match["kind"]
                 cfg_type = match["type"]
                 matched_cfg = next((c for c in (predictions if kind == "prediction" else anomalies) if c.get("type") == cfg_type), {})
@@ -9423,24 +10768,30 @@ class VannaFlaskApp(VannaFlaskAPI):
                     body, status = _run_anomaly_config(workspace_id, cfg_type)
                     rows = body.get("results") if status == 200 else None
 
-                if status != 200:
-                    return {"type": "error", "error": body.get("error", "That check failed to run.")}, status
+                if status == 200:
+                    _remember_analysis_run(pending_key, raw_text, kind, matched_cfg)
+                    name = matched_cfg.get("prediction_name") or matched_cfg.get("anomaly_name") or cfg_type
+                    matched_reply = _summarize_analysis_result(rows, name, workspace_name, kind, matched_cfg.get("sql_query"))
+                    if body.get("truncated"):
+                        matched_reply["text"] = f"{matched_reply['text']}\n\n{body['truncated_note']}"
+                    return matched_reply, 200
 
-                name = matched_cfg.get("prediction_name") or matched_cfg.get("anomaly_name") or cfg_type
-                matched_reply = _summarize_analysis_result(rows, name, workspace_name, kind, matched_cfg.get("sql_query"))
-                if body.get("truncated"):
-                    matched_reply["text"] = f"{matched_reply['text']}\n\n{body['truncated_note']}"
-                return matched_reply, 200
+                logger.warning(
+                    f"Saved {kind} check {cfg_type!r} matched {raw_text!r} but failed to run: "
+                    f"{body.get('error')} — trying without it.",
+                    extra={"admin": True},
+                )
+                configs = [c for c in configs if not (c.get("kind") == kind and c.get("type") == cfg_type)]
+                match = vn.match_analysis_config(raw_text, configs, tables)
 
             # No existing config matched — generate one on the fly.
             kind = match.get("kind", "prediction")
             table = match.get("suggested_table")
             if not table:
-                return {
-                    "type": "text",
-                    "text": "I don't have enough documented tables in this workspace to build that check "
-                            "yet — ask your admin to add table documentation first.",
-                }, 200
+                return _fallback_to_query_or(
+                    "I don't have enough documented tables in this workspace to build that check "
+                    "yet — ask your admin to add table documentation first."
+                )
 
             try:
                 if kind == "prediction":
@@ -9449,7 +10800,7 @@ class VannaFlaskApp(VannaFlaskAPI):
                     suggestion_raw, *_rest = vn.get_anomaly_suggestions(table=table, user_query=raw_text, workspace=workspace_name)
             except Exception as suggest_exc:
                 logger.error(f"Failed to generate {kind} suggestion for table {table}: {suggest_exc}")
-                return {"type": "error", "error": f"Couldn't build a {kind} check for that: {suggest_exc}"}, 500
+                return _fallback_to_query_or(f"Couldn't build a {kind} check for that: {suggest_exc}")
 
             try:
                 parsed = json.loads(suggestion_raw)
@@ -9457,11 +10808,10 @@ class VannaFlaskApp(VannaFlaskAPI):
             except Exception:
                 suggestion = None
             if not suggestion:
-                return {
-                    "type": "text",
-                    "text": f"I couldn't work out a reliable {kind} check for that yet — try rephrasing, "
-                            f"or ask your admin to add one from the dashboard.",
-                }, 200
+                return _fallback_to_query_or(
+                    f"I couldn't work out a reliable {kind} check for that yet — try rephrasing, "
+                    f"or ask your admin to add one from the dashboard."
+                )
 
             name_field = "prediction_name" if kind == "prediction" else "anomaly_name"
             table_field = "table_names" if kind == "prediction" else "table_name"
@@ -9498,12 +10848,12 @@ class VannaFlaskApp(VannaFlaskAPI):
                 # for the "bad SQL" case (both mean "I couldn't build a
                 # reliable check for that").
                 logger.warning(f"Freshly-generated {kind} check for table {table} failed to run: {body.get('error')}")
-                return {
-                    "type": "text",
-                    "text": f"I wasn't able to build a reliable {kind} check for that yet — try rephrasing, "
-                            f"or ask your admin to set one up from the dashboard.",
-                }, 200
+                return _fallback_to_query_or(
+                    f"I wasn't able to build a reliable {kind} check for that yet — try rephrasing, "
+                    f"or ask your admin to set one up from the dashboard."
+                )
 
+            _remember_analysis_run(pending_key, raw_text, kind, config)
             reply = _summarize_analysis_result(rows, name, workspace_name, kind, config.get("sql_query"))
             if body.get("truncated"):
                 reply["text"] = f"{reply['text']}\n\n{body['truncated_note']}"
@@ -9519,6 +10869,60 @@ class VannaFlaskApp(VannaFlaskAPI):
                     "created_at": time.time(),
                 }
             return reply, 200
+
+        # Exposed on self for the same reason as self._handle_schedule_message
+        # above — lets _handle_query_message hand off here if a resumed query
+        # clarification turns out to be a prediction/anomaly request instead.
+        self._handle_prediction_message = _handle_prediction_message
+
+        def _try_performance_or_methodology_before_prediction(workspace_id, raw_text, username):
+            """
+            Shared gate for every entry point that has labeled a message
+            "prediction" before it reaches the ad-hoc prediction/anomaly
+            pipeline (_handle_prediction_message) — classify_message_route
+            reads "trend"/"abnormal pattern" language the same way for a
+            management performance question ("are exceptions trending up or
+            down?") as it does for a genuine ad-hoc anomaly request. An
+            admin-validated performance config, or an existing check's
+            methodology explanation, is always a better answer than a fresh
+            ad-hoc check when either applies, so try both here first.
+
+            Originally inlined in route_message's "prediction" branch only —
+            found live that the web chat UI never calls route_message for an
+            ordinary typed message at all; it calls classify_message_route_
+            endpoint to get the label, then POSTs straight to
+            run_matched_analysis_route for a "prediction" label, which had
+            none of this and went directly to _handle_prediction_message. The
+            route_message branch's fix was effectively dead for the actual
+            browser chat.
+
+            Returns (body_dict, status) if answered here, else None — None
+            means "fall through to _handle_prediction_message".
+            """
+            ws_meta = get_workspace_metadata(self, workspace_id) or {}
+            ws_name = ws_meta.get("name")
+            perf_summary_text = self._try_match_performance_config(
+                raw_text, ws_name or workspace_id, ws_meta, workspace_id, username
+            )
+            if perf_summary_text is not None:
+                return {"type": "text", "text": perf_summary_text}, 200
+            if _METHODOLOGY_CUE.search(raw_text):
+                # A methodology question can carry a prediction/anomaly cue
+                # word itself ("how is the order volume FORECAST calculated?",
+                # "how is this ANOMALY check done?") — without this,
+                # _handle_prediction_message would match its own saved config
+                # by name and actually RE-RUN the forecast/anomaly check
+                # instead of explaining it.
+                analysis_kind, analysis_config = self._try_match_analysis_methodology(
+                    raw_text, ws_meta, workspace_id, username
+                )
+                if analysis_config:
+                    analysis_explanation = vn.generate_analysis_methodology_explanation(
+                        raw_text, analysis_kind, analysis_config
+                    )
+                    if analysis_explanation:
+                        return {"type": "text", "text": analysis_explanation}, 200
+            return None
 
         @self.flask_app.route('/api/v0/run_matched_analysis', methods=['POST'])
         @self.requires_auth
@@ -9537,7 +10941,35 @@ class VannaFlaskApp(VannaFlaskAPI):
             if not raw_text:
                 return jsonify({"type": "error", "error": "No message provided"}), 400
 
-            body, status = _handle_prediction_message(workspace_id, raw_text, username)
+            # vn is bound per-thread by ensure_vanna_initialized (see its
+            # docstring) — this route previously never called it itself,
+            # relying entirely on some earlier request having already bound
+            # vn on whichever waitress worker thread picks this one up.
+            # Found live: a worker thread that hadn't yet served a request
+            # going through classify_message_route_endpoint/route_message
+            # (which do call it) hit "'_OpenAIVanna' object has no attribute
+            # 'client'" the moment _try_performance_or_methodology_before_
+            # prediction's performance-config match tried its first LLM
+            # call — exactly the failure mode ensure_vanna_initialized exists
+            # to prevent everywhere else in this file.
+            initialized, init_err = self.ensure_vanna_initialized(workspace_id)
+            if not initialized:
+                return jsonify({"type": "error", "error": init_err}), 400
+
+            # A pending "save this check?" confirmation must be resolved by
+            # _handle_prediction_message directly — a bare "yes"/"no" reply
+            # (or a "how is this calculated?" about the check just shown,
+            # which _handle_prediction_message already handles against
+            # pending["config"]) isn't a fresh question to re-match against
+            # performance configs.
+            if _has_pending_analysis_confirmation(workspace_id, username):
+                result = None
+            else:
+                result = _try_performance_or_methodology_before_prediction(workspace_id, raw_text, username)
+            if result is not None:
+                body, status = result
+            else:
+                body, status = _handle_prediction_message(workspace_id, raw_text, username)
             return jsonify(body), status
 
         # ============= end prediction/anomaly chat integration =============
@@ -9558,6 +10990,7 @@ class VannaFlaskApp(VannaFlaskAPI):
             raw_text = (data.get('text') or '').strip()
             prior_question = data.get('prior_question')
             prior_sql = data.get('prior_sql')
+            main_question = data.get('main_question')
 
             username = user.get("username") if isinstance(user, dict) else getattr(user, "username", None)
             if not workspace_id or not username:
@@ -9569,7 +11002,7 @@ class VannaFlaskApp(VannaFlaskAPI):
                 body, status = _wpa.handle_chat(user, workspace_id, raw_text)
                 return jsonify(body), status
 
-            body, status = _handle_schedule_message(workspace_id, raw_text, prior_question, username, prior_sql)
+            body, status = _handle_schedule_message(workspace_id, raw_text, prior_question, username, prior_sql, main_question=main_question, prior_kind=data.get('prior_kind'))
             return jsonify(body), status
 
         @self.flask_app.route('/api/v0/route_message', methods=['POST'])
@@ -9591,6 +11024,7 @@ class VannaFlaskApp(VannaFlaskAPI):
             raw_text = (data.get('text') or '').strip()
             prior_question = data.get('prior_question')
             previous_sql = data.get('sql')
+            main_question = data.get('main_question')
 
             username = user.get("username") if isinstance(user, dict) else getattr(user, "username", None)
             if not workspace_id or not username:
@@ -9603,22 +11037,163 @@ class VannaFlaskApp(VannaFlaskAPI):
                 body, status = _wpa.handle_chat(user, workspace_id, raw_text)
                 return jsonify(body), status
 
-            if raw_text.startswith('/') or _has_pending_clarification(workspace_id, username):
-                body, status = _handle_schedule_message(workspace_id, raw_text, prior_question, username, previous_sql)
+            if raw_text.startswith('/') or _has_pending_clarification(workspace_id, username, raw_text):
+                body, status = _handle_schedule_message(workspace_id, raw_text, prior_question, username, previous_sql, main_question=main_question, prior_kind=data.get('prior_kind'))
                 return jsonify(body), status
 
             if _has_pending_analysis_confirmation(workspace_id, username):
                 body, status = _handle_prediction_message(workspace_id, raw_text, username)
                 return jsonify(body), status
 
-            route = vn.classify_message_route(raw_text)
+            if _has_pending_query_clarification(workspace_id, username):
+                body, status = self._handle_query_message(raw_text, previous_sql, workspace)
+                return jsonify(body), status
+
+            # vn is a lazily-initialized global — on a fresh process this may be
+            # the very first request to touch it. Found live: calling this
+            # route before any other request had initialized vn crashed with
+            # AttributeError: 'NoneType' object has no attribute
+            # 'classify_message_route' instead of a clean error. Same fix
+            # already applied to classify_message_route_endpoint above.
+            initialized, init_err = ensure_vanna_initialized(self, workspace_id)
+            if not initialized:
+                return jsonify({"type": "error", "error": init_err}), 400
+
+            # Trained question → its stored SQL, never an LLM re-route.
+            ws_meta = get_workspace_metadata(self, workspace_id) or {}
+            ws_name = ws_meta.get("name")
+            if _dataset_route(clean_question(raw_text), ws_name):
+                route = "query"
+            else:
+                route = vn.classify_message_route(raw_text)
             if route == "schedule":
-                body, status = _handle_schedule_message(workspace_id, raw_text, prior_question, username, previous_sql)
+                body, status = _handle_schedule_message(workspace_id, raw_text, prior_question, username, previous_sql, main_question=main_question, prior_kind=data.get('prior_kind'))
             elif route == "prediction":
-                body, status = _handle_prediction_message(workspace_id, raw_text, username)
+                # Admin-validated performance config / methodology explanation
+                # before the ad-hoc prediction/anomaly pipeline — see
+                # _try_performance_or_methodology_before_prediction.
+                result = _try_performance_or_methodology_before_prediction(workspace_id, raw_text, username)
+                if result is not None:
+                    body, status = result
+                else:
+                    body, status = _handle_prediction_message(workspace_id, raw_text, username)
             else:
                 body, status = self._handle_query_message(raw_text, previous_sql, workspace)
             return jsonify(body), status
+
+        def run_chat_turn(ctx, text, state=None):
+            """
+            One complete chat turn for a caller with no HTTP session (Teams).
+            Routes exactly like route_message; then, unlike the web flow (where
+            the browser drives run_sql / generate_summary as separate calls),
+            also runs the query and summarizes it, so the channel gets a full
+            answer in one reply.
+
+            Must be called with ctx.workspace_id's Vanna instance bound to the
+            current thread (vn.bound_to), e.g. by the Teams bot's worker pool.
+
+            state: per-conversation dict carrying follow-up context between
+            turns ("previous_sql", "prior_question"); updated in place.
+
+            Returns a dict with "kind" = "answer" | "text" | "write_confirmation" | "error":
+              answer:              text (summary), columns, rows (<=10), total_rows, sql, language, question_id
+              text / error:        text
+              write_confirmation:  text (SQL), write_id, preview, question
+            """
+            state = state if state is not None else {}
+            raw_text = (text or "").strip()
+            if not raw_text:
+                return {"kind": "error", "text": "No message provided"}
+
+            prior_question = state.get("prior_question")
+            previous_sql = state.get("previous_sql")
+
+            if raw_text.startswith('/') or _has_pending_clarification(ctx.workspace_id, ctx.username, raw_text):
+                route = "schedule"
+            elif _dataset_route(clean_question(raw_text), ctx.workspace_name):
+                route = "query"   # trained question (or close rephrasing) → answered from the dataset
+            else:
+                route = vn.classify_message_route(raw_text)
+
+            if route == "schedule":
+                body, _status = _handle_schedule_message(
+                    ctx.workspace_id, raw_text, prior_question, ctx.username, previous_sql, ctx=ctx
+                )
+                is_error = body.get("type") == "error"
+                return {"kind": "error" if is_error else "text", "text": body.get("error") if is_error else body.get("text", "")}
+
+            body, _status = self._handle_query_message(raw_text, previous_sql, ctx.workspace_name, ctx=ctx)
+            body_type = body.get("type")
+            if body_type == "write_confirmation":
+                return {
+                    "kind": "write_confirmation",
+                    "text": body.get("text"),
+                    "write_id": body.get("write_id"),
+                    "preview": body.get("preview") or {},
+                    "question": body.get("original_question") or raw_text,
+                }
+            if body_type != "sql":
+                # "Insufficient data for query." and other non-SQL answers.
+                is_error = body_type == "error"
+                return {"kind": "error" if is_error else "text", "text": body.get("error") if is_error else body.get("text", "")}
+
+            sql = body["text"]
+            question_id = body.get("id")
+            language = body.get("detected_language") or "en"
+            question_en = body.get("translated_question") or raw_text
+
+            try:
+                df = vn.run_sql(sql=sql)
+            except TimeoutError:
+                return {"kind": "error", "sql": sql,
+                        "text": "The query ran for more than 15 seconds and was stopped to protect the database. Try narrowing it down."}
+            except Exception as e:
+                logger.error(f"run_chat_turn: SQL execution failed: {e}", exc_info=True, extra={"admin": True})
+                return {"kind": "error", "sql": sql, "text": friendly_sql_error(str(e))}
+
+            state["previous_sql"] = sql
+            state["prior_question"] = raw_text
+
+            if df is None or df.empty:
+                return {
+                    "kind": "answer", "text": translate_text("No data available for your request.", language),
+                    "columns": [], "rows": [], "total_rows": 0, "sql": sql,
+                    "language": language, "question_id": question_id,
+                }
+
+            summary = ""
+            try:
+                summary_en, total, inp, out, model = vn.generate_summary(
+                    question=question_en, df=df, sql=sql, workspace=ctx.workspace_name
+                )
+                summary = translate_text(summary_en, language)
+                cost_usd = self.log_token_count(
+                    question_id=question_id, total_tokens=total, input_tokens=inp,
+                    output_tokens=out, model_name=model, cached_input_tokens=0, user_id=ctx.user_id,
+                )
+                self.log_user_activity(
+                    question_id=question_id, question=raw_text, sql_query=sql, summary=summary,
+                    workspace_name=ctx.workspace_name, workspace_id=ctx.workspace_id,
+                    user_role=ctx.username, user_id=ctx.user_id, token_count=total,
+                    input_tokens=inp, output_tokens=out, model_name=model,
+                    cost_usd=cost_usd, detected_language=language,
+                )
+            except Exception as e:
+                logger.error(f"run_chat_turn: summary failed: {e}", exc_info=True, extra={"admin": True})
+
+            return {
+                "kind": "answer",
+                "text": summary,
+                "columns": [str(c) for c in df.columns],
+                # to_json handles numpy types, NaN -> null and timestamps -> ISO strings.
+                "rows": json.loads(df.head(10).to_json(orient="records", date_format="iso")),
+                "total_rows": int(len(df)),
+                "sql": sql,
+                "language": language,
+                "question_id": question_id,
+            }
+
+        self.run_chat_turn = run_chat_turn
 
         @self.flask_app.route('/api/v0/classify_message_route', methods=['POST'])
         @self.requires_auth
@@ -9648,16 +11223,34 @@ class VannaFlaskApp(VannaFlaskAPI):
                 return jsonify({"type": "route", "route": "query"})
             if raw_text.startswith('/'):
                 return jsonify({"type": "route", "route": "schedule"})
-            if workspace_id and username and _has_pending_clarification(workspace_id, username):
+            if workspace_id and username and _has_pending_clarification(workspace_id, username, raw_text):
                 return jsonify({"type": "route", "route": "schedule"})
-            if workspace_id and username and _has_pending_analysis_confirmation(workspace_id, username):
-                return jsonify({"type": "route", "route": "prediction"})
 
             # vn is a lazily-initialized global — on a fresh process this may be
             # the very first request to touch it. Fail open to "query" (the
             # existing RAG flow already handles an un-initialized vn with its
             # own clear error) rather than a raw 500 if init fails.
             initialized, _init_err = ensure_vanna_initialized(self, workspace_id) if workspace_id else (False, "no workspace_id")
+
+            # A trained question, or a close rephrasing of one, is answered from
+            # the dataset. Checked before a pending "save this check?" prompt and
+            # before the LLM classifier, which both used to send questions like
+            # "Show me orders at risk of missing delivery" to the prediction
+            # pipeline. "trained" (exact only) lets the chat skip its follow-up
+            # rewrite step: the stored SQL answers the question as asked.
+            if initialized:
+                ws_meta = get_workspace_metadata(self, workspace_id) or {}
+                dataset = _dataset_route(clean_question(raw_text), ws_meta.get("name"))
+                if dataset:
+                    return jsonify({"type": "route", "route": "query", "trained": dataset == "exact"})
+
+            # "send this to X" after a prediction is a delivery request, not an
+            # answer to its "save this check?" prompt.
+            if (workspace_id and username and not DELIVERY_CUES.search(raw_text)
+                    and _has_pending_analysis_confirmation(workspace_id, username)):
+                return jsonify({"type": "route", "route": "prediction"})
+            if workspace_id and username and _has_pending_query_clarification(workspace_id, username):
+                return jsonify({"type": "route", "route": "query"})
             if not initialized:
                 return jsonify({"type": "route", "route": "query"})
             return jsonify({"type": "route", "route": vn.classify_message_route(raw_text)})
@@ -9795,6 +11388,58 @@ class VannaFlaskApp(VannaFlaskAPI):
                 records = [r for r in records if r.get("schedule_id") != schedule_id]
                 _save_schedule_records(workspace_id, metadata, records)
             return jsonify({"success": True})
+
+        @self.flask_app.route('/api/v0/scheduled_agents/update_recipients', methods=['POST'])
+        @self.requires_auth
+        @self.requires_role(["admin", "superadmin"])
+        def update_scheduled_agent_recipients_route(user=None):
+            """
+            Lets an admin assign or change WHO an existing scheduled/conditional
+            agent sends to, without recreating it — found missing during manual
+            conditional-agent testing (the admin panel showed Stop/Resume/Delete but
+            no way to see or edit the recipient, and a chat-channel agent had no
+            recipient at all — it silently fell back to notifying whoever happened
+            to be its owner). Works on ANY agent regardless of its current channel:
+            assigning one or more recipients here converts it to email delivery
+            going to those addresses specifically, replacing the owner-chat-inbox
+            fallback. Only accepts addresses already registered in the workspace's
+            email config (same "never invent a recipient" policy used when a
+            schedule is first created via chat).
+            """
+            data = request.json or {}
+            workspace_id = data.get('workspace_id')
+            schedule_id = data.get('schedule_id')
+            submitted = data.get('email_recipients')
+            if not workspace_id or not schedule_id:
+                return jsonify({"type": "error", "error": "workspace_id and schedule_id are required"}), 400
+            if not isinstance(submitted, list):
+                return jsonify({"type": "error", "error": "email_recipients must be a list"}), 400
+
+            with _get_schedule_records_lock(workspace_id):
+                metadata, records = _get_schedule_records(workspace_id)
+                if metadata is None:
+                    return jsonify({"type": "error", "error": "Workspace not found"}), 404
+                record = next((r for r in records if r.get("schedule_id") == schedule_id), None)
+                if not record:
+                    return jsonify({"type": "error", "error": f"No scheduled agent {schedule_id} found."}), 404
+
+                registered = {e.get("address") for e in _get_workspace_emails(workspace_id) if e.get("address")}
+                cleaned = []
+                for addr in submitted:
+                    addr = addr.strip() if isinstance(addr, str) else ""
+                    if not addr:
+                        continue
+                    if addr not in registered:
+                        return jsonify({"type": "error", "error": f"'{addr}' isn't a registered recipient for this workspace."}), 400
+                    if addr not in cleaned:
+                        cleaned.append(addr)
+                if not cleaned:
+                    return jsonify({"type": "error", "error": "At least one recipient is required."}), 400
+
+                record["email_recipients"] = cleaned
+                record["channel"] = "email"
+                _save_schedule_records(workspace_id, metadata, records)
+            return jsonify({"success": True, "email_recipients": cleaned, "channel": "email"})
 
         @self.flask_app.route('/api/v0/scheduled_questions/poll', methods=['POST'])
         @self.requires_auth
@@ -10160,6 +11805,287 @@ class VannaFlaskApp(VannaFlaskAPI):
                 logger.error(f"Unexpected error in get_anomaly_configs for workspace {workspace_id}: {str(e)}", exc_info=True)
                 return jsonify({"type": "error", "error": f"Failed to retrieve anomalies: {str(e)}"}), 500
 
+        @self.flask_app.route('/save_performance_config', methods=['POST'])
+        def save_performance_config():
+            """
+            Save or update performance-check configurations for a workspace —
+            same upsert-by-type shape as save_anomaly_config/save_prediction_config.
+
+            Expects a JSON payload with:
+            - workspace_id: The ID of the workspace.
+            - performance: A list of performance configurations, each containing:
+              - type: Unique identifier (lowercase, underscored).
+              - name/description: Human-readable summary of what it computes,
+                used by match_performance_config to decide if a chat question
+                matches it.
+              - sql_query: The validated SELECT/WITH SQL to run (no stored
+                procedure call — see is_select_only_sql).
+              - enabled: Boolean.
+            """
+            data = request.get_json()
+            workspace_id = data.get('workspace_id')
+            new_checks = data.get('performance', [])
+
+            if not workspace_id:
+                return jsonify({"type": "error", "error": "Workspace ID is required."}), 400
+
+            workspace = get_workspace_metadata(self, workspace_id)
+            if not workspace:
+                return jsonify({"type": "error", "error": "Workspace not found."}), 404
+
+            try:
+                existing_checks = json.loads(workspace.get("performance", "[]"))
+                for new_check in new_checks:
+                    perf_type = new_check.get("type")
+                    if not perf_type:
+                        return jsonify({"type": "error", "error": "Performance check type is required."}), 400
+                    sql_query = new_check.get("sql_query")
+                    if not sql_query:
+                        return jsonify({"type": "error", "error": "Performance check sql_query is required."}), 400
+                    is_safe, reason = vn.is_select_only_sql(sql_query)
+                    if not is_safe:
+                        return jsonify({"type": "error", "error": f"sql_query failed validation: {reason}"}), 400
+
+                    existing_idx = next((i for i, c in enumerate(existing_checks) if c["type"] == perf_type), -1)
+                    if existing_idx >= 0:
+                        existing_checks[existing_idx] = new_check
+                    else:
+                        existing_checks.append(new_check)
+
+                workspace["performance"] = json.dumps(existing_checks)
+                self.workspace_collection.update(
+                    ids=[str(workspace_id)],
+                    metadatas=[workspace],
+                    documents=[f"Workspace: {workspace['name']}"]
+                )
+                logger.info(f"Saved performance config for workspace: ID={workspace_id}")
+                return jsonify({"type": "success", "message": "Performance checks saved successfully."})
+            except Exception as e:
+                logger.error(f"Failed to save performance checks: {str(e)}", exc_info=True)
+                return jsonify({"type": "error", "error": f"Failed to save performance checks: {str(e)}"}), 500
+
+        @self.flask_app.route('/delete_performance_config', methods=['POST'])
+        def delete_performance_config():
+            data = request.get_json()
+            workspace_id = data.get('workspace_id')
+            performance_type = data.get('performance_type')
+
+            if not workspace_id or not performance_type:
+                return jsonify({"type": "error", "error": "Workspace ID and performance type are required."}), 400
+
+            workspace = get_workspace_metadata(self, workspace_id)
+            if not workspace:
+                return jsonify({"type": "error", "error": "Workspace not found."}), 404
+
+            try:
+                existing_checks = json.loads(workspace.get("performance", "[]"))
+                updated_checks = [p for p in existing_checks if p.get("type") != performance_type]
+
+                workspace["performance"] = json.dumps(updated_checks)
+                self.workspace_collection.update(
+                    ids=[str(workspace_id)],
+                    metadatas=[workspace],
+                    documents=[f"Workspace: {workspace['name']}"]
+                )
+                logger.info(f"Deleted performance check '{performance_type}' for workspace ID={workspace_id}")
+                return jsonify({"type": "success", "message": "Performance check deleted successfully."})
+            except Exception as e:
+                logger.error(f"Failed to delete performance check: {str(e)}", exc_info=True)
+                return jsonify({"type": "error", "error": f"Failed to delete performance check: {str(e)}"}), 500
+
+        @self.flask_app.route('/api/v0/get_performance_configs', methods=['GET'])
+        def get_performance_configs():
+            workspace_id = request.args.get('workspace_id')
+            logger.info(f"Fetching performance configs for workspace ID: {workspace_id}")
+            if not workspace_id:
+                return jsonify({"type": "error", "error": "Workspace ID is required."}), 400
+
+            initialized, error = ensure_vanna_initialized(self, workspace_id)
+            if not initialized:
+                return jsonify({"type": "error", "error": error}), 400
+
+            workspace = get_workspace_metadata(self, workspace_id)
+            if not workspace:
+                return jsonify({"type": "error", "error": "Workspace not found."}), 404
+
+            try:
+                performance_raw = workspace.get("performance", "[]")
+                performance = json.loads(performance_raw)
+                if not isinstance(performance, list):
+                    logger.warning(f"Invalid performance format for workspace {workspace_id}: {performance_raw}")
+                    performance = []
+                return jsonify({"type": "success", "performance": performance})
+            except json.JSONDecodeError as e:
+                logger.error(f"Failed to parse performance configs for workspace {workspace_id}: {str(e)}")
+                return jsonify({"type": "error", "error": "Failed to parse performance configs: Invalid JSON format."}), 500
+            except Exception as e:
+                logger.error(f"Unexpected error in get_performance_configs for workspace {workspace_id}: {str(e)}", exc_info=True)
+                return jsonify({"type": "error", "error": f"Failed to retrieve performance configs: {str(e)}"}), 500
+
+
+        def _resolve_column(name, columns):
+            """
+            Maps a config's feature/target name to a column the SQL actually
+            returns. Saved suggestions often name features the way the SQL wrote
+            them before aliasing — "po.create_date", "po.status" (selected AS
+            po_status), "pod.qty" (selected AS ordered_qty) — none of which is a
+            result column, so every run failed with "Invalid features or target
+            column." Tries: exact; without the alias prefix; prefix_column; then
+            the single column ending in _column. Returns None when ambiguous or
+            absent rather than guessing.
+            """
+            if not name:
+                return None
+            if name in columns:
+                return name
+            prefix, _, bare = name.rpartition(".")
+            if bare in columns:
+                return bare
+            if prefix and f"{prefix}_{bare}" in columns:
+                return f"{prefix}_{bare}"
+            suffixed = [c for c in columns if str(c).endswith(f"_{bare}")]
+            return suffixed[0] if len(suffixed) == 1 else None
+
+        def _coerce_numeric_features(df, columns):
+            """
+            Every ML algorithm below (linear/logistic regression, isolation forest,
+            DBSCAN) needs a purely numeric feature matrix — but a prediction/anomaly
+            config's SQL is free to select a date or a text/categorical column as a
+            "feature" (e.g. a suggested query grouping by a formatted month string),
+            which is often exactly the meaningful column for that use case. Found
+            live: a suggestion using a 'year_month' string column ('2019-05') as a
+            feature crashed with "could not convert string to float" instead of
+            ever producing a prediction. Converts in place: a datetime column
+            becomes its ordinal day number; anything else non-numeric is
+            label-encoded (pandas.factorize) into an integer code — lossy for a
+            model that would benefit from true one-hot encoding, but turns a hard
+            crash into a working (if simplistic) prediction, which is the actual
+            goal here.
+            """
+            for col in columns:
+                if col not in df.columns:
+                    continue
+                series = df[col]
+                if pd.api.types.is_numeric_dtype(series):
+                    continue
+                if pd.api.types.is_datetime64_any_dtype(series):
+                    df[col] = series.map(lambda d: d.toordinal() if pd.notnull(d) else None)
+                    continue
+                try:
+                    parsed_dates = pd.to_datetime(series, errors="raise")
+                    df[col] = parsed_dates.map(lambda d: d.toordinal() if pd.notnull(d) else None)
+                except Exception:
+                    codes, _ = pd.factorize(series)
+                    df[col] = codes
+            return df
+
+        def _is_safe_eval_rule(rule, allowed_columns):
+            """
+            Validates a "custom" anomaly rule is a pure boolean/comparison
+            expression over real columns — no function calls, attribute access,
+            or subscripts, which is how a pandas df.eval() expression could
+            otherwise reach outside the expression itself. Walking the AST
+            (rather than blocklisting specific syntax) rejects every node shape
+            not explicitly allowed, so there's nothing left to enumerate around.
+
+            Returns (True, "") if safe to pass to df.eval(), else (False, reason).
+            """
+            try:
+                tree = ast.parse(rule, mode="eval")
+            except SyntaxError as exc:
+                return False, f"Not a valid expression: {exc}"
+
+            allowed_node_types = (
+                ast.Expression, ast.Compare, ast.BoolOp, ast.BinOp, ast.UnaryOp,
+                ast.Name, ast.Load, ast.Constant,
+                ast.And, ast.Or, ast.Not,
+                ast.Eq, ast.NotEq, ast.Lt, ast.LtE, ast.Gt, ast.GtE,
+                ast.Add, ast.Sub, ast.Mult, ast.Div, ast.USub, ast.UAdd,
+            )
+            for node in ast.walk(tree):
+                if not isinstance(node, allowed_node_types):
+                    return False, f"'{type(node).__name__}' is not permitted in a custom rule"
+                if isinstance(node, ast.Name) and node.id not in allowed_columns:
+                    return False, f"'{node.id}' is not a real column in this query's results"
+            return True, ""
+
+        def _run_performance_config(workspace_id, performance_type=None, config=None):
+            """
+            Runs a performance-check config and returns (body, status). Either
+            looks one up by performance_type (an existing, saved config) or,
+            when config is given directly, runs that config as-is.
+
+            Unlike anomaly/prediction configs, there is no algorithm step here
+            — a performance check is just admin-curated, validated SQL (e.g. a
+            flattened warehouse-performance stored procedure) run and handed
+            back as rows for the caller to summarize. The SQL is re-validated
+            with is_select_only_sql on every run (not just at save time) so an
+            edit that slips in something unsafe is still caught.
+            """
+            if config is None:
+                if not workspace_id or not performance_type:
+                    logger.warning(f"Missing parameters: workspace_id={workspace_id}, performance_type={performance_type}")
+                    return {"type": "error", "error": "Workspace ID and performance type are required."}, 400
+
+                initialized, error = ensure_vanna_initialized(self, workspace_id)
+                if not initialized:
+                    logger.error(f"Vanna initialization failed: {error}")
+                    return {"type": "error", "error": error}, 400
+
+                workspace = get_workspace_metadata(self, workspace_id)
+                if not workspace:
+                    logger.error(f"Workspace not found: ID={workspace_id}")
+                    return {"type": "error", "error": "Workspace not found."}, 404
+
+                try:
+                    performance_checks = json.loads(workspace.get("performance", "[]"))
+                except json.JSONDecodeError as e:
+                    logger.error(f"Failed to parse performance configs for workspace {workspace_id}: {str(e)}")
+                    return {"type": "error", "error": "Invalid performance configuration format."}, 500
+
+                perf_config = next((p for p in performance_checks if p.get('type') == performance_type), None)
+                if not perf_config:
+                    logger.error(f"Performance type {performance_type} not found in workspace {workspace_id}")
+                    return {"type": "error", "error": f"Performance check '{performance_type}' not found."}, 404
+
+                if not perf_config.get('enabled', True):
+                    logger.warning(f"Performance type {performance_type} is disabled in workspace {workspace_id}")
+                    return {"type": "error", "error": f"Performance check '{performance_type}' is disabled."}, 400
+            else:
+                perf_config = config
+
+            sql_query = perf_config.get('sql_query')
+            if not sql_query:
+                return {"type": "error", "error": "Performance check has no sql_query configured."}, 400
+
+            is_safe, reason = vn.is_select_only_sql(sql_query)
+            if not is_safe:
+                logger.error(f"Performance config '{perf_config.get('type')}' failed SQL safety check: {reason}")
+                return {"type": "error", "error": f"Performance check's SQL failed validation: {reason}"}, 400
+
+            try:
+                df = vn.run_sql(sql_query)
+                logger.info(f"Raw data from SQL query for performance check {perf_config.get('type')}:\n{df}")
+                if df is None or df.empty:
+                    return {"type": "success", "results": [], "sql": sql_query}, 200
+
+                truncated = len(df) > _MAX_ANALYSIS_ROWS
+                if truncated:
+                    logger.warning(
+                        f"Performance check {perf_config.get('type')}: query returned {len(df)} rows, "
+                        f"truncating to {_MAX_ANALYSIS_ROWS} to avoid hanging."
+                    )
+                    df = df.head(_MAX_ANALYSIS_ROWS)
+
+                df = df.replace({np.nan: None})
+                for col in df.columns:
+                    if pd.api.types.is_datetime64_any_dtype(df[col]):
+                        df[col] = df[col].astype(str)
+
+                return {"type": "success", "results": df.to_dict(orient="records"), "sql": sql_query}, 200
+            except Exception as e:
+                logger.error(f"Error running performance config '{perf_config.get('type')}': {str(e)}", exc_info=True)
+                return {"type": "error", "error": f"Failed to run performance check: {str(e)}"}, 500
 
         def _run_anomaly_config(workspace_id, anomaly_type=None, config=None):
             """
@@ -10228,8 +12154,8 @@ class VannaFlaskApp(VannaFlaskAPI):
                 # Step 2: Preprocess data
                 algorithm = anomaly.get('algorithm')
                 parameters = anomaly.get('parameters', {})
-                target = parameters.get('target')
-                features = parameters.get('features', [])
+                target = _resolve_column(parameters.get('target'), list(df.columns)) or parameters.get('target')
+                features = [_resolve_column(f, list(df.columns)) or f for f in parameters.get('features', [])]
 
                 # Replace NaN with None for JSON compatibility
                 df = df.replace({np.nan: None})
@@ -10266,6 +12192,7 @@ class VannaFlaskApp(VannaFlaskAPI):
                         return {"type": "error", "error": f"Invalid or missing features {features} for isolation_forest anomaly {anomaly_type}."}, 400
                     contamination = float(parameters.get('contamination', 0.1))
                     model = IsolationForest(contamination=contamination, random_state=42)
+                    df = _coerce_numeric_features(df, features)
                     X = df[features].values
                     result_df['is_anomaly'] = model.fit_predict(X) == -1
                     result_df['anomaly_score'] = model.score_samples(X)
@@ -10279,6 +12206,7 @@ class VannaFlaskApp(VannaFlaskAPI):
                     eps = float(parameters.get('eps', 0.5))
                     min_samples = int(parameters.get('min_samples', 5))
                     model = DBSCAN(eps=eps, min_samples=min_samples)
+                    df = _coerce_numeric_features(df, features)
                     X = df[features].values
                     labels = model.fit_predict(X)
                     result_df['is_anomaly'] = labels == -1
@@ -10291,7 +12219,15 @@ class VannaFlaskApp(VannaFlaskAPI):
                         logger.error(f"No rule provided for custom anomaly {anomaly_type}")
                         return {"type": "error", "error": f"No rule specified for custom anomaly {anomaly_type}."}, 400
                     try:
-                        if rule.startswith('SELECT'):
+                        if rule.strip().upper().startswith('SELECT'):
+                            # Found live: a bare .startswith('SELECT') check is trivially
+                            # passed by e.g. "SELECT 1; DROP TABLE x;--" and let this run
+                            # straight through vn.run_sql with none of the read-only/
+                            # write-whitelist checks every other SQL path in this app
+                            # goes through. is_select_only_sql is that same backstop.
+                            ok, reason = vn.is_select_only_sql(rule)
+                            if not ok:
+                                return {"type": "error", "error": f"Invalid custom rule: {reason}"}, 400
                             result_df = vn.run_sql(rule)
                             if len(result_df) > _MAX_ANALYSIS_ROWS:
                                 truncated = True
@@ -10302,6 +12238,13 @@ class VannaFlaskApp(VannaFlaskAPI):
                             original_df['is_anomaly'] = False
                             result_df = pd.concat([original_df, result_df]).drop_duplicates().reset_index(drop=True)
                         else:
+                            # df.eval() is not a secure sandbox on its own — gate it with
+                            # an AST allowlist first (see _is_safe_eval_rule) so a rule
+                            # that passes can only be a comparison over real columns,
+                            # never a function call or attribute-access escape.
+                            ok, reason = _is_safe_eval_rule(rule, set(df.columns))
+                            if not ok:
+                                return {"type": "error", "error": f"Invalid custom rule: {reason}"}, 400
                             result_df['is_anomaly'] = df.eval(rule)
                         # Do not filter, keep all rows
                         result_df = result_df[df.columns.tolist() + ['is_anomaly']]
@@ -10342,6 +12285,21 @@ class VannaFlaskApp(VannaFlaskAPI):
             workspace_id = request.args.get('workspace_id')
             anomaly_type = request.args.get('anomaly_type')
             body, status = _run_anomaly_config(workspace_id, anomaly_type)
+            return jsonify(body), status
+
+        @self.flask_app.route('/api/v0/run_performance', methods=['GET'])
+        def run_performance():
+            """
+            Run a performance check for a specified type in a workspace — lets
+            the admin panel test a check's SQL before relying on it in chat.
+
+            Query Parameters:
+                workspace_id: The ID of the workspace.
+                performance_type: The type of performance configuration to run.
+            """
+            workspace_id = request.args.get('workspace_id')
+            performance_type = request.args.get('performance_type')
+            body, status = _run_performance_config(workspace_id, performance_type)
             return jsonify(body), status
 
         def _run_prediction_config(workspace_id, prediction_type=None, config=None):
@@ -10397,8 +12355,8 @@ class VannaFlaskApp(VannaFlaskAPI):
                 # Step 2: Preprocess data based on prediction parameters
                 algorithm = prediction.get('algorithm')
                 parameters = prediction.get('parameters', {})
-                target = parameters.get('target')
-                features = parameters.get('features', [])
+                target = _resolve_column(parameters.get('target'), list(df.columns)) or parameters.get('target')
+                features = [_resolve_column(f, list(df.columns)) or f for f in parameters.get('features', [])]
                 inflation_rate = parameters.get('inflation_rate', None)
                 if inflation_rate is None:
                     logger.warning(f"No inflation rate provided for prediction {prediction_type}, defaulting to 0")
@@ -10443,6 +12401,7 @@ class VannaFlaskApp(VannaFlaskAPI):
                 elif algorithm == 'linear_regression':
                     if not features or not target or not all(f in df.columns for f in features) or target not in df.columns:
                         return {"type": "error", "error": "Invalid features or target column."}, 400
+                    df = _coerce_numeric_features(df, features)
                     X = df[features]
                     y = df[target]
                     model = LinearRegression()
@@ -10452,6 +12411,7 @@ class VannaFlaskApp(VannaFlaskAPI):
                 elif algorithm == 'logistic_regression':
                     if not features or not target or not all(f in df.columns for f in features) or target not in df.columns:
                         return {"type": "error", "error": "Invalid features or target column."}, 400
+                    df = _coerce_numeric_features(df, features)
                     X = df[features]
                     y = df[target]
                     model = LogisticRegression()
@@ -10738,79 +12698,50 @@ class VannaFlaskApp(VannaFlaskAPI):
 
         @self.flask_app.route('/save_teams_config', methods=['POST'])
         def save_teams_config():
+            """
+            Enable/disable the Teams bot and tab for a workspace. Several
+            workspaces may be Teams-enabled at once: each Teams user is routed
+            to their own assigned workspace (see engine/teams/identity.py).
+            Enabling verifies the workspace's LLM + DB config actually builds,
+            so a broken config surfaces here instead of on the first Teams message.
+            """
             try:
-                data = request.json
+                data = request.json or {}
                 workspace_id = data.get('workspace_id')
                 teams_config = data.get('teams_config')
 
                 if not workspace_id:
                     return jsonify({'error': 'Workspace ID is required'}), 400
-                if not teams_config:
+                if not isinstance(teams_config, dict):
                     return jsonify({'error': 'Teams configuration is required'}), 400
 
-                # Disable Teams in all other workspaces
-                all_workspaces = self.workspace_collection.get()
-                if all_workspaces and all_workspaces.get("ids"):
-                    for ws_id, metadata in zip(all_workspaces["ids"], all_workspaces["metadatas"]):
-                        if ws_id != workspace_id:
-                            updated_metadata = metadata.copy()
-                            if "teams_config" in updated_metadata:
-                                teams_cfg = json.loads(updated_metadata["teams_config"])
-                                teams_cfg["enabled"] = False
-                                updated_metadata["teams_config"] = json.dumps(teams_cfg)
-                                self.workspace_collection.update(
-                                    ids=[ws_id],
-                                    metadatas=[updated_metadata],
-                                    documents=[f"Workspace: {updated_metadata.get('name', '')}"]
-                                )
-
-                # Update current workspace metadata
                 existing = self.workspace_collection.get(ids=[workspace_id])
                 if not existing.get("metadatas"):
                     return jsonify({'error': f'Workspace with ID {workspace_id} not found'}), 404
 
                 metadata = existing["metadatas"][0]
-                metadata["teams_config"] = json.dumps(teams_config)
+                stored = json.loads(metadata.get("teams_config") or "{}")
+                stored["enabled"] = bool(teams_config.get("enabled", False))
 
-                global vn
+                if stored["enabled"]:
+                    instance, err = _vanna_registry.get_or_build(workspace_id, refresh=True)
+                    if instance is None:
+                        return jsonify({'error': f'LLM and DB configuration required for Teams integration: {err}'}), 400
 
-                if teams_config.get("enabled", False):
-                    llm_config = json.loads(metadata.get("llm_config", "{}"))
-                    db_config = json.loads(metadata.get("db_config", "{}"))
-                    db_config_b = json.loads(metadata.get("db_config_b", "{}"))
-
-                    if not llm_config or not db_config:
-                        return jsonify({'error': 'LLM and DB configuration required for Teams integration'}), 400
-
-                    # Initialize Vanna — pass db_config_b too (when configured), otherwise
-                    # enabling Teams silently downgrades a dual-DB workspace to single-DB.
-                    result = initialize_vanna_instance(
-                        workspace_id, llm_config, db_config,
-                        db_config_b if db_config_b.get("databaseName") else None,
-                    )
-                    if not result["success"]:
-                        return jsonify({"error": result["error"]}), 500
-                else:
-                    vn = None
-
+                metadata["teams_config"] = json.dumps(stored)
                 self.workspace_collection.update(
                     ids=[workspace_id],
                     metadatas=[metadata],
                     documents=[f"Workspace: {metadata['name']}"]
                 )
 
-                logger.info(f"Saved Teams config for workspace: ID={workspace_id}")
+                logger.info(f"Saved Teams config for workspace: ID={workspace_id} enabled={stored['enabled']}", extra={"admin": True})
                 return jsonify({'message': 'Teams configuration saved successfully'}), 200
 
             except Exception as e:
                 logger.error(f"Error saving Teams config: {str(e)}", exc_info=True)
                 return jsonify({'error': 'Failed to save Teams config'}), 500
 
-            
-
-
-            #getting from the db
- 
         @self.flask_app.route("/get_teams_config", methods=["GET"])
         def get_teams_config():
             logger.info("starting getting teams")
@@ -10828,24 +12759,6 @@ class VannaFlaskApp(VannaFlaskAPI):
             teams_config = json.loads(metadata.get("teams_config", "{}"))
 
             return jsonify({"success": True, "teams_config": teams_config}), 200
-
-#Without follow up 
-        def get_active_workspace_name():
-            all_workspaces =self.workspace_collection.get()
-            if not all_workspaces or not all_workspaces.get("ids"):
-                return None
-
-            for ws_id, metadata in zip(all_workspaces["ids"], all_workspaces["metadatas"]):
-                teams_config_str = metadata.get("teams_config", "{}")
-                try:
-                    teams_config = json.loads(teams_config_str)
-                    if teams_config.get("enabled", False):
-                        # Assuming the workspace name is stored in metadata under the key 'name'
-                        return metadata.get("name")
-                except json.JSONDecodeError:
-                    continue
-
-            return None
 
         @self.flask_app.route("/api/workspaces", endpoint="list_workspaces")
         def list_workspaces(**kwargs):
@@ -11074,80 +12987,71 @@ class VannaFlaskApp(VannaFlaskAPI):
 
                         
         
-        def hash_password(password):
-            """Simple password hashing with SHA256 (you can switch to bcrypt for better security)."""
-            return hashlib.sha256(password.encode()).hexdigest()
         def clean_metadata(metadata_dict):
             """Ensure no None values — replace with empty string."""
             return {k: ("" if v is None else v) for k, v in metadata_dict.items()}
+
+        _EMAIL_RE = re.compile(r"^[A-Za-z0-9._%+'-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}$")
+
+        def _is_workspace_name(workspace):
+            if not workspace:
+                return False
+            try:
+                ws_get = self.workspace_collection.get()
+                names = {md.get("name") for md in (ws_get.get("metadatas") or []) if isinstance(md, dict)}
+                return workspace in names
+            except Exception:
+                return False
 
         @self.flask_app.route("/api/add_user", methods=["POST"])
         @self.requires_auth
         def add_user(user=None):
             """
-            Add a user into ChromaDB 'users' collection.
-            Accepts: { username, password, workspace [, tables] }
-            - Creates 'users' collection if missing.
-            - Hashes password (SHA256) before storing.
-            - Validates workspace against existing workspace_collection (if available).
+            Add a user to the ChromaDB 'users' collection (admin/superadmin, enforced
+            by the access guard). Accepts { username, password, workspace, role?, email? }.
+            Only a superadmin may create admin/superadmin accounts. `email` links the
+            account to a Microsoft Teams identity (the Teams bot and tab look users
+            up by it) and is the only raw address a user may schedule emails to.
             """
-
             try:
                 data = request.get_json() or {}
                 username = (data.get("username") or "").strip()
                 password = data.get("password") or ""
-                workspace = data.get("workspace") or ""
-                # tables = data.get("tables", [])  # Uncomment if you want to store table permissions
+                workspace = (data.get("workspace") or "").strip()
+                role = str(data.get("role") or "user").strip().lower()
+                email = (data.get("email") or "").strip().lower()
 
                 if not username or not password:
                     return jsonify({"error": "Username and password are required"}), 400
+                if role not in ("user", "admin", "superadmin"):
+                    return jsonify({"error": f"Invalid role '{role}'"}), 400
+                if role != "user" and str(session.get("role") or "").lower() != "superadmin":
+                    return jsonify({"error": "Only a superadmin can create admin accounts"}), 403
+                if email and not _EMAIL_RE.match(email):
+                    return jsonify({"error": f"'{email}' doesn't look like a valid email address"}), 400
 
-                # Get or create 'users' collection
-                existing_collections = self.client.list_collections()
-                if "users" not in existing_collections:
-                    users_collection = self.client.create_collection(name="users")
-                else:
-                    users_collection = self.client.get_collection(name="users")
-
-                # Check duplicate username inside 'users' collection
-                existing_user = users_collection.get(where={"username": username})
+                existing_user = self.users_collection.get(where={"username": username})
                 if existing_user and existing_user.get("ids"):
                     return jsonify({"error": "Username already exists"}), 400
+                if email and self.find_user_by_email(email)[0]:
+                    return jsonify({"error": f"{email} is already linked to another user"}), 400
 
-                # Hash password
-                password_hash = hashlib.sha256(password.encode("utf-8")).hexdigest()
-                logger.info(f"password user list: {password_hash}")
+                password_hash = generate_password_hash(password)
+                workspace_valid = _is_workspace_name(workspace)
 
-                # Validate workspace name exists in your workspace_collection (if available)
-                workspace_valid = False
-                try:
-                    if hasattr(self, "workspace_collection") and self.workspace_collection is not None:
-                        ws_get = self.workspace_collection.get()
-                        if ws_get and ws_get.get("metadatas"):
-                            ws_names = [
-                                md.get("name")
-                                for md in ws_get.get("metadatas")
-                                if isinstance(md, dict) and md.get("name")
-                            ]
-                            if workspace and workspace in ws_names:
-                                workspace_valid = True
-                except Exception:
-                    workspace_valid = False  # Fallback if no workspace collection
-
-                # Add user record
-                metadata = {
-                    "username": username,
-                    "password_hash": password_hash,
-                    "workspace": workspace or "",
-                    "workspace_valid": bool(workspace_valid),
-                    # "tables": tables  # Uncomment if storing table permissions
-                }
-
-                users_collection.add(
+                self.users_collection.add(
                     ids=[str(uuid.uuid4())],
-                    metadatas=[metadata],
+                    metadatas=[{
+                        "username": username,
+                        "password_hash": password_hash,
+                        "role": role,
+                        "workspace": workspace or "",
+                        "workspace_valid": bool(workspace_valid),
+                        "email": email,
+                    }],
                     documents=["user record"]
                 )
+                logger.info(f"Added user {username} (role={role}, workspace={workspace or '-'})", extra={"admin": True})
 
                 return jsonify({
                     "message": f"User '{username}' added successfully",
@@ -11155,9 +13059,60 @@ class VannaFlaskApp(VannaFlaskAPI):
                 }), 200
 
             except Exception as e:
+                logger.error(f"add_user failed: {e}", exc_info=True)
                 return jsonify({"error": str(e)}), 500
 
+        @self.flask_app.route("/api/update_user", methods=["POST"])
+        @self.requires_auth
+        def update_user(user=None):
+            """
+            Update an existing user's email / workspace / role (admin/superadmin).
+            Expects { user_id, email?, workspace?, role? }; omitted fields are
+            unchanged, an empty email clears it. Only a superadmin can change roles.
+            """
+            try:
+                data = request.get_json() or {}
+                user_id = data.get("user_id")
+                if not user_id:
+                    return jsonify({"error": "user_id is required"}), 400
 
+                existing = self.users_collection.get(ids=[user_id])
+                if not existing or not existing.get("ids"):
+                    return jsonify({"error": f"User '{user_id}' not found"}), 404
+                meta = dict(existing["metadatas"][0] or {})
+
+                if "email" in data:
+                    email = (data.get("email") or "").strip().lower()
+                    if email and not _EMAIL_RE.match(email):
+                        return jsonify({"error": f"'{email}' doesn't look like a valid email address"}), 400
+                    other_id, _ = self.find_user_by_email(email) if email else (None, None)
+                    if other_id and other_id != user_id:
+                        return jsonify({"error": f"{email} is already linked to another user"}), 400
+                    if email != meta.get("email", ""):
+                        meta["aad_object_id"] = ""   # re-link on the next Teams sign-in
+                    meta["email"] = email
+
+                if "workspace" in data:
+                    workspace = (data.get("workspace") or "").strip()
+                    meta["workspace"] = workspace
+                    meta["workspace_valid"] = bool(_is_workspace_name(workspace))
+
+                if "role" in data:
+                    role = str(data.get("role") or "").strip().lower()
+                    if role not in ("user", "admin", "superadmin"):
+                        return jsonify({"error": f"Invalid role '{role}'"}), 400
+                    if role != meta.get("role") and str(session.get("role") or "").lower() != "superadmin":
+                        return jsonify({"error": "Only a superadmin can change roles"}), 403
+                    meta["role"] = role
+
+                self.users_collection.update(ids=[user_id], metadatas=[meta])
+                logger.info(f"Updated user {meta.get('username')} ({user_id})", extra={"admin": True})
+                return jsonify({"message": "User updated", "user_id": user_id,
+                                "email": meta.get("email", ""), "workspace": meta.get("workspace", ""),
+                                "role": meta.get("role", "user"), "workspace_valid": bool(meta.get("workspace_valid"))}), 200
+            except Exception as e:
+                logger.error(f"update_user failed: {e}", exc_info=True)
+                return jsonify({"error": str(e)}), 500
 
         @self.flask_app.route("/api/update_user_config", methods=["POST"])
         @self.requires_auth
@@ -11210,20 +13165,20 @@ class VannaFlaskApp(VannaFlaskAPI):
                 for i, user_id in enumerate(ids):
                     metadata = metadatas[i] if i < len(metadatas) else {}
                     user_list.append({
-                        "id": user_id,  
+                        "id": user_id,
                         "username": metadata.get("username", ""),
-                        "password_hash": metadata.get("password_hash", ""),
-                        "workspace": metadata.get("workspace", "")
+                        "role": metadata.get("role", "user"),
+                        "workspace": metadata.get("workspace", ""),
+                        "workspace_valid": bool(metadata.get("workspace_valid", False)),
+                        "email": metadata.get("email", ""),
+                        "teams_linked": bool(metadata.get("aad_object_id")),
                     })
-                logger.info(f"Existing user list: {user_list}")
+                logger.info(f"Listed {len(user_list)} users")
                 return jsonify({"users": user_list}), 200
 
             except Exception as e:
                 logger.error(f"Error listing users: {str(e)}", exc_info=True)
                 return jsonify({"error": "Failed to list users"}), 500
-
-
-
 
         @self.flask_app.route("/api/delete_user/<user_id>", methods=["DELETE"])
         @self.requires_auth
@@ -11478,7 +13433,11 @@ class VannaFlaskApp(VannaFlaskAPI):
         @self.flask_app.route("/superadmin/billing_export")
         def billing_export():
             month = request.args.get("month")
-            data = get_monthly_billing_summary(month)
+            try:
+                validate_month(month or "")
+            except ValueError as e:
+                return jsonify({"error": str(e)}), 400
+            data = get_monthly_billing_summary(self, month)
 
             rows = []
             for ws, b in data.items():
@@ -11491,7 +13450,12 @@ class VannaFlaskApp(VannaFlaskAPI):
                     "Total Cost (USD)": b["total_cost"],
                 })
 
-            return export_to_excel(rows, filename=f"billing_{month}.xlsx")
+            csv_text = rows_to_csv(rows) or "Workspace\n"
+            return Response(
+                csv_text,
+                mimetype="text/csv",
+                headers={"Content-Disposition": f"attachment; filename=billing_{month}.csv"},
+            )
 
 
   
@@ -11634,7 +13598,7 @@ class VannaFlaskApp(VannaFlaskAPI):
                 client = OpenAI(api_key=api_key)
 
                 response = client.chat.completions.create(
-                    model="gpt-4o-mini",
+                    model="gpt-4.1-mini",  # same model as the rest of the agents
                     messages=[
                         {"role": "system", "content": "You are a helpful SOP assistant."},
                         {"role": "user", "content": prompt}
@@ -11691,254 +13655,6 @@ class VannaFlaskApp(VannaFlaskAPI):
             return {"answer": answer}
 
 
-
-
-        NGROK_URL = "https://knn1smh3-8084.inc1.devtunnels.ms/"
-        @self.flask_app.route("/api/messages", methods=["POST"])
-        async def messages():
-                body = request.json
-                logger.info(f"Request body: {body}")
-                logger.info(f"Activity serviceUrl: {body.get('serviceUrl')}")  # Log incoming serviceUrl
-                activity = Activity().deserialize(body)
-                conversation_reference = TurnContext.get_conversation_reference(activity)
-                logger.info(f"Raw conversation_reference: {conversation_reference.__dict__}")
-       
-               
- 
-                # Validate and fix service_url
-                service_url = conversation_reference.service_url
-                if not service_url or not service_url.startswith(("http://", "https://")):
-                    logger.warning(f"Invalid service_url: {service_url}. Using NGROK_URL: {NGROK_URL}")
-                    conversation_reference.service_url = NGROK_URL
-                    service_url = NGROK_URL
- 
-                # Test service_url accessibility (fixed unawaited coroutine)
-                async def test_service_url(url):
-                    if aiohttp is None:
-                        logger.warning("aiohttp not installed, skipping service_url test")
-                        return None
-                    try:
-                        async with aiohttp.ClientSession() as session:
-                            async with session.get(url, timeout=5) as response:
-                                logger.info(f"Service URL {url} status: {response.status}")
-                                content_type = response.headers.get('Content-Type', '')
-                                if content_type.startswith('text/html'):
-                                    response_text = await response.text()
-                                    logger.warning(f"Service URL returned HTML: {response_text[:200]}...")
-                                return response.status
-                    except Exception as e:
-                        logger.error(f"Failed to reach service_url {url}: {str(e)}", exc_info=True)
-                        return None
- 
-                logger.info(f"Testing service_url: {service_url}")
-                await test_service_url(service_url)
- 
-                # Serialize conversation_reference
-                try:
-                    serialized_reference = {
-                        "activity_id": conversation_reference.activity_id,
-                        "user": {
-                            "id": conversation_reference.user.id if conversation_reference.user else None,
-                            "name": conversation_reference.user.name if conversation_reference.user else None
-                        },
-                        "bot": {
-                            "id": conversation_reference.bot.id if conversation_reference.bot else None,
-                            "name": conversation_reference.bot.name if conversation_reference.bot else None
-                        },
-                        "conversation": {
-                            "id": conversation_reference.conversation.id if conversation_reference.conversation else None,
-                            "name": conversation_reference.conversation.name if conversation_reference.conversation else None,
-                            "is_group": conversation_reference.conversation.is_group if conversation_reference.conversation else False
-                        },
-                        "channel_id": conversation_reference.channel_id,
-                        "service_url": conversation_reference.service_url
-                    }
-                    logger.info(f"Serialized conversation_reference: {json.dumps(serialized_reference)}")
-                   
-                    reconstructed_reference = ConversationReference(
-                        activity_id=serialized_reference["activity_id"],
-                        user=ChannelAccount(id=serialized_reference["user"]["id"], name=serialized_reference["user"]["name"]),
-                        bot=ChannelAccount(id=serialized_reference["bot"]["id"], name=serialized_reference["bot"]["name"]),
-                        conversation=ConversationAccount(
-                            id=serialized_reference["conversation"]["id"],
-                            name=serialized_reference["conversation"]["name"],
-                            is_group=serialized_reference["conversation"]["is_group"]
-                        ),
-                        channel_id=serialized_reference["channel_id"],
-                        service_url=serialized_reference["service_url"]
-                    )
-                    conversation_references[activity.from_property.id] = reconstructed_reference
-                except Exception as e:
-                    logger.error(f"Failed to serialize/reconstruct conversation_reference: {str(e)}", exc_info=True)
-                    return make_response(jsonify({
-                        "type": "message",
-                        "text": "Failed to process conversation reference."
-                    }), 200)
- 
-                user_id = activity.from_property.id
-                user_message = activity.text.strip() if activity.text is not None else ""
-                logger.info(f"user message: {user_message}")
- 
-                if not user_message:
-                    return make_response(jsonify({
-                        "type": "message",
-                        "text": "No question received."
-                    }), 200)
-
-                async def process_and_respond():
-                    active_workspace = get_active_workspace_name()
-                    logger.info(f"Fetching workspace id: {active_workspace}", extra={"admin": True})
-                    logger.info(f"Question: {user_message}, Workspace: {active_workspace}", extra={"admin": True})
-
-                    if not active_workspace:
-                        return jsonify({"error": "No workspace has Teams integration enabled"}), 400
-
-                    logger.info("Starting process_and_respond task")
-                    try:
-                        logger.info(f"Using conversation_reference: {conversation_reference.__dict__}", extra={"admin": True})
-                        if not conversation_reference.service_url or not conversation_reference.conversation.id:
-                            logger.error("Invalid conversation_reference: missing service_url or conversation.id", extra={"admin": True})
-                            return
-
-                        # sql_gen_start = time.time()
-                        logger.info(f"Generating SQL and user messages: {user_message}", extra={"admin": True})
-                        sql = vn.generate_sql(
-                            question=user_message,
-                            allow_llm_to_see_data=self.allow_llm_to_see_data,
-                            workspace=active_workspace
-                        )
-                        extracted_sql = vn.extract_sql(sql)
-                        sql_source = "LLM"
-                        logger.info(f"Generated SQL: {extracted_sql}", extra={"admin": True})
-
-                        reply_text = ""  # Initialize
-
-                        if not vn.is_sql_valid(extracted_sql):
-                            reply_text = "Insufficient data."
-                            logger.info("Invalid SQL detected", extra={"admin": True})
-                        else:
-                            logger.info("Running SQL", extra={"admin": True})
-                            result_df = pd.DataFrame()  # Initialize
-
-                            try:
-                                result_df = vn.run_sql(extracted_sql)
-                            except Exception as e:
-                                error_message = str(e)
-                                logger.error(f"SQL Execution Error: {error_message}", exc_info=True, extra={"admin": True})
-
-                                # Check for missing table or column
-                                table_match = re.findall(r"Invalid object name '([^']+)'", error_message)
-                                column_match = re.findall(r"Invalid column name '([^']+)'", error_message)
-
-                                if table_match:
-                                    user_friendly_message = f"The query could not be executed because the table '{table_match[0]}' does not exist. Please verify the table name."
-                                elif column_match:
-                                    user_friendly_message = f"The query could not be executed because the column '{column_match[0]}' does not exist. Please check your database schema."
-                                else:
-                                    # Surface the actual database error instead of a generic message
-                                    # that hides what really went wrong.
-                                    sql_server_match = re.search(r"\[SQL Server\](.+?)(?:\s*\(\d+\)\s*\(SQL\w*\)|$)", error_message)
-                                    detail = sql_server_match.group(1).strip() if sql_server_match else error_message[:300]
-                                    user_friendly_message = f"The query could not be executed: {detail}"
-
-                                reply_text = user_friendly_message
-
-                            # Only proceed if no exception was raised
-                            if not reply_text:
-                                total_rows = len(result_df)
-                                max_display_rows = 10
-                                logger.info(f"SQL result rows: {total_rows}", extra={"admin": True})
-
-                                summary_text = ""
-                                if not result_df.empty:
-                                    schema = result_df.dtypes.apply(lambda x: str(x)).to_dict()
-                                    logger.info("Generating summary", extra={"admin": True})
-                                    summary_text = vn.generate_summary(
-                                        question=user_message,
-                                        df=result_df,
-                                        sql=extracted_sql,
-                                        schema=schema
-                                    )
-                                    logger.info("Summary generated", extra={"admin": True})
-
-                                if result_df.empty:
-                                    formatted_result = "No data available for your request.!"
-                                else:
-                                    markdown_table = (
-                                        "| " + " | ".join(result_df.columns) + " |\n" +
-                                        "| " + " | ".join(["---"] * len(result_df.columns)) + " |\n"
-                                    )
-                                    for _, row in result_df.head(max_display_rows).iterrows():
-                                        markdown_table += "| " + " | ".join(str(cell) for cell in row) + " |\n"
-                                    formatted_result = markdown_table
-
-                                if summary_text:
-                                    reply_text += f"**Summary:**\n{summary_text}\n\n---\n\n"
-
-                                reply_text += formatted_result
-                                logger.info("Reply text prepared", extra={"admin": True})
-
-
-                        
-        
-                        async def send_reply(turn_context: TurnContext):
-                            logger.info("Entered send_reply", extra={"admin": True})
-                            max_retries = 2
-                            for attempt in range(1, max_retries + 1):
-                                try:
-                                    logger.info(f"Sending activity (attempt {attempt})", extra={"admin": True})
-                                    start_time = time.time()
-                                    response = await asyncio.wait_for(
-                                        turn_context.send_activity(reply_text),
-                                        timeout=90
-                                    )
-                                    logger.info(f"Send activity took {time.time() - start_time:.2f} seconds", extra={"admin": True})
-                                    # sent_responses.add(conversation_key)  # Mark as sent
-                                    return response
-                                except asyncio.TimeoutError:
-                                    logger.error(f"Timeout while sending activity (attempt {attempt})", extra={"admin": True})
-                                    if attempt == max_retries:
-                                        raise
-                                except Exception as e:
-                                    logger.error(f"Exception while sending activity: {str(e)} (attempt {attempt})", exc_info=True, extra={"admin": True})
-                                    if attempt == max_retries:
-                                        raise
-
-                        logger.info("Starting continue_conversation")
-                        await asyncio.wait_for(
-                            adapter.continue_conversation(
-                                conversation_reference,
-                                send_reply,
-                                bot_id=adapter_settings.app_id
-                            ),
-                            timeout=90
-                        )
-                        logger.info("Conversation continued successfully")
-
-                    except Exception as e:
-                        logger.error(f"Error in process_and_respond: {str(e)}", exc_info=True)
-                        reply_text = f"Error occurred: {str(e)}"
-                        async def send_reply(turn_context: TurnContext):
-                            logger.info("Sending error reply")
-                            try:
-                                await turn_context.send_activity(reply_text)
-                                # sent_responses.add(conversation_key)  # Mark as sent
-                            except Exception as e:
-                                logger.error(f"Failed to send error reply: {str(e)}", exc_info=True)
-                        await adapter.continue_conversation(
-                            conversation_reference,
-                            send_reply,
-                            bot_id=adapter_settings.app_id
-                        )
-
-                # Run the async processing
-                await process_and_respond()
-
-                # Send immediate acknowledgment
-                return make_response(jsonify({
-                    "type": "message",
-                    "text": "Got your question. Working on it..."
-                }), 200)
 
 
         # Reset Devices Agent (relocation wizard) — TX1: atomically move inventory
@@ -12787,6 +14503,81 @@ class VannaFlaskApp(VannaFlaskAPI):
                     headers={"Content-Disposition": "attachment; filename=unpick_agent_logs.csv"},
                 )
 
+        # ---- Channels outside the web UI: Teams bot/tab and voice ----
+        # These live in their own packages and reach the chat pipeline only
+        # through the published hooks below.
+        self.vanna_registry = _vanna_registry
+        self.vn_router = vn
+
+        def discard_pending_write(write_id):
+            with _pending_writes_lock:
+                _pending_writes.pop(write_id, None)
+        self.discard_pending_write = discard_pending_write
+
+        from ..voice import register_voice_routes
+        from ..teams import register_teams
+        register_voice_routes(self)
+        register_teams(self)
+
+
+    def _workspace_id_from_ref(self, ref):
+        """Workspace id for a reference that may be the id itself, its name or its
+        display name (the chat UI sends the name). None if no workspace matches."""
+        ref = str(ref or "").strip()
+        if not ref:
+            return None
+        try:
+            if self.workspace_collection.get(ids=[ref]).get("ids"):
+                return ref
+            for field in ("name", "display_name"):
+                ids = self.workspace_collection.get(where={field: ref}).get("ids") or []
+                if ids:
+                    return ids[0]
+        except Exception as e:
+            logger.warning(f"_workspace_id_from_ref: lookup failed for {ref!r}: {e}")
+        return None
+
+    def _user_can_access_workspace(self, user, workspace_id):
+        """Admins/superadmins may use any workspace; a plain user only the one
+        assigned to them (stored as the workspace name, or legacy UUID).
+
+        "admin" is intentionally platform-wide here, same as "superadmin" — it
+        is never assigned to a workspace-scoped/client account (confirmed with
+        the team: admin accounts are internal staff, not per-client managers).
+        If that ever changes, this check must instead scope "admin" to its own
+        assigned `user["workspace"]`, the same way a plain "user" is scoped
+        below — otherwise any admin account created with a specific workspace
+        (see /api/add_user) could still read every OTHER workspace's data just
+        by changing workspace_id, regardless of what it was assigned."""
+        role = str((user or {}).get("role") or session.get("role") or "user").lower()
+        if role in ADMIN_ROLES:
+            return True
+        assigned = (user or {}).get("workspace") or ""
+        if not assigned or not workspace_id:
+            return False
+        if assigned == str(workspace_id):
+            return True
+        meta = get_workspace_metadata(self, workspace_id)
+        return bool(meta) and assigned in (meta.get("name"), meta.get("display_name"))
+
+    def find_user_by_email(self, email):
+        """(user_id, metadata) for the user whose email matches (case-insensitive), else (None, None)."""
+        email = (email or "").strip().lower()
+        if not email:
+            return None, None
+        found = self.users_collection.get(where={"email": email}, limit=1)
+        if found and found.get("ids"):
+            return found["ids"][0], found["metadatas"][0]
+        return None, None
+
+    def find_user_by_aad_id(self, aad_object_id):
+        """(user_id, metadata) for the user already linked to this Entra object id, else (None, None)."""
+        if not aad_object_id:
+            return None, None
+        found = self.users_collection.get(where={"aad_object_id": aad_object_id}, limit=1)
+        if found and found.get("ids"):
+            return found["ids"][0], found["metadatas"][0]
+        return None, None
 
     def get_db_connection_from_config(self, db_config):
         """Create a direct database connection from workspace db_config"""
@@ -12963,20 +14754,15 @@ class VannaFlaskApp(VannaFlaskAPI):
         if not model_name:
             return "unknown"
 
-        name = model_name.lower()
+        name = model_name.strip().lower()
 
-        # Strip version suffixes
-        if name.startswith("o3"):
-            return "o3"
-
-        if name.startswith("o1"):
-            return "o1"
-
-        if name.startswith("gpt-5.1"):
-            return "gpt-5.1"
-
-        if name.startswith("gpt-4.1"):
-            return "gpt-4.1"
+        # Strip dated/version suffixes ("gpt-4.1-mini-2025-04-14" -> "gpt-4.1-mini")
+        # by matching the LONGEST known prefix. Fixed-order startswith checks
+        # matched "gpt-4.1" first, so gpt-4.1-mini was billed at full gpt-4.1
+        # prices (~5x too high) — and every agent here runs on mini.
+        for known in sorted(MODEL_PRICING, key=len, reverse=True):
+            if name == known or name.startswith(known + "-"):
+                return known
 
         return name
 
@@ -13039,7 +14825,7 @@ class VannaFlaskApp(VannaFlaskAPI):
         cached_input_tokens = int(cached_input_tokens or 0)
         cost_usd            = float(cost_usd) if cost_usd is not None else None
 
-        if workspace_id is None:
+        if workspace_id is None and has_request_context():  # Teams turns have no session
             workspace_id = session.get("workspace_id")
         current_time = datetime.now()
 
@@ -13216,27 +15002,7 @@ class VannaFlaskApp(VannaFlaskAPI):
         except Exception:
             normalized_model = model_name or "unknown"
 
-        # Pricing (update as needed when new models arrive)
-        MODEL_PRICING = {
-            "gpt-4.1": {"input": 5.00, "output": 15.00},
-            "gpt-4.1-mini": {"input": 0.60, "output": 2.40},
-            "gpt-4.1-preview": {"input": 3.00, "output": 10.00},
-            "o3": {"input": 1.00, "output": 3.00},
-            "o1": {"input": 6.00, "output": 18.00},
-            "o1-preview": {"input": 6.00, "output": 18.00},
-            "gpt-5.1": {"input": 1.25, "output": 10.00},
-            # add more as needed
-        }
-
-        price_in = MODEL_PRICING.get(normalized_model, {}).get("input", 0.0)
-        price_out = MODEL_PRICING.get(normalized_model, {}).get("output", 0.0)
-
-        billable_input = max(0, input_tokens - cached_input_tokens)
-        cost_usd = round(
-            (billable_input / 1_000_000) * price_in +
-            (output_tokens / 1_000_000) * price_out,
-            8
-        )
+        cost_usd = compute_cost_usd(normalized_model, input_tokens, output_tokens, cached_input_tokens)
 
         conn = None
         cursor = None
@@ -13334,150 +15100,84 @@ def get_workspace_metadata(self, workspace_id):
             except Exception as e:
                 logger.error(f"Error fetching workspace metadata: {str(e)}", exc_info=True)
                 return None
- 
-
-def get_base_url():
-    """
-    Determines the base URL of the Flask app.
-    - If running locally, it checks if ngrok is active and uses the public URL.
-    - If already hosted, it uses the request's base URL.
-    """
-    host = request.host_url.rstrip('/')  # Get the request base URL
-
-    # If running locally (127.0.0.1 or localhost), check for ngrok tunnel
-    if "127.0.0.1" in host or "localhost" in host:
-        try:
-            response = requests.get("http://127.0.0.1:4040/api/tunnels")  # ngrok API
-            tunnels = response.json().get("tunnels", [])
-            for tunnel in tunnels:
-                if tunnel.get("proto") == "https":  # Use HTTPS tunnel
-                    return tunnel["public_url"]
-        except requests.RequestException:
-            pass  # If ngrok is not running, fallback to localhost
-
-    return host  # Return request URL if not using ngrok
-
-############################################
 
 
-def process_request(user_message, vn):
+def _is_trained_question(question, workspace_name):
+    """True when `question` is one of this workspace's trained questions — its
+    stored SQL answers it directly, so it must not be re-routed, merged into a
+    pending clarification, or second-guessed by an LLM classifier."""
+    finder = getattr(vn, "find_trained_sql", None)
+    if not finder or not question or not workspace_name:
+        return False
     try:
-        sql_gen_start = time.time()
-        sql_gen_time = 0
-        summary_gen_time = 0
-        
-        # Step 1: Check Training Data for an Exact Match
-        sql_from_training = vn.get_similar_question_sql(user_message)
-        if sql_from_training:
-            extracted_sql = sql_from_training[0]["sql"]
-            sql_source = "Training Data"
-            sql_gen_time = time.time() - sql_gen_start
-            logger.info(f"SQL from training data took {sql_gen_time:.2f} seconds", extra={"admin": True})
-        else:
-            # Step 2: Generate SQL Using LLM
-            sql = vn.generate_sql(user_message)
-            extracted_sql = vn.extract_sql(sql)
-            sql_source = "LLM (Language Model)"
-            sql_gen_time = time.time() - sql_gen_start
-            logger.info(f"SQL generation took {sql_gen_time:.2f} seconds", extra={"admin": True})
-
-        # Step 3: Validate SQL
-        if not vn.is_sql_valid(extracted_sql):
-            payload = {"text": "Invalid SQL generated."}
-            if INCOMING_WEBHOOK_URL:
-                requests.post(INCOMING_WEBHOOK_URL, json=payload)
-            return
-
-        # Step 4: Execute the Query
-        result_df = vn.run_sql(extracted_sql)
-        total_rows = len(result_df)
-        max_display_rows = 10
-
-        # Step 5: Generate Summary (only if result_df is not empty)
-        summary_text = ""
-        if not result_df.empty:
-            try:
-                logger.info("Starting summary generation", extra={"admin": True})
-                summary_start = time.time()
-               
-                # Schema from DataFrame (column: dtype)
-                schema = result_df.dtypes.apply(lambda x: str(x)).to_dict()
-
-                summary_text = vn.generate_summary(
-                    question=user_message,
-                    df=result_df,
-                    sql=extracted_sql,
-                    schema=schema
-                )
-                summary_gen_time = time.time() - summary_start
-                logger.info(f"Summary generation took {summary_gen_time:.2f} seconds", extra={"admin": True})
-                logger.info(f"summary is {summary_text}", extra={"admin": True})
-            except Exception as summary_error:
-                summary_text = f"_Summary generation failed: {str(summary_error)}_"
-
-        # Step 6: Format the Result
-        if result_df.empty:
-            formatted_result = "No results found."
-            file_link = ""
-        elif total_rows > max_display_rows:
-            os.makedirs("static", exist_ok=True)
-            file_id = str(uuid.uuid4())[:8]
-            file_path = f"static/query_result_{file_id}.csv"
-            result_df.to_csv(file_path, index=False)
-
-            markdown_table = (
-                "| " + " | ".join(result_df.columns) + " |\n" +
-                "| " + " | ".join(["---"] * len(result_df.columns)) + " |\n"
-            )
-            for _, row in result_df.head(max_display_rows).iterrows():
-                markdown_table += "| " + " | ".join(str(cell) for cell in row) + " |\n"
-
-            formatted_result = markdown_table
-            file_link = f"\n\n[Download Full Results](/{file_path})"
-        else:
-            markdown_table = (
-                "| " + " | ".join(result_df.columns) + " |\n" +
-                "| " + " | ".join(["---"] * len(result_df.columns)) + " |\n"
-            )
-            for _, row in result_df.iterrows():
-                markdown_table += "| " + " | ".join(str(cell) for cell in row) + " |\n"
-
-            formatted_result = markdown_table
-            file_link = ""
-
-        # Step 7: Final Response Text
-        response_text = (
-            f"**Query Result:**\n\n"
-            f"**Question:** {user_message}\n\n"
-            f"****\n"
-            f"**SQL (Source: {sql_source}):** {extracted_sql}\n\n\n"
-            f"****\n"
-            f"{formatted_result}{file_link}"
-            f"****\n"
-        )
-
-        if summary_text:
-            response_text += f"\n\n**Summary:**\n{summary_text}"
-
-        # Post final response to incoming webhook
-        payload = {"text": response_text}
-        if INCOMING_WEBHOOK_URL:
-            requests.post(INCOMING_WEBHOOK_URL, json=payload)
-
-
+        return bool(finder(question, workspace_name))
     except Exception as e:
-        error_text = f"Error: {str(e)}"
-        payload = {"text": error_text}
-        if INCOMING_WEBHOOK_URL:
-            requests.post(INCOMING_WEBHOOK_URL, json=payload)
+        logger.warning(f"Trained-question lookup failed: {e}")
+        return False
 
 
+# Messages closer than this to a trained question are answered from the dataset
+# instead of being routed by the LLM classifier. Calibrated on the demo workspace
+# (Chroma default embedding): rephrasings of its trained questions sat at
+# 0.00–0.61 (96% under 0.5); genuine forecast/anomaly requests at 0.35–1.57
+# (1 of 20 under 0.5).
+_NEAR_TRAINED_DISTANCE = 0.5
+
+_QUESTION_OPENERS = re.compile(
+    r"^\s*(what|which|who|whose|when|where|why|how|show|list|give|get|fetch|find|display|"
+    r"count|tell me|is|are|was|were|do|does|did|can|could|will|would|has|have)\b",
+    re.IGNORECASE,
+)
 
 
+def _is_new_question(text):
+    """True when a reply to an open scheduling prompt ("What would you like me
+    to send you?", "Who should receive this?") is really a fresh question — e.g.
+    "how many warehouses do we have" — that should be answered, not scheduled.
+    A reply that mentions sending/mailing/scheduling still continues the prompt."""
+    text = (text or "").strip()
+    if not text or text.startswith("/") or DELIVERY_CUES.search(text):
+        return False
+    if len(text.split()) < 3:
+        return False
+    return text.endswith("?") or bool(_QUESTION_OPENERS.match(text))
 
 
+def _dataset_route(question, workspace_name):
+    """How a chat message relates to this workspace's trained dataset:
+    "exact"  — it IS a trained question (its stored SQL answers it);
+    "near"   — a close rephrasing of one, and it doesn't ask for anything to be
+               sent/scheduled, so the query pipeline (which retrieves that
+               trained example) answers it — not prediction or scheduling;
+    None     — neither; route it as usual.
+    Before this, "Show me orders at risk…" style questions — a quarter of the
+    demo dataset — were sent to the prediction pipeline by the classifier and
+    answered by an unrelated saved check."""
+    if not question or not workspace_name:
+        return None
+    if _is_trained_question(question, workspace_name):
+        return "exact"
+    if DELIVERY_CUES.search(question):
+        return None
+    finder = getattr(vn, "nearest_trained_distance", None)
+    distance = finder(question, workspace_name) if finder else None
+    if distance is not None and distance < _NEAR_TRAINED_DISTANCE:
+        return "near"
+    return None
 
 
+def _canonical_question_id(value):
+    """The hyphenated lowercase UUID form of a question id, or None if it isn't one.
+
+    dbo.users.question_id is UNIQUEIDENTIFIER, so a non-UUID that reached the
+    feedback tables would fail with SQL Server error 8169 wherever the two are
+    compared. Every id the server issues is str(uuid4()), so this only rejects
+    malformed client input — and normalises the 32-hex-digit form to match.
+    """
+    try:
+        return str(uuid.UUID(str(value).strip()))
+    except (ValueError, AttributeError, TypeError):
+        return None
 
 
 def load_email_config():

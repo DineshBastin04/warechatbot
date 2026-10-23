@@ -22,7 +22,7 @@ everything, so a failing workspace never affects another workspace's job or
 the scheduler thread. First runs are staggered to spread DB load.
 """
 import logging
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 logger = logging.getLogger(__name__)
 
@@ -45,8 +45,13 @@ class WarehousePerfJobs:
             logger.warning("warehouse_perf: no scheduler supplied — automatic analysis is disabled; "
                            "the dashboard can still run analyses on demand")
             return False
+        # Aware instants (here and in queue_now below): APScheduler localises a
+        # NAIVE datetime to the scheduler's own timezone, which isn't necessarily
+        # this process's. Those matched only because both happen to be configured
+        # the same today — change either and these jobs would fire hours out, with
+        # nothing to show why.
         self.scheduler.add_job(func=self.reconcile, trigger="interval", minutes=RECONCILE_MINUTES,
-                               id=RECONCILE_ID, next_run_time=datetime.now() + timedelta(seconds=20),
+                               id=RECONCILE_ID, next_run_time=datetime.now(timezone.utc) + timedelta(seconds=20),
                                max_instances=1, coalesce=True, replace_existing=True, misfire_grace_time=120)
         self.active = True
         logger.info("warehouse_perf: registered on the existing scheduler (analysis every %d min per workspace)",
@@ -72,7 +77,7 @@ class WarehousePerfJobs:
                     continue
                 self.scheduler.add_job(
                     func=self.run_workspace, args=[ws], trigger="interval", minutes=self.interval_minutes,
-                    id=job_id, next_run_time=datetime.now() + timedelta(
+                    id=job_id, next_run_time=datetime.now(timezone.utc) + timedelta(
                         seconds=FIRST_RUN_DELAY_SECONDS + STAGGER_SECONDS * (i % 40)),
                     max_instances=1, coalesce=True, replace_existing=True, misfire_grace_time=300)
                 logger.info("warehouse_perf: scheduled automatic analysis for workspace %s", ws)
@@ -99,7 +104,7 @@ class WarehousePerfJobs:
         if self.scheduler is None:
             return False
         self.scheduler.add_job(func=self._run_manual, args=[workspace_id, trigger, actor], trigger="date",
-                               run_date=datetime.now() + timedelta(seconds=1),
+                               run_date=datetime.now(timezone.utc) + timedelta(seconds=1),
                                id=f"wpa-now:{workspace_id}", replace_existing=True, max_instances=1,
                                misfire_grace_time=300)
         return True

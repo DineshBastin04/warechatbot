@@ -1415,7 +1415,7 @@ ORDER BY tran_datetime DESC;
         */
 
         function initializeVanna(workspaceId) {
-            fetch(`/get_workspace/${workspaceId}`)
+            return fetch(`/get_workspace/${workspaceId}`)
                 .then(res => res.json())
                 .then(data => {
                     if (data.error) throw new Error(data.error);
@@ -1750,6 +1750,8 @@ function previewSqlQuery() {
                 <div id="openaiModelsDiv" style="display: none;">
                     <label for="openai_model">Select OpenAI Model:</label>
                     <select id="openai_model" onchange="toggleApiKeyField()">
+                        <option value="gpt-4.1-mini">GPT-4.1 Mini (recommended)</option>
+                        <option value="gpt-4.1">GPT-4.1</option>
                         <option value="gpt-3.5-turbo">GPT-3.5 Turbo</option>
                         <option value="gpt-4">GPT-4</option>
                         <option value="gpt-4o">GPT-4O</option>
@@ -2322,6 +2324,7 @@ function previewSqlQuery() {
                         return;
                     }
                     const agents = data.agents || [];
+                    window._scheduledAgentsCache = agents;
                     if (!agents.length) {
                         listEl.innerHTML = '<p style="color:#888;">No scheduled agents in this workspace yet.</p>';
                         return;
@@ -2339,6 +2342,7 @@ function previewSqlQuery() {
                                     <th style="padding:6px;">Question</th>
                                     <th style="padding:6px;">Schedule</th>
                                     <th style="padding:6px;">Channel</th>
+                                    <th style="padding:6px;">Recipients</th>
                                     <th style="padding:6px;">Status</th>
                                     <th style="padding:6px;">Runs</th>
                                     <th style="padding:6px; min-width:90px;"></th>
@@ -2354,6 +2358,13 @@ function previewSqlQuery() {
                                         <td style="padding:6px; max-width:260px;">${(a.display_question || '').replace(/</g, '&lt;')}</td>
                                         <td style="padding:6px;">${a.description || ''}</td>
                                         <td style="padding:6px;">${a.channel || ''}</td>
+                                        <td style="padding:6px; width:220px; max-width:220px; overflow-wrap:break-word;" id="recipients-cell-${a.schedule_id}">
+                                            ${a.channel === 'email' && (a.email_recipients && a.email_recipients.length)
+                                                ? `<div style="overflow-wrap:break-word;">${a.email_recipients.join(', ')}</div>
+                                                   <div style="margin-top:6px;"><button class="test" onclick="editScheduledAgentRecipientsUI('${workspaceId}', '${a.schedule_id}')">Edit</button></div>`
+                                                : `<div><span style="color:#e74c3c;">unassigned</span></div>
+                                                   <div style="margin-top:6px;"><button class="test" onclick="editScheduledAgentRecipientsUI('${workspaceId}', '${a.schedule_id}')">Assign</button></div>`}
+                                        </td>
                                         <td style="padding:6px;">
                                             <span style="color:${a.enabled ? '#2e7d32' : '#e74c3c'};">
                                                 ${a.enabled ? 'enabled' : 'stopped'}
@@ -2437,6 +2448,59 @@ function previewSqlQuery() {
                     loadScheduledAgents(workspaceId);
                 })
                 .catch(err => console.error("Failed to delete scheduled agent:", err));
+        }
+
+        function editScheduledAgentRecipientsUI(workspaceId, scheduleId) {
+            const cell = document.getElementById(`recipients-cell-${scheduleId}`);
+            if (!cell) return;
+            const agent = (window._scheduledAgentsCache || []).find(a => a.schedule_id === scheduleId);
+            const current = new Set((agent && agent.email_recipients) || []);
+            cell.innerHTML = '<span style="color:#888;">Loading recipients…</span>';
+
+            fetch(`/api/v0/get_workspace_email_config?workspace_id=${workspaceId}`)
+                .then(res => res.json())
+                .then(data => {
+                    const registered = data.emails || [];
+                    if (!registered.length) {
+                        cell.innerHTML = '<span style="color:#e74c3c;">No registered recipients — add some under Email Config first.</span>';
+                        return;
+                    }
+                    cell.innerHTML = `
+                        <div style="display:flex; flex-direction:column; gap:4px; max-width:220px; overflow-wrap:break-word;">
+                            ${registered.map(e => `
+                                <label style="font-weight:normal; word-break:break-word;">
+                                    <input type="checkbox" class="recipient-checkbox-${scheduleId}" value="${e.address}" ${current.has(e.address) ? 'checked' : ''}>
+                                    ${e.label} (${e.address})
+                                </label>
+                            `).join('')}
+                            <div style="margin-top:6px;">
+                                <button class="test" onclick="saveScheduledAgentRecipientsUI('${workspaceId}', '${scheduleId}')">Save</button>
+                                <button class="test" onclick="loadScheduledAgents('${workspaceId}')">Cancel</button>
+                            </div>
+                        </div>
+                    `;
+                })
+                .catch(err => { cell.innerHTML = `<span style="color:#e74c3c;">Failed to load: ${err}</span>`; });
+        }
+
+        function saveScheduledAgentRecipientsUI(workspaceId, scheduleId) {
+            const checked = Array.from(document.querySelectorAll(`.recipient-checkbox-${scheduleId}:checked`)).map(cb => cb.value);
+            fetch('/api/v0/scheduled_agents/update_recipients', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ workspace_id: workspaceId, schedule_id: scheduleId, email_recipients: checked }),
+            })
+                .then(res => res.json())
+                .then(data => {
+                    const resultEl = document.getElementById('scheduled-agents-result');
+                    if (data.type === "error") {
+                        if (resultEl) { resultEl.textContent = data.error; resultEl.style.color = "#e74c3c"; }
+                        return;
+                    }
+                    if (resultEl) { resultEl.textContent = ""; }
+                    loadScheduledAgents(workspaceId);
+                })
+                .catch(err => console.error("Failed to update recipients:", err));
         }
 
 let currentPredictions = [];
@@ -4646,6 +4710,7 @@ function displayPredictionResults(predictionType, results) {
                                         <li onclick="showAIFeatures('${workspace.id}')"><i class="fas fa-cogs"></i>AI Features & Options</li>
                                         <li onclick="showPredictions('${workspace.id}')"><i class="fas fa-chart-line"></i>Predictions</li>
                                         <li onclick="showAnomaly('${workspace.id}')"><i class="fas fa-exclamation-triangle"></i>Anomaly Detection</li>
+                                        <li onclick="showPerformanceConfig('${workspace.id}')"><i class="fas fa-tachometer-alt"></i>Performance Checks</li>
                                         <li onclick="showTrainingModule('${workspace.id}')"><i class="fas fa-book"></i>Training Data</li>
 
                                         <div class="sub-section-label">Manage Agents</div>
@@ -5733,21 +5798,166 @@ function togglePrediction(predictionType, index, workspaceId) {
             contentArea.innerHTML = `
                 <h4>Teams Configuration</h4>
                 <input type="hidden" id="workspaceId" value="${id}">
-                <p>Configure Microsoft Teams integration for this workspace.</p>
+                <p>Let this workspace's users chat with WAI in Microsoft Teams — typed or spoken questions,
+                   scheduled reports and alerts. Users sign in with the <b>Teams email</b> set on their WAI user
+                   (User Management).</p>
 
                 <label class="switch">
                     <input type="checkbox" id="enableTeamsToggle">
                     <span class="slider round"></span>
                 </label>
-                <span style="margin-left: 10px;">Enable Teams Connector</span>
+                <span style="margin-left: 10px;">Enable Teams for this workspace</span>
 
                 <button class="save" onclick="saveTeamsConfig()">Save Configuration</button>
                 <p id="teams-test-result"></p>
+
+                <h4 style="margin-top:24px;">Server setup</h4>
+                <div id="teamsStatus">Loading…</div>
+
+                <h4 style="margin-top:24px;">Teams credentials</h4>
+                <p style="font-size:13px;">From the Entra app registration behind your Azure Bot resource. These are
+                   server-wide (shared by every workspace) and saved to the server's <code>.env</code> file.</p>
+                <div id="teamsRestartBanner" style="display:none;padding:10px 12px;margin-bottom:12px;border-radius:6px;background:#fff4e5;border:1px solid #f0b46a;font-size:13px;">
+                    ⚠️ Saved changes aren't active yet — <b>restart the server</b> to apply them. Until then the bot,
+                    voice tab and Teams app package below keep using the previous values.
+                </div>
+
+                <label for="teamsAppId">Bot (Entra app) ID:</label>
+                <input type="text" id="teamsAppId" placeholder="00000000-0000-0000-0000-000000000000" oninput="updateTeamsDerivedFields()">
+
+                <label for="teamsAppPassword">Client secret:</label>
+                <input type="password" id="teamsAppPassword" placeholder="Leave blank to keep the saved one" autocomplete="new-password">
+                <p id="teamsAppPasswordStatus" style="color:#888;font-size:0.85em;"></p>
+
+                <label for="teamsTenantId">Tenant ID:</label>
+                <input type="text" id="teamsTenantId" placeholder="00000000-0000-0000-0000-000000000000">
+
+                <label for="teamsPublicBaseUrl">Public base URL:</label>
+                <input type="text" id="teamsPublicBaseUrl" placeholder="https://your-host.devtunnels.ms" oninput="updateTeamsDerivedFields()">
+
+                <label for="teamsMessagingEndpoint">Messaging endpoint:</label>
+                <input type="text" id="teamsMessagingEndpoint" readonly style="background:#f3f4f6;">
+
+                <label for="teamsTabUrl">Tab URL:</label>
+                <input type="text" id="teamsTabUrl" readonly style="background:#f3f4f6;">
+                <p style="color:#888;font-size:0.85em;">The messaging endpoint and tab URL follow the public base URL —
+                   the server always serves them at <code>/api/messages</code> and <code>/teams/tab</code>.</p>
+
+                <label for="teamsSsoResource">SSO Application ID URI:</label>
+                <input type="text" id="teamsSsoResource" placeholder="api://...">
+                <p id="teamsSsoDefault" style="color:#888;font-size:0.85em;"></p>
+
+                <p style="font-size:13px;">Set the <b>messaging endpoint</b> on your Azure Bot resource, and the
+                   <b>SSO Application ID URI</b> under "Expose an API" in the Entra app registration. After changing
+                   the public base URL or SSO URI, restart the server and re-upload the Teams app package.</p>
+                <button class="save" onclick="saveTeamsCredentials()">Save Teams Credentials</button>
+
+                <div id="teamsPackage" style="margin-top:20px;"></div>
             `;
             contentArea.style.display = 'block';
 
             // Load the configuration immediately
             loadTeamsConfig();
+            loadTeamsStatus();
+            loadTeamsCredentials();
+        }
+
+        function loadTeamsStatus() {
+            const target = document.getElementById('teamsStatus');
+            const packageTarget = document.getElementById('teamsPackage');
+            fetch('/api/teams/status')
+                .then(response => response.json())
+                .then(s => {
+                    const esc = (v) => String(v == null ? '' : v)
+                        .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+                    const row = (label, value, ok) =>
+                        `<tr><td style="padding:6px 10px;"><b>${label}</b></td>` +
+                        `<td style="padding:6px 10px;">${ok === false ? '⚠️ ' : ''}${esc(value) || '<em>not set</em>'}</td></tr>`;
+                    const missingBot = (s.missing_for_bot || []).join(', ');
+                    const missingTab = (s.missing_for_tab || []).join(', ');
+                    const missingPkg = (s.missing_for_package || []).join(', ');
+                    target.innerHTML = `
+                        <table style="border-collapse:collapse;margin-bottom:12px;">
+                            ${row('Bot', s.bot_running ? 'Running' : (missingBot ? 'Not configured — fill in the Teams credentials below, then restart the server' : 'Not running (check the server log)'), s.bot_running)}
+                            ${row('Voice tab', s.tab_enabled ? (missingTab ? 'Enabled but missing ' + missingTab : 'Enabled') : 'Off — set TEAMS_TAB_ENABLED=true in .env', s.tab_enabled && !missingTab)}
+                        </table>
+                    `;
+                    packageTarget.innerHTML = missingPkg
+                        ? `<p style="font-size:13px;">⚠️ Set ${esc(missingPkg)} in .env to build the Teams app package.</p>`
+                        : `<a class="save" style="display:inline-block;text-decoration:none;" href="/api/teams/manifest.zip">Download Teams app package</a>
+                           <p style="font-size:13px;">Give this .zip to your Teams administrator to upload in the Teams admin center
+                           (Manage apps → Upload new app), or upload it yourself if custom app upload is allowed.</p>`;
+                })
+                .catch(error => { target.textContent = 'Could not load Teams server status: ' + error.message; });
+        }
+
+        function teamsHostOf(baseUrl) {
+            return (baseUrl || '').trim().replace(/\/+$/, '').split('://').pop().split('/')[0].toLowerCase();
+        }
+
+        function updateTeamsDerivedFields() {
+            const base = document.getElementById('teamsPublicBaseUrl').value.trim().replace(/\/+$/, '');
+            const appId = document.getElementById('teamsAppId').value.trim();
+            document.getElementById('teamsMessagingEndpoint').value = base ? base + '/api/messages' : '';
+            document.getElementById('teamsTabUrl').value = base ? base + '/teams/tab' : '';
+            const host = teamsHostOf(base);
+            const fallback = host && appId ? `api://${host}/botid-${appId}` : '';
+            document.getElementById('teamsSsoDefault').textContent = fallback
+                ? 'Leave blank to use ' + fallback + ' (Azure only accepts that if the host is a verified domain of your tenant).'
+                : '';
+        }
+
+        function loadTeamsCredentials() {
+            fetch('/api/teams/config')
+                .then(async response => {
+                    const data = await response.json().catch(() => ({}));
+                    if (!response.ok) throw new Error(data.error || ('HTTP ' + response.status));
+                    return data;
+                })
+                .then(renderTeamsCredentials)
+                .catch(error => showErrorMessage('Could not load Teams credentials: ' + error.message));
+        }
+
+        function renderTeamsCredentials(data) {
+            document.getElementById('teamsAppId').value = data.app_id || '';
+            document.getElementById('teamsTenantId').value = data.tenant_id || '';
+            document.getElementById('teamsPublicBaseUrl').value = data.public_base_url || '';
+            document.getElementById('teamsSsoResource').value = data.sso_resource || '';
+            document.getElementById('teamsAppPassword').value = '';
+            document.getElementById('teamsAppPasswordStatus').textContent = data.app_password_set
+                ? 'A client secret is saved.' : 'No client secret saved yet.';
+            document.getElementById('teamsRestartBanner').style.display = data.restart_required ? 'block' : 'none';
+            updateTeamsDerivedFields();
+        }
+
+        function saveTeamsCredentials() {
+            const value = (id) => document.getElementById(id).value.trim();
+            const payload = {
+                app_id: value('teamsAppId'),
+                app_password: value('teamsAppPassword'),
+                tenant_id: value('teamsTenantId'),
+                public_base_url: value('teamsPublicBaseUrl'),
+                sso_resource: value('teamsSsoResource'),
+            };
+            fetch('/api/teams/config', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(payload)
+            })
+            .then(async response => {
+                const data = await response.json().catch(() => ({}));
+                if (!response.ok) throw new Error(data.error || ('HTTP ' + response.status));
+                return data;
+            })
+            .then(data => {
+                renderTeamsCredentials(data);
+                showSuccessMessage(!(data.changed || []).length
+                    ? 'No changes to save.'
+                    : (data.restart_required
+                        ? 'Teams credentials saved to .env — restart the server to apply them.'
+                        : 'Teams credentials saved to .env.'));
+            })
+            .catch(error => showErrorMessage('Could not save Teams credentials: ' + error.message));
         }
 
         function saveTeamsConfig() {
@@ -5852,6 +6062,264 @@ function flipMasterAnomalyUI(){
 }
 
 //updated 
+
+// ---------------- Performance Checks (admin-curated SQL answering a specific operational metric directly) ----------------
+let currentPerformanceChecks = [];
+
+function showPerformanceConfig(workspaceId) {
+    const contentArea = document.getElementById('contentArea');
+    contentArea.innerHTML = `
+        <h4>Performance Checks</h4>
+        <input type="hidden" id="workspaceId" value="${workspaceId}">
+        <p>Admin-curated, validated SQL that answers a specific operational metric directly in chat (e.g. warehouse storage occupancy, order cycle time) — these run as-is instead of the AI generating new SQL, so the answer is always exact. Unmatched questions fall back to normal AI-generated SQL as usual.</p>
+
+        <!-- Connects WI (LLM and DB) so checks can be run and SQL tested here -->
+        <div style="margin-bottom: 16px;">
+            <p>Initialize Saved Performance Checks</p>
+            <label class="switch">
+                <input type="checkbox" id="togglePerformance" ${isVannaConnected ? 'checked' : ''} onchange="togglePerformanceState('${workspaceId}')">
+                <span class="slider"></span>
+            </label>
+            <span id="performanceState" class="${isVannaConnected ? 'enabled' : 'disabled'}">${isVannaConnected ? 'Enabled' : 'Disabled'}</span>
+        </div>
+
+        <div id="performanceList"></div>
+        <button class="save" onclick="openAddPerformanceForm()">Add New Performance Check</button>
+
+        <div id="performanceForm" style="display:none; margin-top:20px;">
+            <h5 id="performanceFormTitle">Add New Performance Check</h5>
+            <input type="hidden" id="performanceOriginalType">
+            <label for="performanceName">Name:</label>
+            <input type="text" id="performanceName" placeholder="e.g., Warehouse Storage Occupancy">
+            <label for="performanceDescription">Description (used to match chat questions to this check):</label>
+            <textarea id="performanceDescription" rows="2" placeholder="e.g., Calculates per-warehouse storage location occupancy performance, broken down by warehouse."></textarea>
+            <label for="perfSqlQuery">SQL Query (read-only SELECT or WITH only — no stored procedure call):</label>
+            <textarea id="perfSqlQuery" rows="8" placeholder="Enter a read-only SELECT or WITH query"></textarea>
+            <button class="test" onclick="testSqlQuery('perfSqlQuery')">Test SQL Query</button>
+            <p id="perfSqlQueryResult"></p>
+            <button class="save" onclick="savePerformanceCheck('${workspaceId}')">Save Performance Check</button>
+            <button class="test" onclick="closePerformanceForm()">Cancel</button>
+        </div>
+
+        <div id="performanceResults" style="margin-top:20px;"></div>
+    `;
+    contentArea.style.display = 'block';
+    fetchPerformanceConfigs(workspaceId);
+}
+
+function updatePerformanceToggleUI(isEnabled) {
+    const toggleButton = document.getElementById('togglePerformance');
+    const state = document.getElementById('performanceState');
+    if (!toggleButton || !state) return;
+    toggleButton.checked = isEnabled;
+    state.textContent = isEnabled ? 'Enabled' : 'Disabled';
+    state.classList.toggle('enabled', isEnabled);
+    state.classList.toggle('disabled', !isEnabled);
+}
+
+function togglePerformanceState(workspaceId) {
+    const toggleButton = document.getElementById('togglePerformance');
+    if (!toggleButton) return;
+    if (toggleButton.checked) {
+        toggleButton.disabled = true;
+        initializeVanna(workspaceId)
+            .then(() => updatePerformanceToggleUI(isVannaConnected))
+            .finally(() => { toggleButton.disabled = false; });
+    } else {
+        isVannaConnected = false;
+        updatePerformanceToggleUI(false);
+        showSuccessMessage('Performance checks disabled.');
+    }
+}
+
+function fetchPerformanceConfigs(workspaceId) {
+    fetch(`/api/v0/get_performance_configs?workspace_id=${encodeURIComponent(workspaceId)}`)
+        .then(response => response.json())
+        .then(data => {
+            if (data.type === "error") {
+                showErrorMessage(data.error);
+                return;
+            }
+            currentPerformanceChecks = data.performance || [];
+            updatePerformanceList(currentPerformanceChecks, workspaceId);
+        })
+        .catch(error => showErrorMessage("Error fetching performance checks: " + error));
+}
+
+function updatePerformanceList(checks, workspaceId) {
+    const list = document.getElementById('performanceList');
+    if (!list) return;
+    if (!checks.length) {
+        list.innerHTML = '<p>No performance checks configured yet.</p>';
+        return;
+    }
+    list.innerHTML = '';
+    checks.forEach((check, index) => {
+        const div = document.createElement('div');
+        div.style.marginBottom = '12px';
+        div.innerHTML = `
+            <div style="display:flex;align-items:center;gap:10px">
+                <label class="switch">
+                    <input type="checkbox" ${check.enabled !== false ? 'checked' : ''}
+                           onchange="togglePerformanceCheck(${index}, '${workspaceId}')">
+                    <span class="slider"></span>
+                </label>
+                <span><strong>${(check.name || check.type || '').replace(/_/g, ' ')}</strong></span>
+                <button class="test" onclick="openEditPerformanceByIndex(${index})">Edit</button>
+                <button class="test" onclick="deletePerformanceCheck('${check.type}', '${workspaceId}')">Delete</button>
+                <button class="test" onclick="runPerformanceCheck('${check.type}', '${workspaceId}')" ${check.enabled === false ? 'disabled' : ''}>Run</button>
+            </div>
+            <div style="color:#666;font-size:0.9em;margin-left:48px">${check.description || ''}</div>
+        `;
+        list.appendChild(div);
+    });
+}
+
+function togglePerformanceCheck(index, workspaceId) {
+    const check = currentPerformanceChecks[index];
+    if (!check) { showErrorMessage('Performance check not found.'); return; }
+    check.enabled = check.enabled === false ? true : false;
+    fetch('/save_performance_config', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ workspace_id: workspaceId, performance: [check] })
+    })
+    .then(response => response.json())
+    .then(data => {
+        if (data.error) {
+            showErrorMessage(data.error);
+        } else {
+            showSuccessMessage(`Performance check ${check.enabled ? 'enabled' : 'disabled'}!`);
+            fetchPerformanceConfigs(workspaceId);
+        }
+    })
+    .catch(error => showErrorMessage('Error toggling performance check: ' + error));
+}
+
+function openAddPerformanceForm() {
+    document.getElementById('performanceFormTitle').textContent = 'Add New Performance Check';
+    document.getElementById('performanceOriginalType').value = '';
+    document.getElementById('performanceName').value = '';
+    document.getElementById('performanceDescription').value = '';
+    document.getElementById('perfSqlQuery').value = '';
+    document.getElementById('perfSqlQueryResult').textContent = '';
+    document.getElementById('performanceForm').style.display = 'block';
+}
+
+function openEditPerformanceByIndex(index) {
+    const check = currentPerformanceChecks[index];
+    if (!check) { showErrorMessage('Performance check not found.'); return; }
+    document.getElementById('performanceFormTitle').textContent = 'Edit Performance Check';
+    document.getElementById('performanceOriginalType').value = check.type || '';
+    document.getElementById('performanceName').value = check.name || '';
+    document.getElementById('performanceDescription').value = check.description || '';
+    document.getElementById('perfSqlQuery').value = check.sql_query || '';
+    document.getElementById('perfSqlQueryResult').textContent = '';
+    document.getElementById('performanceForm').style.display = 'block';
+}
+
+function closePerformanceForm() {
+    document.getElementById('performanceForm').style.display = 'none';
+}
+
+function savePerformanceCheck(workspaceId) {
+    const originalType = document.getElementById('performanceOriginalType').value.trim();
+    const name = document.getElementById('performanceName').value.trim();
+    const description = document.getElementById('performanceDescription').value.trim();
+    const sqlQuery = document.getElementById('perfSqlQuery').value.trim();
+
+    if (!name) { showErrorMessage('Name is required.'); return; }
+    if (!sqlQuery) { showErrorMessage('SQL query is required.'); return; }
+
+    // type is derived from the name the first time (lowercase, underscored)
+    // and kept stable on edit (same type), so saving an edit upserts the
+    // same entry instead of creating a duplicate — mirrors how anomaly/
+    // prediction types work.
+    const type = originalType || name.toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '');
+    const existing = currentPerformanceChecks.find(c => c.type === type);
+
+    const check = {
+        type: type,
+        name: name,
+        description: description,
+        sql_query: sqlQuery,
+        enabled: existing ? existing.enabled !== false : true,
+    };
+
+    fetch('/save_performance_config', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ workspace_id: workspaceId, performance: [check] })
+    })
+    .then(response => response.json())
+    .then(data => {
+        if (data.error) {
+            showErrorMessage(data.error);
+        } else {
+            showSuccessMessage('Performance check saved!');
+            closePerformanceForm();
+            fetchPerformanceConfigs(workspaceId);
+        }
+    })
+    .catch(error => showErrorMessage('Error saving performance check: ' + error));
+}
+
+function deletePerformanceCheck(type, workspaceId) {
+    if (!confirm(`Are you sure you want to delete the performance check "${type}"?`)) return;
+    fetch('/delete_performance_config', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ workspace_id: workspaceId, performance_type: type })
+    })
+    .then(response => response.json())
+    .then(data => {
+        if (data.error) {
+            showErrorMessage(data.error);
+        } else {
+            showSuccessMessage('Performance check deleted!');
+            fetchPerformanceConfigs(workspaceId);
+        }
+    })
+    .catch(error => showErrorMessage('Error deleting performance check: ' + error));
+}
+
+function runPerformanceCheck(type, workspaceId) {
+    if (!isVannaConnected) {
+        showErrorMessage("Please initialize WI (LLM and DB) before running a performance check.");
+        return;
+    }
+    const resultsDiv = document.getElementById('performanceResults');
+    if (!resultsDiv) { showErrorMessage('Results container missing'); return; }
+    resultsDiv.innerHTML = '<div style="text-align:center;margin:20px"><span class="loader"></span> Running…</div>';
+
+    fetch(`/api/v0/run_performance?workspace_id=${encodeURIComponent(workspaceId)}&performance_type=${encodeURIComponent(type)}`)
+        .then(r => r.json())
+        .then(data => {
+            if (data.type === 'error') {
+                resultsDiv.innerHTML = `<p class="error">${data.error}</p>`;
+                showErrorMessage(data.error);
+                return;
+            }
+            const rows = data.results || [];
+            if (!rows.length) {
+                resultsDiv.innerHTML = '<p>No rows returned.</p>';
+                return;
+            }
+            const columns = Object.keys(rows[0]);
+            let html = '<table class="table"><thead><tr>' + columns.map(c => `<th>${c}</th>`).join('') + '</tr></thead><tbody>';
+            rows.forEach(row => {
+                html += '<tr>' + columns.map(c => `<td>${row[c] === null || row[c] === undefined ? '' : row[c]}</td>`).join('') + '</tr>';
+            });
+            html += '</tbody></table>';
+            resultsDiv.innerHTML = html;
+            showSuccessMessage(`${type.replace(/_/g,' ')} check completed!`);
+        })
+        .catch(err => {
+            resultsDiv.innerHTML = `<p class="error">${err.message}</p>`;
+            showErrorMessage('Error running performance check: ' + err.message);
+        });
+}
+
 
 function showAnomaly(workspaceId) {
     const contentArea = document.getElementById('contentArea');

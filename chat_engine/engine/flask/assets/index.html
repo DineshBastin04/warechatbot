@@ -376,6 +376,262 @@ width: 200px;
 </div>
 
 <script>
+/*
+ * Voice in Teams (and anywhere the browser can't do speech itself).
+ *
+ * Inside the Teams tab the chat runs in an embedded webview where the browser's
+ * speech recognition doesn't work, so the mic button's recognizer is swapped
+ * for ServerSpeechRecognition. It records audio, stops on silence, and sends
+ * it to /api/v0/transcribe. Answers are read out with /api/v0/speak. It
+ * implements the small part of the Web Speech API the chat's mic component
+ * uses (lang, start, onresult/onend/onerror), so the compiled bundle is untouched.
+ */
+(function () {
+  const params = new URLSearchParams(window.location.search);
+  try {
+    if (params.get("inTeams") === "1") sessionStorage.setItem("waiInTeams", "1");
+  } catch (e) {}
+  const inTeams = params.get("inTeams") === "1" || (function () {
+    try { return sessionStorage.getItem("waiInTeams") === "1"; } catch (e) { return false; }
+  })();
+  const voiceMode = params.get("voice");   // "server" forces server speech anywhere
+
+  // Every page shown in a Teams tab must load TeamsJS and call app.initialize().
+  let teamsReady = Promise.resolve(null);
+  if (inTeams) {
+    teamsReady = new Promise((resolve) => {
+      const s = document.createElement("script");
+      s.src = "https://res.cdn.office.net/teams-js/2.57.0/js/MicrosoftTeams.min.js";
+      s.onload = () => microsoftTeams.app.initialize().then(() => resolve(microsoftTeams)).catch(() => resolve(null));
+      s.onerror = () => resolve(null);
+      document.head.appendChild(s);
+    });
+  }
+
+  const nativeRecognition = window.webkitSpeechRecognition || window.SpeechRecognition;
+  const useServerRecognition = inTeams || voiceMode === "server" || !nativeRecognition;
+  const useServerSpeech = () => inTeams || voiceMode === "server" || !("speechSynthesis" in window);
+
+  const notify = (msg) => (window.showToast ? window.showToast(msg, "error") : console.warn(msg));
+  const selectedLanguage = () => {
+    const el = document.getElementById("voice-language-select");
+    return el ? el.value : "en-US";
+  };
+  const silenceMs = () => {
+    const el = document.getElementById("voice-silence-select");
+    return parseInt(el ? el.value : "2000", 10) || 2000;
+  };
+
+  // ---- spoken replies -------------------------------------------------
+  let player = null;
+  async function speak(text) {
+    if (!text || !String(text).trim()) return;
+    try {
+      const res = await fetch("/api/v0/speak", {
+        method: "POST", credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ text: String(text) })
+      });
+      if (!res.ok) throw new Error("speech request failed (" + res.status + ")");
+      const url = URL.createObjectURL(await res.blob());
+      if (player) { player.pause(); URL.revokeObjectURL(player.src); }
+      player = new Audio(url);
+      await player.play();
+    } catch (e) {
+      console.warn("Speech playback failed:", e);
+      notify("Couldn't play the spoken answer — tap Play on the message to hear it.");
+    }
+  }
+
+  // ---- recording --------------------------------------------------------
+  const EXT_FOR_MIME = { "audio/webm": "webm", "audio/ogg": "ogg", "audio/mp4": "mp4", "audio/mpeg": "mp3",
+                         "audio/aac": "m4a", "audio/x-m4a": "m4a", "audio/m4a": "m4a", "audio/wav": "wav" };
+  const extFor = (mime) => EXT_FOR_MIME[(mime || "").split(";")[0].trim()] || "m4a";
+
+  function showStopButton(onStop) {
+    let btn = document.getElementById("wai-voice-stop");
+    if (!btn) {
+      btn = document.createElement("button");
+      btn.id = "wai-voice-stop";
+      btn.type = "button";
+      btn.style.cssText = "position:fixed;left:50%;bottom:96px;transform:translateX(-50%);z-index:10000;" +
+        "padding:10px 18px;border:none;border-radius:999px;background:#dc2626;color:#fff;font:600 14px 'Segoe UI',sans-serif;" +
+        "box-shadow:0 4px 14px rgba(0,0,0,.25);cursor:pointer";
+      document.body.appendChild(btn);
+    }
+    btn.textContent = "● Listening… tap to stop";
+    btn.onclick = onStop;
+    btn.style.display = "block";
+    return () => { btn.style.display = "none"; };
+  }
+
+  function submitChatInput() {
+    // The chat input submits on Enter; give the bound value a tick to update first.
+    setTimeout(() => {
+      const input = document.querySelector('input[placeholder^="Ask about"]');
+      if (input && input.value.trim()) {
+        input.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
+      }
+    }, 200);
+  }
+
+  async function recordWithMediaRecorder(shouldStop) {
+    const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    const mime = ["audio/webm;codecs=opus", "audio/webm", "audio/mp4", "audio/ogg;codecs=opus"]
+      .find((m) => window.MediaRecorder && MediaRecorder.isTypeSupported(m)) || "";
+    const recorder = new MediaRecorder(stream, mime ? { mimeType: mime } : undefined);
+    const chunks = [];
+    recorder.ondataavailable = (e) => { if (e.data && e.data.size) chunks.push(e.data); };
+
+    const AudioCtx = window.AudioContext || window.webkitAudioContext;
+    const audioCtx = AudioCtx ? new AudioCtx() : null;
+    let analyser = null, samples = null;
+    if (audioCtx) {
+      // Some embedded webviews (Teams' tab host included) create a new
+      // AudioContext already suspended unless it's resumed explicitly — left
+      // suspended, the analyser never sees any signal, so speech always looks
+      // like silence and the recording gets discarded as "nothing heard."
+      if (audioCtx.state === "suspended") {
+        try { await audioCtx.resume(); } catch (e) {}
+      }
+      if (audioCtx.state === "running") {
+        analyser = audioCtx.createAnalyser();
+        analyser.fftSize = 2048;
+        audioCtx.createMediaStreamSource(stream).connect(analyser);
+        samples = new Float32Array(analyser.fftSize);
+      }
+    }
+
+    return await new Promise((resolve, reject) => {
+      let heard = false;
+      const startedAt = Date.now();
+      let lastSound = startedAt;
+      const finish = () => {
+        clearInterval(timer);
+        if (recorder.state !== "inactive") recorder.stop();
+      };
+      const timer = setInterval(() => {
+        const now = Date.now();
+        if (analyser) {
+          analyser.getFloatTimeDomainData(samples);
+          let sum = 0;
+          for (let i = 0; i < samples.length; i++) sum += samples[i] * samples[i];
+          if (Math.sqrt(sum / samples.length) > 0.015) { heard = true; lastSound = now; }
+        }
+        if (shouldStop() || (heard && now - lastSound > silenceMs()) || now - startedAt > 30000 ||
+            (!heard && now - startedAt > 10000)) {
+          finish();
+        }
+      }, 100);
+      recorder.onstop = () => {
+        stream.getTracks().forEach((t) => t.stop());
+        if (audioCtx) audioCtx.close();
+        const type = recorder.mimeType || mime || "audio/webm";
+        resolve({ blob: new Blob(chunks, { type }), mime: type, heard: heard || !analyser });
+      };
+      recorder.onerror = (e) => reject(e.error || e);
+      recorder.start(250);
+    });
+  }
+
+  function recordWithTeamsMobile(teams) {
+    // Teams mobile blocks getUserMedia in tabs; its native recorder is the way in.
+    return new Promise((resolve, reject) => {
+      const input = { mediaType: teams.media.MediaType.Audio, maxMediaCount: 1 };
+      const onMedia = (err, attachments) => {
+        if (err) return reject(new Error(err.message || "recording cancelled"));
+        if (!attachments || !attachments.length) return reject(new Error("no recording"));
+        const got = (e2, blob) => (e2 ? reject(new Error(e2.message || "could not read recording"))
+                                      : resolve({ blob, mime: blob.type || "audio/mp4", heard: true }));
+        const maybe = attachments[0].getMedia(got);
+        if (maybe && maybe.then) maybe.then((blob) => got(null, blob), (e3) => got(e3));
+      };
+      const maybe = teams.media.selectMedia(input, onMedia);
+      if (maybe && maybe.then) maybe.then((a) => onMedia(null, a), (e) => onMedia(e));
+    });
+  }
+
+  class ServerSpeechRecognition extends EventTarget {
+    constructor() {
+      super();
+      this.lang = "en-US";
+      this.continuous = false;
+      this.interimResults = false;
+      this.onresult = null; this.onend = null; this.onerror = null; this.onstart = null;
+      this._stopRequested = false;
+    }
+    _emit(type, detail) {
+      const ev = new Event(type);
+      Object.assign(ev, detail || {});
+      this.dispatchEvent(ev);
+      const handler = this["on" + type];
+      if (typeof handler === "function") handler.call(this, ev);
+    }
+    stop() { this._stopRequested = true; }
+    abort() { this._stopRequested = true; }
+    async start() {
+      this._stopRequested = false;
+      const language = selectedLanguage();
+      let hideStop = () => {};
+      try {
+        const teams = await teamsReady;
+        let clientType = "";
+        if (teams) {
+          try { clientType = ((await teams.app.getContext()).app.host.clientType || "").toLowerCase(); } catch (e) {}
+        }
+        this._emit("start");
+        let recording;
+        if (teams && (clientType === "android" || clientType === "ios")) {
+          recording = await recordWithTeamsMobile(teams);
+        } else {
+          if (!navigator.mediaDevices || !window.MediaRecorder) throw new Error("this device can't record audio here");
+          hideStop = showStopButton(() => this.stop());
+          recording = await recordWithMediaRecorder(() => this._stopRequested);
+          hideStop();
+        }
+        if (!recording.heard || !recording.blob.size) {
+          notify("I didn't hear anything — tap the mic and try again.");
+          this._emit("end");
+          return;
+        }
+        const form = new FormData();
+        form.append("audio", recording.blob, "speech." + extFor(recording.mime));
+        form.append("language", language);
+        const res = await fetch("/api/v0/transcribe", { method: "POST", body: form, credentials: "include" });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) throw new Error(data.error || ("transcription failed (" + res.status + ")"));
+        const transcript = (data.text || "").trim();
+        if (transcript) {
+          const alternative = { transcript: transcript, confidence: 1 };
+          const result = [alternative]; result.isFinal = true;
+          const results = [result];
+          this._emit("result", { results: results, resultIndex: 0 });
+          submitChatInput();
+        } else {
+          notify("I couldn't make out any words — please try again.");
+        }
+        this._emit("end");
+      } catch (e) {
+        hideStop();
+        const msg = (e && e.name === "NotAllowedError")
+          ? "Microphone access is blocked — allow it for this app (Teams: Settings → App permissions)."
+          : ("Voice input failed: " + (e && e.message ? e.message : e));
+        notify(msg);
+        this._emit("error", { error: e && e.name ? e.name : "error", message: msg });
+        this._emit("end");
+      }
+    }
+  }
+  ServerSpeechRecognition.__wiServer = true;
+
+  if (useServerRecognition) {
+    window.webkitSpeechRecognition = ServerSpeechRecognition;
+    window.SpeechRecognition = ServerSpeechRecognition;
+  }
+  window.waiVoice = { inTeams: inTeams, useServerSpeech: useServerSpeech, speak: speak, teamsReady: teamsReady };
+})();
+</script>
+<script>
 
 //tanslate
 (function() {
@@ -402,7 +658,9 @@ width: 200px;
 
     const Original = window.webkitSpeechRecognition || window.SpeechRecognition;
 
-    if (Original) {
+    // The server-backed recognizer does its own silence detection and emits a
+    // single result at the end — this timer would cut every recording off.
+    if (Original && !Original.__wiServer) {
         const OriginalProto = Original.prototype;
         const originalStart = OriginalProto.start;
        

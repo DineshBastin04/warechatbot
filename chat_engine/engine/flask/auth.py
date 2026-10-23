@@ -5,9 +5,77 @@ import os
 import sqlite3
 import logging
 import hashlib
+import re
+import threading
+import time
 from datetime import datetime
+from werkzeug.security import generate_password_hash, check_password_hash
+
+from .access_control import normalize_role
 
 logger = logging.getLogger(__name__)
+
+_LEGACY_HASH_RE = re.compile(r"^[0-9a-f]{64}$")
+
+
+def _verify_and_maybe_upgrade_password(stored_hash, password, on_upgrade):
+    """
+    Verifies `password` against `stored_hash`, which may be in either format:
+    the current werkzeug format (pbkdf2:.../scrypt:...) or the legacy bare
+    SHA256 hex digest every account in this app was created with before this
+    fix. A legacy hash that verifies correctly is transparently upgraded via
+    `on_upgrade(new_hash)` — no forced password reset for existing accounts,
+    and no account is ever left on the weak, unsalted format once it's
+    actually used to log in again.
+    """
+    if not stored_hash:
+        return False
+    if stored_hash.startswith(("pbkdf2:", "scrypt:")):
+        return check_password_hash(stored_hash, password)
+    if _LEGACY_HASH_RE.match(stored_hash):
+        legacy_hash = hashlib.sha256(password.encode("utf-8")).hexdigest()
+        if legacy_hash == stored_hash:
+            try:
+                on_upgrade(generate_password_hash(password))
+            except Exception:
+                logger.exception("Failed to upgrade a legacy password hash after successful login")
+            return True
+        return False
+    # Unrecognized format — fail closed rather than guess.
+    return False
+
+
+_login_attempts = {}
+_login_attempts_lock = threading.Lock()
+_MAX_LOGIN_ATTEMPTS = 5
+_LOGIN_LOCKOUT_SECONDS = 900  # 15 minutes
+
+
+def _login_lockout_remaining(username):
+    """Seconds left on an active lockout for this username, or 0 if not locked."""
+    with _login_attempts_lock:
+        entry = _login_attempts.get(username.lower())
+        if not entry or not entry.get("locked_until"):
+            return 0
+        remaining = entry["locked_until"] - time.time()
+        if remaining <= 0:
+            _login_attempts.pop(username.lower(), None)
+            return 0
+        return remaining
+
+
+def _record_login_failure(username):
+    key = username.lower()
+    with _login_attempts_lock:
+        entry = _login_attempts.setdefault(key, {"count": 0, "locked_until": None})
+        entry["count"] += 1
+        if entry["count"] >= _MAX_LOGIN_ATTEMPTS:
+            entry["locked_until"] = time.time() + _LOGIN_LOCKOUT_SECONDS
+
+
+def _clear_login_failures(username):
+    with _login_attempts_lock:
+        _login_attempts.pop(username.lower(), None)
 
 class AuthInterface(ABC):
     @abstractmethod
@@ -76,18 +144,22 @@ class BasicAuth(AuthInterface):
         self.users_collection = self.client.get_or_create_collection(name="users")
         self.workspace_collection = self.client.get_or_create_collection(name="Workspaces")
 
-        # Hardcoded users with SHA256 hashes
+        # Hardcoded seed users — only ever written on a fresh install (see
+        # _sync_users_to_db), so this only sets the DEFAULT password for a new
+        # deployment. Hashed with werkzeug (salted, slow-by-design) rather than
+        # bare SHA256; an existing install's already-stored legacy hashes are
+        # upgraded transparently on next login (see _verify_and_maybe_upgrade_password).
         self.users = {
             "superadmin": {
-                "password_hash": hashlib.sha256("admin123".encode("utf-8")).hexdigest(),
+                "password_hash": generate_password_hash("admin123"),
                 "role": "superadmin"
             },
             "admin": {
-                "password_hash": hashlib.sha256("admin123".encode("utf-8")).hexdigest(),
+                "password_hash": generate_password_hash("admin123"),
                 "role": "admin"
             },
             "user1": {
-                "password_hash": hashlib.sha256("user123".encode("utf-8")).hexdigest(),
+                "password_hash": generate_password_hash("user123"),
                 "role": "user",
                 "workspace": "No.2"  # Default workspace for testing
             }
@@ -188,42 +260,34 @@ class BasicAuth(AuthInterface):
 
 
     def _sync_users_to_db(self):
-        """Sync hardcoded users to ChromaDB users collection."""
+        """Create the built-in users on a fresh install — and only then.
+
+        This used to overwrite existing records on every start, so a changed
+        password for superadmin/admin/user1 silently reverted to the default
+        (admin123/user123) at the next restart, and an admin's edits to their
+        role or workspace were undone too. Existing records are now left alone.
+        """
         for username, user_data in self.users.items():
             existing_user = self.users_collection.get(where={"username": username})
-            if not existing_user.get("metadatas"):
-                logger.info(f"Adding user {username} to ChromaDB", extra={"admin": True})
-                self.users_collection.add(
-                    ids=[username],
-                    metadatas=[{
-                        "username": username,
-                        "password_hash": user_data["password_hash"],
-                        "role": user_data["role"],
-                        "workspace": user_data.get("workspace", "")
-                    }],
-                    documents=[username]
-                )
-            else:
-                logger.info(f"Updating user {username} in ChromaDB", extra={"admin": True})
-                # Preserve existing metadata (like agent_config)
-                current_metadata = existing_user["metadatas"][0]
-                current_metadata.update({
+            if existing_user.get("metadatas"):
+                continue
+            logger.info(f"Adding user {username} to ChromaDB", extra={"admin": True})
+            self.users_collection.add(
+                ids=[username],
+                metadatas=[{
                     "username": username,
                     "password_hash": user_data["password_hash"],
                     "role": user_data["role"],
                     "workspace": user_data.get("workspace", "")
-                })
-                
-                self.users_collection.update(
-                    ids=[username],
-                    metadatas=[current_metadata],
-                    documents=[username]
-                )
+                }],
+                documents=[username]
+            )
 
     def _debug_users_collection(self):
         """Log contents of users collection for debugging."""
         results = self.users_collection.get()
-        logger.info(f"Users in ChromaDB collection: {results['metadatas']}", extra={"admin": True})
+        usernames = [m.get("username") for m in (results.get("metadatas") or [])]
+        logger.info(f"Users in ChromaDB collection: {usernames}", extra={"admin": True})
 
     def get_user(self, flask_request) -> any:
         username = session.get('username')
@@ -233,7 +297,7 @@ class BasicAuth(AuthInterface):
                 user_record = results["metadatas"][0]
                 return {
                     "username": username,
-                    "role": user_record.get("role", "user"),
+                    "role": normalize_role(user_record.get("role")),
                     "workspace": user_record.get("workspace", "")
                 }
         return None
@@ -260,8 +324,14 @@ class BasicAuth(AuthInterface):
                 logger.warning("Login attempt with missing username or password", extra={"user": True})
                 return render_template('login.html', error="Username and password are required")
 
-            # Hash the input password using SHA256
-            password_hash = hashlib.sha256(password.encode("utf-8")).hexdigest()
+            lockout_remaining = _login_lockout_remaining(username)
+            if lockout_remaining > 0:
+                minutes = max(1, int(lockout_remaining // 60) + 1)
+                logger.warning(f"Login attempt for locked-out username: {username}", extra={"admin": True})
+                return render_template(
+                    'login.html',
+                    error=f"Too many failed attempts — try again in {minutes} minute(s)."
+                )
 
             try:
                 # Fetch user from ChromaDB
@@ -273,15 +343,24 @@ class BasicAuth(AuthInterface):
                 user_record = None
                 if results.get("metadatas"):
                     user_record = results["metadatas"][0]
-                    logger.info(f"Found user record for {username}: {user_record}", extra={"admin": True})
+                    logger.info(f"Found user record for {username} (role={user_record.get('role')})", extra={"admin": True})
                     logger.info(f"Logged User: {username}", extra={"user": True})
                 else:
                     logger.warning(f"No user record found for username: {username}", extra={"admin": True})
                     logger.warning(f"No user record found for username: {username}", extra={"user": True})
+                    _record_login_failure(username)
                     return render_template('login.html', error="Invalid username or password")
 
-                if user_record and user_record.get("password_hash") == password_hash:
-                    role = str(user_record.get("role", "user")).lower()
+                def _upgrade_stored_hash(new_hash):
+                    user_record["password_hash"] = new_hash
+                    users_collection.update(ids=results["ids"][:1], metadatas=[user_record])
+                    logger.info(f"Upgraded legacy password hash for {username}", extra={"admin": True})
+
+                if user_record and _verify_and_maybe_upgrade_password(
+                    user_record.get("password_hash"), password, _upgrade_stored_hash
+                ):
+                    _clear_login_failures(username)
+                    role = normalize_role(user_record.get("role"))
                     stored_workspace = user_record.get("workspace", "")
 
                     # Re-validate workspace live against ChromaDB (accepts name or ID).
@@ -289,7 +368,7 @@ class BasicAuth(AuthInterface):
                     workspace_valid = user_record.get("workspace_valid", False)
                     if not workspace_valid and role not in ("superadmin", "admin"):
                         try:
-                            ws_data = self.client.get_collection("workspaces").get()
+                            ws_data = self.workspace_collection.get()
                             ws_names = [md.get("name", "") for md in (ws_data.get("metadatas") or [])]
                             ws_ids   = ws_data.get("ids") or []
                             if stored_workspace and (stored_workspace in ws_names or stored_workspace in ws_ids):
@@ -302,17 +381,7 @@ class BasicAuth(AuthInterface):
                         logger.warning(f"Workspace not valid for user {username}", extra={"admin": True})
                         logger.warning(f"Workspace not valid for user {username}", extra={"user": True})
                         return render_template('login.html', error="User is restricted. Please contact admin.")
-                    user_id = self._get_userid(username)
-                    session['username'] = username
-                    session['user_id'] = user_id
-                    # cache.refresh_cache_for_user(user_id)
-                    # logger.info(f"Cache updated: {cache}")
-                    session['role'] = role
-                    login_time = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-                    session['login_time'] = login_time
-                    logger.info(f"Session details from auth.py: \nusername:{username}\nuser_id:{user_id}\nrole:{role}\nlogin_time:{login_time}", extra={"session":True})
-                    logger.info(f"User {username} authenticated with role {role} Login time {login_time}", extra={"admin": True})
-                    logger.info(f"User {username} authenticated with role {role} Login time {login_time}", extra={"user": True})
+                    self.establish_session(username, role)
 
                     try:
                         if role == "superadmin":
@@ -331,6 +400,7 @@ class BasicAuth(AuthInterface):
                 else:
                     logger.warning(f"Invalid password for username: {username}", extra={"admin": True})
                     logger.warning(f"Invalid password for username: {username}", extra={"user": True})
+                    _record_login_failure(username)
                     return render_template('login.html', error="Invalid username or password")
 
             except Exception as e:
@@ -340,6 +410,21 @@ class BasicAuth(AuthInterface):
 
         logger.info("Rendering login page for GET request")
         return render_template('login.html')
+
+    def establish_session(self, username, role, user_id=None):
+        """Start a logged-in session. Shared by the password login and Teams SSO."""
+        user_id = user_id or self._get_userid(username)
+        role = normalize_role(role)
+        session.clear()
+        session['username'] = username
+        session['user_id'] = user_id
+        session['role'] = role
+        login_time = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+        session['login_time'] = login_time
+        logger.info(f"Session details from auth.py: \nusername:{username}\nuser_id:{user_id}\nrole:{role}\nlogin_time:{login_time}", extra={"session":True})
+        logger.info(f"User {username} authenticated with role {role} Login time {login_time}", extra={"admin": True})
+        logger.info(f"User {username} authenticated with role {role} Login time {login_time}", extra={"user": True})
+        return user_id
 
     def callback_handler(self, flask_request) -> str:
         logger.info("Handling callback, redirecting to login", extra={"admin": True})

@@ -32,7 +32,7 @@ flowchart
         get_sql_prompt
         submit_prompt
         generate_question
-        generate_plotly_code
+        generate_chart_spec
     end
 
     subgraph ChromaDB_VectorStore
@@ -79,6 +79,36 @@ from ..utils import validate_config_path
 #nlp = spacy.load("en_core_web_sm")  
 
 logger = logging.getLogger(__name__)
+
+# Words without which a message can't be a schedule/mail request or a
+# prediction/anomaly request (see classify_message_route). Matched as word
+# prefixes and kept deliberately broad: a false cue only costs the LLM call
+# every message used to make; a missing cue would misroute.
+_SCHEDULE_CUE_TEXT = (
+    # delivery / scheduling / managing agents
+    r"send|sent|mail|e-mail|email|forward|share|text|messag|notif|alert|remind|schedul|"
+    r"every|daily|weekly|monthly|hourly|yearly|whenever|when|watch|monitor|track|stop|"
+    r"cancel|pause|resume|agent|subscri|let me know|ping|whatsapp|teams|pass\b.{0,12}\bon\b|cc\b|"
+    r"loop in"
+)
+_PREDICTION_CUE_TEXT = (
+    r"might be|predict|forecast|likel|probab|chance|expect|estimat|project|future|will|going to|"
+    r"next|upcoming|trend|anomal|unusual|abnormal|normal|outlier|odd|strange|weird|spike|"
+    r"suspicious|irregular|deviat|risk|typical|pattern|run out|running out|stock-?out|"
+    r"shortage|demand"
+)
+_ROUTE_CUES = re.compile(rf"\b({_SCHEDULE_CUE_TEXT}|{_PREDICTION_CUE_TEXT})", re.IGNORECASE)
+# Explicitly asking for something to be delivered or repeated — such a message is
+# never answered from the dataset alone, however close its wording is to a trained
+# question. Narrower than the schedule cues above: the trained questions
+# themselves use "watch", "track", "cancelled", "when" as ordinary data words.
+DELIVERY_CUES = re.compile(
+    r"\b(send|mail|e-mail|email|forward|share|text me|notif|alert|remind|schedul|every|daily|"
+    r"weekly|monthly|hourly|whenever|let me know|ping|whatsapp|subscri|pass\b.{0,12}\bon\b|cc\b|loop in)",
+    re.IGNORECASE,
+)
+
+
 class VannaBase(ABC):
     def __init__(self, config=None):
         if config is None:
@@ -265,6 +295,24 @@ class VannaBase(ABC):
             rewritten_match = re.search(r"'''rewritten'''\s*(.*?)\s*'''rewritten'''", new_q, re.DOTALL)
             if rewritten_match:
                 new_q = rewritten_match.group(1).strip()
+
+            # The chat sends the previous SQL with EVERY question after the first,
+            # so "follow-up mode" is the norm, not the exception. A trained
+            # question asked second in a conversation was therefore looked up as
+            # "<question>\n\nPrevious SQL: ..." — which never matches the dataset —
+            # and went to the LLM instead of running its trained SQL. If the new
+            # question on its own is a trained one, it isn't really a follow-up.
+            # Short replies ("Warehouse ATH1", "top 5") stay follow-ups even when
+            # some trained entry happens to be that bare text: merged with the
+            # previous SQL is what gives them their meaning.
+            find_trained_sql = getattr(self, "find_trained_sql", None)
+            trained_sql = (
+                find_trained_sql(new_q, kwargs.get("workspace"))
+                if find_trained_sql and len(new_q.split()) >= 4 else None
+            )
+            if trained_sql:
+                logger.info("Follow-up is itself a trained question → returning its SQL directly", extra={"admin": True})
+                return self.extract_sql(f"```sql\n{trained_sql}\n```"), 0, 0, 0, "exact_match"
 
             question = f"{new_q}\n\nPrevious SQL:\n{prev_sql}"
 
@@ -717,6 +765,14 @@ class VannaBase(ABC):
         if not text or not text.strip():
             return "query"
 
+        # Most messages are plain data questions, and paying an LLM round trip
+        # before every one of them delayed every answer. A schedule/mail request
+        # or a prediction/anomaly request always carries one of these cues — no
+        # cue at all means "query" without asking the model. Any cue, however
+        # loose ("cancel", "risk", "when"), still goes to the model below.
+        if not _ROUTE_CUES.search(text):
+            return "query"
+
         system_prompt = (
             "Classify the user's message into exactly one category. Respond with "
             'ONLY the single word "schedule", "prediction", or "query" — no '
@@ -733,9 +789,18 @@ class VannaBase(ABC):
             "for a condition/threshold/event over time — OR the message is about "
             "viewing, listing, or managing scheduled agents that ALREADY exist "
             "(asking what's currently scheduled, or asking to stop/cancel one), "
-            "even though that isn't itself about timing a new delivery. Either "
-            "way it does NOT introduce a new data question — it's about the "
-            "delivery/scheduling mechanism itself, not about looking up data.\n"
+            "even though that isn't itself about timing a new delivery.\n"
+            "A message that asks to SEND/FORWARD/SHARE/EMAIL/MAIL/TEXT/NOTIFY/REMIND "
+            "someone (including \"me\"), or is just that bare verb on its own "
+            "(\"forward\", \"send it\"), is ALWAYS \"schedule\", even when it ALSO names the "
+            "data to send (\"send a mail to X on all orders not yet picked\") — the "
+            "scheduling pipeline extracts that data question itself. Only classify "
+            "as \"query\" when nobody is asked to receive anything.\n"
+            "Look-up verbs — WHAT/SHOW/LIST/DISPLAY/FETCH/GET/GIVE/FIND/PULL, alone "
+            "or with \"it\"/\"this\"/\"again\" (\"list\", \"display\", \"fetch it\", "
+            "\"get it again\") — are ALWAYS \"query\": showing data in the chat is "
+            "not delivering it. They are \"schedule\" only when what's listed or "
+            "shown is the scheduled agents/schedules themselves.\n"
             '- "prediction" = the message asks for something that plain current-'
             "state data can't answer directly: a forward-looking estimate/"
             "forecast/likelihood of a future or typical value, OR a check for "
@@ -752,7 +817,9 @@ class VannaBase(ABC):
             'reason from the test above for anything else: "remind me every '
             'Monday at 9am", "email me this report daily", "notify me when '
             'inventory drops below 100", "send this to me", "text this to my '
-            'manager", "what are my scheduled questions", "show my schedules", '
+            'manager", "send a mail to suriyan now on orders that have not '
+            'started picking", "generate an email to Akshaya on any orders stuck '
+            'before picking", "what are my scheduled questions", "show my schedules", '
             '"list what I have scheduled", "stop schedule abc123" -> schedule. '
             '"predict which orders are at risk of missing '
             'SLA", "forecast next month\'s demand", "any unusual inventory '
@@ -818,7 +885,8 @@ class VannaBase(ABC):
 
         configs_desc = "\n".join(
             f"- kind={c.get('kind')}, type={c.get('type')}, name={c.get('name')!r}, "
-            f"table={c.get('table')!r}, about: {(c.get('justification') or '')[:200]}"
+            f"table={c.get('table')!r}, predicts={c.get('predicts')!r}, "
+            f"about: {(c.get('justification') or '')[:200]}"
             for c in (configs or [])
         ) or "(no prediction/anomaly checks configured yet in this workspace)"
         tables_desc = ", ".join(tables) if tables else "(no tables known)"
@@ -836,7 +904,11 @@ class VannaBase(ABC):
             f"{configs_desc}\n\n"
             "If one of them genuinely answers the user's question — same table/"
             "topic/intent, not just a loose keyword overlap — set matched:true "
-            "and copy its exact type string.\n\n"
+            "and copy its exact type string. The check must estimate the SAME "
+            "thing the user asks about (e.g. a purchase-order receipt-delay check "
+            "does NOT answer a stock-out question, even though both involve items "
+            "and dates). When in doubt, matched:false — a new check is built "
+            "instead, so a wrong match is worse than no match.\n\n"
             "Otherwise set matched:false, and decide \"kind\": is the user asking "
             "to estimate/forecast a future or typical value (\"prediction\"), or "
             "to find unusual/outlier/abnormal records (\"anomaly\")? Then pick "
@@ -879,6 +951,513 @@ class VannaBase(ABC):
             suggested_table = tables[0] if tables else None
         return {"matched": False, "kind": kind, "suggested_table": suggested_table}
 
+    def match_performance_config(self, question: str, configs: list, **kwargs) -> dict:
+        """
+        Single LLM call deciding whether one or more of this workspace's saved
+        performance checks (admin-curated, validated SQL answering a specific
+        operational metric — e.g. warehouse storage occupancy, order cycle
+        time) directly answer `question`, so their SQL can be run as-is
+        instead of generating new SQL from scratch.
+
+        Handles three shapes of question:
+        - names one specific metric ("what's our storage occupancy?") →
+          exactly one type.
+        - broad/general, no single metric named ("how is the warehouse
+          performing?") → ALL enabled checks, so the caller can run each and
+          combine them into one answer instead of guessing which one metric
+          the user meant.
+        - unrelated to any configured check → empty list, matched False.
+
+        Unlike match_analysis_config (prediction/anomaly), there is no
+        "propose a new check" branch — performance checks are curated ahead of
+        time by an admin; an unmatched question just falls through to the
+        ordinary generate_sql path untouched.
+
+        Args:
+            question: the raw user message (already translated to English).
+            configs: this workspace's enabled performance checks, flattened by
+                the caller into [{"type": str, "name": str, "description": str}, ...].
+
+        Same trust level as classify_message_route/match_analysis_config — a UX
+        aid, not a security boundary. The caller cross-checks every claimed
+        "type" against the actual `configs` list before trusting it.
+
+        Returns {"matched": True, "types": ["<config type>", ...]} (one or
+        more, never empty when matched) or {"matched": False, "types": []}.
+        """
+        if not question or not question.strip() or not configs:
+            return {"matched": False, "types": []}
+
+        configs_desc = "\n".join(
+            f"- type={c.get('type')}, name={c.get('name')!r}, about: {(c.get('description') or '')[:300]}"
+            for c in configs
+        )
+
+        system_prompt = (
+            "Decide whether one or more of this workspace's pre-built "
+            "performance checks directly answer the user's question.\n\n"
+            "Respond with ONLY a single JSON object (no prose, no markdown "
+            "fences), matching exactly:\n"
+            '{"matched": true or false, "types": ["<matching check\'s exact type>", ...]}\n\n'
+            "Available performance checks:\n"
+            f"{configs_desc}\n\n"
+            "Three cases:\n"
+            "1. The question names one specific metric that one check "
+            "computes — same topic/intent, not just a loose keyword overlap "
+            "(e.g. a question about order status is NOT a cycle-time question "
+            "just because both mention 'orders'; a question about staffing is "
+            "NOT a storage-occupancy question just because both mention "
+            "'warehouse'). Return matched:true with just that one type.\n"
+            "2. The question asks broadly about overall warehouse/operational "
+            "performance WITHOUT naming one specific metric (e.g. 'how is the "
+            "warehouse doing?', 'how are we performing?'). Return matched:true "
+            "with ALL of the listed types — each contributes part of the "
+            "overall picture, so none should be left out.\n"
+            "3. The question isn't about any of these metrics at all. Return "
+            "matched:false with an empty types list.\n\n"
+            "When in doubt between case 1 and case 3 for a specific-sounding "
+            "but unclear question, prefer matched:false — the question falls "
+            "back to normal SQL generation instead, so a wrong match is worse "
+            "than no match. That caution does NOT apply to case 2: a genuinely "
+            "broad performance question should always return all types."
+        )
+
+        messages = [
+            self.system_message(system_prompt),
+            self.user_message(question),
+        ]
+
+        self.log(title="Performance Config Match Prompt", message=system_prompt)
+        llm_response_tuple = self.submit_prompt(messages, **kwargs)
+
+        if isinstance(llm_response_tuple, tuple) and len(llm_response_tuple) in (2, 5):
+            response_text = llm_response_tuple[0]
+        else:
+            response_text = str(llm_response_tuple)
+
+        self.log(title="Performance Config Match Response", message=response_text)
+
+        parsed = self._parse_json_response(response_text)
+        if not parsed or not parsed.get("matched"):
+            return {"matched": False, "types": []}
+
+        claimed_types = parsed.get("types")
+        if not isinstance(claimed_types, list):
+            claimed_types = [claimed_types] if claimed_types else []
+        valid_types = {c.get("type") for c in configs}
+        # Drop anything claimed that isn't actually in the provided list —
+        # don't trust it blindly, same caution as match_analysis_config's
+        # suggested_table cross-check.
+        matched_types = [t for t in claimed_types if t in valid_types]
+        if matched_types:
+            return {"matched": True, "types": matched_types}
+        return {"matched": False, "types": []}
+
+    def match_entity_filter(self, question: str, df: pd.DataFrame, **kwargs) -> dict:
+        """
+        Single LLM call: does `question` name ONE specific value of some
+        identifying column already present in `df` (a warehouse code, a
+        carrier, a customer, an item, a region — whatever the result happens
+        to be grouped by) rather than asking about the data in general? And
+        if so, does that named value actually exist in the real results?
+
+        Deliberately column-agnostic — it inspects `df` itself rather than
+        assuming a fixed column name, so the same protection applies no
+        matter which dimension a given performance check (or any other
+        tabular result) happens to group by, today or in the future, without
+        needing a code change per check.
+
+        A performance check's SQL has no WHERE-clause filter at all — it
+        always returns every row. Found live: "what is the warehouse
+        performance in Manhattan" quietly returned the exact same all-
+        warehouse breakdown every time, since this schema has no warehouse-
+        to-city mapping and "Manhattan" never matched anything — but the
+        answer looked just as confident as a real one, with nothing telling
+        the user their filter was ignored. This lets the caller detect that
+        case for ANY identifying column, not just warehouse_id.
+
+        Returns:
+            {"mentioned": False} — nothing specific named, answer broadly.
+            {"mentioned": True, "column": "<df column>", "matched_value": "<real value>"}
+                — named and resolved to a real row.
+            {"mentioned": True, "column": None, "mentioned_term": "<term>"}
+                — named something that doesn't match any real value in any
+                  identifying column.
+        """
+        fallback = {"mentioned": False}
+        if df is None or df.empty or not question or not question.strip():
+            return fallback
+
+        # Candidate identifying columns: non-numeric, with few enough
+        # distinct values to plausibly be something a user would name (a
+        # code, a status, a category) rather than free text. A purely
+        # numeric column (a percentage, a count, an hours figure) is never
+        # something a question "names" a specific value of.
+        candidates = {}
+        for col in df.columns:
+            if pd.api.types.is_numeric_dtype(df[col]):
+                continue
+            values = df[col].dropna().unique().tolist()
+            if 0 < len(values) <= 200:
+                candidates[col] = [str(v) for v in values]
+
+        if not candidates:
+            return fallback
+
+        columns_desc = "\n".join(
+            f"- {col}: {', '.join(values[:50])}" for col, values in candidates.items()
+        )
+
+        system_prompt = (
+            "This data's rows are identified by one or more columns, listed "
+            "below together with every real value that exists in the current "
+            "result:\n\n"
+            f"{columns_desc}\n\n"
+            "Does the user's question name ONE specific value for any of "
+            "these columns — by its exact value, an abbreviation, a "
+            "nickname, or a name/city that might plausibly refer to it — "
+            "rather than asking about the data in general?\n\n"
+            "If so, decide whether it matches one of the REAL values listed "
+            "above for that column. If it does, return that column name and "
+            "the exact matching value. If it clearly names something that "
+            "does NOT match any real value in any column (e.g. a city or "
+            "name that isn't in any list above), return null for column but "
+            "still report what they said.\n\n"
+            "Respond with ONLY a single JSON object (no prose, no markdown "
+            'fences): {"mentioned": true or false, "column": "<column name '
+            'from the list, or null>", "matched_value": "<exact real value, '
+            'only if column is set>", "mentioned_term": "<what they said, '
+            'only if mentioned is true and column is null>"}'
+        )
+
+        messages = [
+            self.system_message(system_prompt),
+            self.user_message(question),
+        ]
+
+        try:
+            llm_response_tuple = self.submit_prompt(messages, **kwargs)
+            response_text = (
+                llm_response_tuple[0]
+                if isinstance(llm_response_tuple, tuple) and len(llm_response_tuple) in (2, 5)
+                else str(llm_response_tuple)
+            )
+            parsed = self._parse_json_response(response_text)
+        except Exception as e:
+            logger.warning(f"match_entity_filter failed: {e}")
+            return fallback
+
+        if not parsed or not parsed.get("mentioned"):
+            return fallback
+
+        column = parsed.get("column")
+        matched_value = parsed.get("matched_value")
+        # Don't trust a claimed match blindly — the column must be one of
+        # the real candidates and the value must actually be in it.
+        if column not in candidates or matched_value not in candidates.get(column, []):
+            column = None
+            matched_value = None
+
+        return {
+            "mentioned": True,
+            "column": column,
+            "matched_value": matched_value,
+            "mentioned_term": parsed.get("mentioned_term") if not column else None,
+        }
+
+    def extract_numeric_condition(self, condition_text: str, numeric_columns: list, **kwargs) -> dict:
+        """
+        Single LLM call: turn a natural-language alert condition (e.g. "any
+        warehouse's occupancy goes above 90%", "execution time exceeds 3
+        hours") into a pure comparison expression over one of the given real
+        numeric columns, so a Performance Check can be scheduled to notify
+        only when the condition becomes newly true instead of delivering a
+        full report on every poll.
+
+        This is the performance-check analogue of the admin-entered "custom"
+        anomaly rule — same AST-gated safety model (the caller validates the
+        returned rule with is_select_only_sql's sibling, _is_safe_eval_rule,
+        before ever passing it to df.eval()), but the expression itself is
+        extracted from a chat request rather than typed by an admin.
+
+        Args:
+            condition_text: the verbatim condition, as extracted by
+                extract_schedule_request's "conditional" schedule type.
+            numeric_columns: the real numeric column names present in the
+                performance check's result (e.g. occupied_location_pct,
+                average_cycle_time_hours) — the only legal operands.
+
+        Returns {"rule": "<expression>"} if a safe, groundable comparison
+        could be built, or {"rule": None} if the condition doesn't map to
+        any of the given columns (the caller falls back to delivering on
+        every poll rather than silently never firing).
+        """
+        fallback = {"rule": None}
+        if not condition_text or not condition_text.strip() or not numeric_columns:
+            return fallback
+
+        pct_columns = [
+            c for c in numeric_columns
+            if c.lower().endswith(("_pct", "_percent", "_percentage", "_rate", "_ratio"))
+        ]
+        other_columns = [c for c in numeric_columns if c not in pct_columns]
+        columns_desc = (
+            f"Percentage/rate columns (already 0-100 or 0-1 scale): {', '.join(pct_columns) or '(none)'}\n"
+            f"Other numeric columns (raw counts, hours, etc.): {', '.join(other_columns) or '(none)'}"
+        )
+        system_prompt = (
+            "Turn this alert condition into a single comparison expression over "
+            "ONE of the real columns listed below:\n\n"
+            f"Condition: \"{condition_text}\"\n\n"
+            f"{columns_desc}\n\n"
+            "Pick whichever column the condition is actually about, and write a "
+            "plain comparison: '<column> > <number>', '<column> < <number>', "
+            "'<column> >= <number>', etc. A percentage stated as '90%' becomes "
+            "the number 90 if the column is already a 0-100 percentage.\n\n"
+            "Critical: if the condition uses the word 'percentage', 'percent', "
+            "'%', 'rate', 'ratio', or 'proportion', you MUST pick a column from "
+            "the Percentage/rate list above — never a raw count/value column "
+            "from the Other list, even if its name sounds related (e.g. "
+            "'occupied location percentage' means the column literally named "
+            "something like occupied_location_pct, NOT a raw count column like "
+            "full_locations or active_locations, which measure something "
+            "different — a count of locations, not a percentage of anything). "
+            "If no column in the Percentage/rate list matches, return null "
+            "rather than substituting a raw-count column as a guess.\n\n"
+            "Only use '&'/'|' to combine two comparisons if the condition "
+            "genuinely names two thresholds; otherwise keep it to one "
+            "comparison. If the condition doesn't correspond to any listed "
+            "column at all, return null instead of guessing.\n\n"
+            "Respond with ONLY a single JSON object (no prose, no markdown "
+            'fences): {"rule": "<expression using only the listed columns, or null>"}'
+        )
+
+        messages = [
+            self.system_message(system_prompt),
+            self.user_message(condition_text),
+        ]
+
+        try:
+            llm_response_tuple = self.submit_prompt(messages, **kwargs)
+            response_text = (
+                llm_response_tuple[0]
+                if isinstance(llm_response_tuple, tuple) and len(llm_response_tuple) in (2, 5)
+                else str(llm_response_tuple)
+            )
+            parsed = self._parse_json_response(response_text)
+        except Exception as e:
+            logger.warning(f"extract_numeric_condition failed: {e}")
+            return fallback
+
+        rule = parsed.get("rule") if parsed else None
+        return {"rule": rule or None}
+
+    def suggest_query_clarification(self, question: str, tables: list, **kwargs) -> dict:
+        """
+        Single LLM call used when generate_sql couldn't produce a query — it hit
+        its own anti-hallucination guard and returned the literal "Insufficient
+        data for query." because no trained example/documentation covers this
+        question's shape. Rather than dead-ending there, this decides HOW to
+        respond: ask a short clarifying question that could plausibly narrow the
+        request down to something answerable, or — if the question isn't
+        plausibly about anything in this database at all — say so plainly,
+        since no amount of back-and-forth will conjure data that doesn't exist.
+
+        Args:
+            question: the raw user question that failed to generate SQL.
+            tables: real table names that exist in the connected database (same
+                INFORMATION_SCHEMA.TABLES source used by match_analysis_config),
+                so the model reasons about what's actually here, not what a
+                typical warehouse schema might have.
+
+        Same trust level as classify_message_route/match_analysis_config — a UX
+        aid, not a security boundary. The eventual retried question still goes
+        through the exact same generate_sql path (and its own validation) as
+        every other question; this function only decides what to ask the user.
+
+        Returns a dict:
+            {"ask_user": True, "clarifying_question": "<short question>"}
+            or
+            {"ask_user": False, "reason": "<short plain-English explanation>"}
+        """
+        fallback = {
+            "ask_user": False,
+            "reason": "I don't have a trained example for that kind of question yet — "
+                      "ask your admin to add one, or try rephrasing with more specific detail.",
+        }
+        if not question or not question.strip():
+            return fallback
+
+        tables_desc = ", ".join(tables) if tables else "(no tables known)"
+
+        system_prompt = (
+            "A user asked a data question that a text-to-SQL system could not "
+            "answer, because no trained example or documentation covers this "
+            "shape of question yet. Your job is NOT to write SQL — it's to "
+            "decide how to respond to the user.\n\n"
+            f"Real tables that exist in this database: {tables_desc}\n\n"
+            "Reason about whether the user's question is plausibly about data "
+            "in one of these tables, just phrased in a way the system couldn't "
+            "ground yet — e.g. a business term that likely maps to a real "
+            "table/column, or a question missing one concrete detail (a date "
+            "range, a status, which specific item/order/customer they mean). "
+            "If so, ask ONE short, concrete clarifying question that would "
+            "help narrow it down to something answerable — never a vague "
+            "'can you clarify?', always something specific enough to act on.\n\n"
+            "If instead the question isn't plausibly about anything in this "
+            "table list at all (e.g. it asks about a concept this system has "
+            "no data for, like payroll hours or weather), asking more "
+            "questions won't help — say so plainly instead, don't pretend a "
+            "clarifying question would fix it.\n\n"
+            "Important: 'too broad, could mean several things' is NOT the same "
+            "as 'not about this data at all'. If your answer would name one or "
+            "more specific plausible sub-topics the tables likely cover (e.g. "
+            "'could involve order fulfillment, inventory levels, or shipment "
+            "tracking'), that itself proves the question IS plausibly "
+            "answerable — set ask_user:true and turn those same sub-topics "
+            "into the clarifying question (e.g. 'Are you asking about order "
+            "fulfillment rate, inventory levels, or shipment tracking "
+            "times?'), rather than listing them in a dead-end reason. Reserve "
+            "ask_user:false strictly for questions about a concept this "
+            "database has no data for whatsoever — never use it just because "
+            "the question is broad.\n\n"
+            "Critical: the table list above is for YOUR reasoning only — the "
+            "people asking this are often non-technical managers who have "
+            "never seen this database and don't know or care what the tables "
+            "are called. The clarifying_question text itself must be written "
+            "entirely in plain business language: never mention a table name, "
+            "column name, schema term, or phrase like 'based on data from "
+            "X' or 'in the Y table'. Bad: \"Are you asking about order "
+            "fulfillment rate based on data from t_order or t_pick_detail?\" "
+            "Good: \"Are you asking about how quickly orders get fulfilled, "
+            "or how much inventory is on hand?\" Translate every internal "
+            "table/column name into the everyday business concept it "
+            "represents before it reaches the user.\n\n"
+            "Respond with ONLY a single JSON object (no prose, no markdown "
+            "fences), matching exactly:\n"
+            '{"ask_user": true or false, '
+            '"clarifying_question": "<short question, only if ask_user is true>", '
+            '"reason": "<short plain-English reason, only if ask_user is false>"}'
+        )
+
+        messages = [
+            self.system_message(system_prompt),
+            self.user_message(question),
+        ]
+
+        self.log(title="Query Clarification Suggestion Prompt", message=system_prompt)
+        llm_response_tuple = self.submit_prompt(messages, **kwargs)
+
+        if isinstance(llm_response_tuple, tuple) and len(llm_response_tuple) in (2, 5):
+            response_text = llm_response_tuple[0]
+        else:
+            response_text = str(llm_response_tuple)
+
+        self.log(title="Query Clarification Suggestion Response", message=response_text)
+
+        parsed = self._parse_json_response(response_text)
+        if not parsed:
+            return fallback
+
+        # Defense in depth — found live: the model sometimes leaks a real
+        # table name into the user-facing text anyway ("...based on data
+        # from t_order or t_pick_detail?") despite the prompt forbidding it.
+        # The people asking this are non-technical managers who have never
+        # seen this schema; a table name in front of them is worse than a
+        # generic nudge, so detect it and fall back rather than expose it.
+        def _leaks_schema(text):
+            if not text:
+                return False
+            low = text.lower()
+            if any(t and t.lower() in low for t in (tables or [])):
+                return True
+            return bool(re.search(r"\bt_[a-z0-9_]+\b", low))
+
+        safe_generic_question = (
+            "Could you tell me a bit more about what you'd like to know — for example a "
+            "specific time period, warehouse, or order status?"
+        )
+
+        if parsed.get("ask_user") and parsed.get("clarifying_question"):
+            question_text = parsed["clarifying_question"]
+            if _leaks_schema(question_text):
+                logger.warning(f"suggest_query_clarification leaked a schema term, using generic fallback: {question_text!r}")
+                question_text = safe_generic_question
+            return {"ask_user": True, "clarifying_question": question_text}
+
+        reason_text = parsed.get("reason") or fallback["reason"]
+        if _leaks_schema(reason_text):
+            logger.warning(f"suggest_query_clarification leaked a schema term in reason, using generic fallback: {reason_text!r}")
+            reason_text = fallback["reason"]
+        return {"ask_user": False, "reason": reason_text}
+
+    def is_fresh_topic_change(self, reply: str, pending_question: str, **kwargs) -> bool:
+        """
+        Single LLM call used when a chat message arrives while a clarifying
+        question from suggest_query_clarification is still open (see
+        _pending_query_clarifications) — decides whether `reply` actually
+        answers `pending_question`, or is really an unrelated new question
+        the user has moved on to asking instead.
+
+        Before this, the only guard against wrongly merging a topic-change
+        message into a stale clarification was "is `reply` an exact trained
+        dataset question, and at least 4 words" — which caught the narrow
+        case of a complete trained question, but let any other brand-new,
+        unrelated, 4+-word question (e.g. a genuinely different topic that
+        happens to not be verbatim-trained) get silently glued onto the old
+        clarification's text instead of answered on its own.
+
+        A short noun-phrase answer ("order fulfillment rate", "last 30
+        days", "warehouse ATH1") is NOT a fresh topic change — that's
+        exactly what answering a clarifying question looks like. A
+        complete, standalone question on a different subject IS, even if
+        short.
+
+        Returns True only when reasonably confident this is a topic change
+        — False (treat it as an answer, the existing safe default) on any
+        doubt, parse failure, or missing input — so this can only ADD
+        topic-change detection on top of the existing checks, never weaken
+        them.
+        """
+        if not reply or not reply.strip() or not pending_question or not pending_question.strip():
+            return False
+
+        system_prompt = (
+            "A chatbot asked the user this clarifying question:\n"
+            f"\"{pending_question}\"\n\n"
+            "The user's next message follows. Decide: is it an ANSWER to "
+            "that clarifying question — even a short, partial, or "
+            "differently-worded one (naming one of the offered options, a "
+            "date range, a specific item/warehouse/order) — or is it a "
+            "completely different, unrelated NEW question the user has "
+            "moved on to instead?\n\n"
+            "Respond with ONLY a single JSON object (no prose, no markdown "
+            'fences): {"fresh_topic_change": true or false}\n\n'
+            "When genuinely unsure, answer false (treat it as an answer) — "
+            "wrongly discarding a real clarifying exchange is worse than "
+            "merging one extra unrelated word in."
+        )
+
+        messages = [
+            self.system_message(system_prompt),
+            self.user_message(reply),
+        ]
+
+        self.log(title="Fresh Topic Change Check Prompt", message=system_prompt)
+        try:
+            llm_response_tuple = self.submit_prompt(messages, **kwargs)
+            response_text = (
+                llm_response_tuple[0]
+                if isinstance(llm_response_tuple, tuple) and len(llm_response_tuple) in (2, 5)
+                else str(llm_response_tuple)
+            )
+            self.log(title="Fresh Topic Change Check Response", message=response_text)
+            parsed = self._parse_json_response(response_text)
+            return bool(parsed and parsed.get("fresh_topic_change"))
+        except Exception as e:
+            logger.warning(f"is_fresh_topic_change failed: {e}")
+            return False
+
     def extract_schedule_request(
         self,
         text: str,
@@ -906,7 +1485,6 @@ class VannaBase(ABC):
                                           # doesn't restate a question (e.g. "send
                                           # me this weekly") — caller resolves it
                                           # from the preceding chat turn instead.
-          "channel": "chat" | "email",
           "email_address": str | None,   # only set if a raw address was stated inline
           "email_labels": [str],         # names from known_email_labels the text referred
                                           # to (or the literal "all"); the expected path
@@ -963,8 +1541,14 @@ class VannaBase(ABC):
             '  "ok": true,\n'
             '  "question": "<the data question being asked, in English, or null if the\n'
             '               message is a follow-up that only refers back to prior results\n'
-            '               (e.g. \\"this\\", \\"this data\\", \\"it\\") without restating one>",\n'
-            '  "channel": "chat" or "email",\n'
+            '               (e.g. \\"this\\", \\"this data\\", \\"it\\") without restating one,\n'
+            '               OR a bare delivery/timing command with no data content of its\n'
+            '               own (e.g. \\"send mail now\\", \\"email it now\\", \\"send this\n'
+            '               again\\", \\"run it now\\") — the caller resolves these from the\n'
+            '               preceding chat turn, so do NOT restate the command itself as the\n'
+            '               question just because nothing else was said. Only set "question"\n'
+            '               when the text itself actually names what data to fetch (e.g.\n'
+            '               \\"send me open orders\\" -> question is about open orders)>",\n'
             '  "email_address": "<a raw email address if one was stated inline, else null>",\n'
             '  "email_labels": ["<registered label(s) the text referred to, or \\"all\\">"],\n'
             '  "schedules": [\n'
@@ -1086,7 +1670,7 @@ class VannaBase(ABC):
         parsed = self._parse_json_response(response_text)
         if parsed is None:
             return {
-                "ok": False, "question": None, "channel": "chat", "email_address": None,
+                "ok": False, "question": None, "email_address": None,
                 "email_labels": [], "schedules": [], "ambiguous": [],
                 "error": "Could not understand that as a scheduling request — please rephrase.",
             }
@@ -1121,7 +1705,6 @@ class VannaBase(ABC):
         return {
             "ok": ok,
             "question": parsed.get("question") or None,
-            "channel": parsed.get("channel") if parsed.get("channel") in ("chat", "email") else "chat",
             "email_address": parsed.get("email_address") or None,
             "email_labels": email_labels,
             "schedules": schedules,
@@ -1237,6 +1820,38 @@ class VannaBase(ABC):
 
         return True, ""
 
+    def is_select_only_sql(self, sql: str) -> Tuple[bool, str]:
+        """
+        Deterministic read-only guard, mirroring is_write_sql_valid's structure
+        but for the opposite direction: used wherever a caller lets an LLM- or
+        admin-supplied SQL string run as a read (e.g. a "custom" anomaly rule
+        that starts with SELECT) without that string ever having gone through
+        generate_sql's own validation chain. Not a replacement for the write
+        whitelist — this only establishes that a string truly is a single,
+        read-only SELECT before it's allowed to run at all.
+
+        Returns:
+            (True, "") if valid, else (False, reason).
+        """
+        if not sql or not sql.strip():
+            return False, "Empty SQL"
+
+        forbidden_keywords = r"\b(UPDATE|INSERT|DELETE|MERGE|CREATE|ALTER|DROP|TRUNCATE|RENAME|COMMENT|GRANT|REVOKE|EXEC|EXECUTE)\b"
+        if re.search(forbidden_keywords, sql, re.IGNORECASE):
+            return False, "Only read-only SELECT queries are permitted here"
+
+        if re.search(r"\bINTO\b", sql, re.IGNORECASE):
+            return False, "SELECT ... INTO (table creation) is not permitted"
+
+        parsed = sqlparse.parse(sql)
+        if len(parsed) != 1:
+            return False, "Exactly one SQL statement is required"
+
+        if not re.match(r"^\s*(SELECT|WITH)\b", sql, re.IGNORECASE):
+            return False, "Only SELECT (or WITH ... SELECT) statements are permitted"
+
+        return True, ""
+
     def should_generate_chart(self, df: pd.DataFrame) -> bool:
         """
         Example:
@@ -1277,7 +1892,7 @@ class VannaBase(ABC):
         last_question = re.sub(r"'''|\\n", '', last_question)  # Clean input
         question_query = f"The followup question {new_question}, previous question {last_question} and it's sql {schema}"
         logging.info(f"rewritten question {question_query}")
-        doc_list = self.get_similar_question_sql(question_query, training_data_type="documentation", **kwargs)
+        doc_list = self.get_similar_question_sql(question_query, training_data_type="documentation", keyword_text=new_question, **kwargs)
         logging.info(f"rewritten documentation {doc_list}")
         if doc_list is not None:
             prompt = [
@@ -1425,7 +2040,9 @@ class VannaBase(ABC):
 
         # Retrieval of relevant documentation
         question_query = f"{question} and its query {sql}" if sql else question
-        doc_list = self.get_similar_question_sql(question_query, training_data_type="documentation", **kwargs)
+        # keyword_text: glossary/table matching runs on the question alone, not
+        # question+SQL (see ChromaDB_VectorStore.get_similar_question_sql).
+        doc_list = self.get_similar_question_sql(question_query, training_data_type="documentation", keyword_text=question, **kwargs)
         logger.info(f"Documentation retrieved for summary: {len(doc_list)} items")
 
         # ────────────────────────────────────────────────
@@ -1561,8 +2178,430 @@ class VannaBase(ABC):
 
         return text, int(total or 0), int(inp or 0), int(out or 0), model or "unknown"
 
+    def generate_performance_summary(self, question: str, df: pd.DataFrame, **kwargs) -> str:
+        """
+        Summarizes a performance-check result (one metric, or several merged
+        — see match_performance_config) for a management/executive audience.
+        This feature gets demoed directly to senior staff who want a
+        decision-ready readout, not an operational line-item dump — so this
+        is deliberately stricter on content and format than the general-
+        purpose generate_summary used for ordinary data questions:
 
+        - Percentages/rates over raw counts. Where the data already has a
+          computed percentage column (e.g. occupied_location_pct), lead with
+          THAT value — never cite the raw counts it was computed from.
+        - Markdown bullet points only, a handful of them, never a narrative
+          paragraph.
+        - Each bullet says what the number MEANS for warehouse operations
+          (healthy / at risk / needs attention), not just the value itself.
+        - No mention of tables, columns, SQL, or anything technical.
 
+        Returns the bullet-point text, or None on failure/empty data.
+        """
+        if df is None or df.empty:
+            return "No data was available for this check."
+
+        num_rows = len(df)
+        max_rows = min(10, num_rows)
+        preview_md = df.head(max_rows).to_markdown(index=False)
+
+        pct_cols = [
+            c for c in df.columns
+            if c.lower().endswith(("_pct", "_percent", "_percentage", "_rate"))
+        ]
+        change_cols = [c for c in df.columns if c.lower().endswith("_change_pct")]
+
+        system = (
+            f"You are preparing a performance readout for senior management about: '{question}'\n\n"
+            f"Data (top {max_rows} of {num_rows} rows):\n{preview_md}\n\n"
+        )
+        if pct_cols:
+            system += (
+                f"This data already includes computed percentage/rate columns: {', '.join(pct_cols)}. "
+                "Lead with these values — do not cite the raw counts they were computed from.\n\n"
+            )
+        if change_cols:
+            system += (
+                f"This data also includes period-over-period change columns: {', '.join(change_cols)} "
+                "(the % change versus the prior 30-day period for that same warehouse). Use these to say "
+                "whether things are improving or getting worse — a management summary is incomplete if it "
+                "only states a current value and never says which direction it's moving.\n\n"
+            )
+
+        user_p = (
+            "Write the summary following these rules exactly:\n"
+            "1. One point per line, each line starting with the bullet character '•' followed "
+            "by a space — never a hyphen, asterisk, or numbered list, and never a narrative "
+            "paragraph. A handful of bullets at most.\n"
+            "2. Each bullet is ONE short sentence — crisp, not elaborated. State the single most "
+            "important number and its one key implication, then stop. Never pack two sentences, "
+            "two numbers, or two implications into one bullet.\n"
+            "3. If two stats are complements of each other (e.g. an occupied rate and its empty "
+            "rate, a pass rate and its fail rate), report only the one that's more decision-"
+            "relevant for that row — never state both; the reader can infer the other.\n"
+            "4. Lead with percentages or rates, not raw counts. If no percentage column exists "
+            "but one can reasonably be stated as a proportion (e.g. 'about a third of locations'), "
+            "prefer that over the sheer count.\n"
+            "5. This text is displayed as plain text with no markdown rendering — so use NO "
+            "markdown or formatting symbols at all: no asterisks, no bold/italic markers, no "
+            "headings. Make the number stand out through direct, concise phrasing instead (put "
+            "it early in the sentence, state it plainly) — never by wrapping it in symbols.\n"
+            "6. Be analytical: each bullet should say what the number MEANS for warehouse "
+            "operations — what's healthy, what's a risk, where to focus — in that single sentence, "
+            "not just restate a value.\n"
+            "7. Never mention tables, columns, SQL, or anything technical. Naming a specific "
+            "warehouse is fine when it's the point (e.g. which one needs attention) — just lead "
+            "with its rate/percentage, not raw location or order counts.\n"
+            "8. Round every percentage or rate to the nearest whole number (e.g. '66%', never "
+            "'66.32%') — decimal precision reads as a raw export, not an executive summary.\n"
+            "9. If there are more rows than fit in a handful of bullets, don't try to cover every "
+            "one — prioritize the ones that most need attention (the highest-risk or most extreme "
+            "values) and leave out the unremarkable, healthy ones entirely. A shorter list of real "
+            "exceptions beats a complete roll call.\n"
+            "10. If a period-over-period change column is present, state the trend direction "
+            "('improved', 'worsened', 'held steady') alongside the current value — a number with no "
+            "sense of direction leaves out exactly what a decision-maker needs. If no change column "
+            "exists, skip this (don't speculate about trend from a single snapshot).\n"
+            "Respond with ONLY the bullet list — no heading, no preamble, no closing remark."
+        )
+        user_p += self._response_language()
+
+        messages = [self.system_message(system), self.user_message(user_p)]
+        try:
+            result = self.submit_prompt(messages, **kwargs)
+            text = result[0] if isinstance(result, tuple) and len(result) in (2, 5) else str(result)
+        except Exception as e:
+            logger.warning(f"generate_performance_summary failed: {e}")
+            text = None
+        text = (text or "").strip()
+        if not text:
+            return None
+
+        # Defense in depth — the chat UI renders plain text with no markdown
+        # support, so **bold**/*italic*/# headings show up as literal, ugly
+        # symbols rather than formatting. The prompt above already asks for
+        # plain text and '•' bullets, but LLMs don't always follow a
+        # formatting instruction exactly; normalize here so a slip never
+        # reaches the user as raw asterisks or a stray hyphen bullet.
+        normalized_lines = []
+        for line in text.splitlines():
+            stripped = line.strip()
+            if not stripped:
+                continue   # drop any blank lines the model already added — re-spaced below
+            stripped = re.sub(r"^[-*]\s+", "• ", stripped)          # "- "/"* " → "• "
+            stripped = re.sub(r"^•\s*", "• ", stripped)             # normalize spacing after an existing •
+            stripped = re.sub(r"\*\*(.+?)\*\*", r"\1", stripped)    # **bold** → bold
+            stripped = re.sub(r"(?<!\*)\*([^*]+)\*(?!\*)", r"\1", stripped)  # *italic* → italic
+            # Round a stray decimal percentage the model didn't round itself
+            # (rule 8 above) — "66.32%" -> "66%". Plain round-half-up on the
+            # integer part is fine here; this is a readability pass, not a
+            # calculation anyone downstream depends on.
+            stripped = re.sub(r"(\d+)\.\d+%", lambda m: f"{round(float(m.group(0)[:-1]))}%", stripped)
+            normalized_lines.append(stripped)
+        # Blank line between bullets — the chat bubble otherwise renders every
+        # line packed tight with no breathing room between points.
+        return "\n\n".join(normalized_lines)
+
+    def generate_performance_methodology_explanation(self, question: str, configs: list, **kwargs) -> str:
+        """
+        Explains, in plain business language, HOW one or more performance
+        checks compute their metric — for a methodology question like "how
+        is this calculated?" or "what's the formula?" following a
+        performance-check answer (see _METHODOLOGY_CUE in engine/flask).
+
+        Unlike generate_performance_summary (which explains what the DATA
+        says), this explains what the QUERY does — but the audience is the
+        same management reader, so the same no-SQL, no-jargon, plain-text-
+        bullets contract applies: the admin-authored sql_query is given to
+        the model as ground truth for the logic, never shown to the reader
+        verbatim.
+
+        configs: the matched performance config dict(s) — each with at least
+        "name" and "sql_query" (see the Performance Checks admin panel).
+
+        Returns the explanation text, or None on failure.
+        """
+        if not configs:
+            return None
+
+        config_blocks = []
+        for cfg in configs:
+            config_blocks.append(
+                f"Metric: {cfg.get('name') or cfg.get('type')}\n"
+                f"Description: {cfg.get('description') or '(none provided)'}\n"
+                f"SQL that computes it:\n{cfg.get('sql_query') or ''}"
+            )
+        configs_text = "\n\n".join(config_blocks)
+
+        system = (
+            f"A member of senior management asked: '{question}'\n\n"
+            "They want to understand HOW the metric(s) below are calculated — not "
+            "the data result itself, the methodology behind it. Here is the "
+            "admin-authored SQL that computes each one, as ground truth for the "
+            "logic (the reader will never see this SQL):\n\n"
+            f"{configs_text}\n\n"
+        )
+
+        user_p = (
+            "Explain the calculation in plain business language, following these "
+            "rules exactly:\n"
+            "1. If there's more than one metric above, give each its own short "
+            "group: start with its plain-language name on its own line, then its "
+            "bullets below it.\n"
+            "2. Within each metric, use 2-4 bullets covering: (a) what data it "
+            "draws from and the time window compared (e.g. 'this calendar month "
+            "vs. the previous one'), (b) the formula in plain words (e.g. "
+            "'percentage change is the difference divided by the prior period's "
+            "value'), and (c) any caveat a reader needs to trust the number (e.g. "
+            "if the comparison anchors to the latest available data rather than "
+            "today's date, or if a warehouse with no prior-period data is shown "
+            "as having no comparison rather than a 0% change).\n"
+            "3. NEVER mention SQL, tables, columns, or any database/technical "
+            "term by its literal name — translate every one into a plain "
+            "business phrase (e.g. 'wh_id' -> 'warehouse', 'invoice_total' -> "
+            "'invoice amount', 'tran_date' -> 'invoice date').\n"
+            "4. One point per line, each starting with '• ' — never a hyphen, "
+            "asterisk, numbered list, or narrative paragraph. This text is "
+            "rendered as plain text with no markdown support, so use no bold, "
+            "italics, or headings — a metric's name on its own line is enough "
+            "to set it apart.\n"
+            "5. Be concrete and specific to the actual logic above — never a "
+            "generic, could-apply-to-anything explanation.\n"
+            "Respond with ONLY the explanation — no preamble, no closing remark."
+        )
+        user_p += self._response_language()
+
+        messages = [self.system_message(system), self.user_message(user_p)]
+        try:
+            result = self.submit_prompt(messages, **kwargs)
+            text = result[0] if isinstance(result, tuple) and len(result) in (2, 5) else str(result)
+        except Exception as e:
+            logger.warning(f"generate_performance_methodology_explanation failed: {e}")
+            text = None
+        text = (text or "").strip()
+        if not text:
+            return None
+
+        # Same defensive plain-text normalization as generate_performance_summary.
+        normalized_lines = []
+        for line in text.splitlines():
+            stripped = line.strip()
+            if not stripped:
+                continue
+            stripped = re.sub(r"^[-*]\s+", "• ", stripped)
+            stripped = re.sub(r"^•\s*", "• ", stripped)
+            stripped = re.sub(r"\*\*(.+?)\*\*", r"\1", stripped)
+            stripped = re.sub(r"(?<!\*)\*([^*]+)\*(?!\*)", r"\1", stripped)
+            normalized_lines.append(stripped)
+        return "\n\n".join(normalized_lines)
+
+    # Plain-language, non-technical gloss for each algorithm a saved
+    # prediction/anomaly config can use (see get_prediction_suggestions/
+    # get_anomaly_suggestions above for the authoritative algorithm lists).
+    # Given to generate_analysis_methodology_explanation as ground truth so
+    # the model doesn't have to guess what e.g. "dbscan" means in plain
+    # English — wrong guesses here would be a management-facing credibility
+    # problem the same way a wrong formula would be.
+    _ANALYSIS_ALGORITHM_GLOSS = {
+        "mean": "projects a future/typical value as the historical average of the target, adjusted by the given rate",
+        "standard_deviation": "flags or projects values based on how far they sit from the historical average, measured in standard deviations",
+        "linear_regression": "a statistical model trained on historical data that projects a future numeric value by fitting a straight-line trend",
+        "logistic_regression": "a statistical model trained on historical data that estimates the probability of a specific outcome (e.g. likely vs. unlikely)",
+        "z_score": "flags records whose value is statistically far from the typical range for that data (a z-score outlier check)",
+        "isolation_forest": "a machine-learning method that flags records whose overall combination of values looks unlike the rest of the data",
+        "dbscan": "a machine-learning method that groups similar records together and flags the ones that don't fit naturally into any group",
+        "custom": "uses a specific admin-defined rule or condition rather than a general statistical method",
+    }
+
+    def generate_analysis_methodology_explanation(self, question: str, kind: str, config: dict, **kwargs) -> str:
+        """
+        Explains, in plain business language, HOW a saved prediction or
+        anomaly check works — the prediction/anomaly counterpart to
+        generate_performance_methodology_explanation above (see its
+        docstring for the full rationale: same methodology-question trigger,
+        same no-SQL/no-jargon/plain-text-bullets contract, same audience).
+
+        config: the single matched prediction/anomaly config dict (as stored
+        — see _handle_prediction_message), with "algorithm", "parameters",
+        "sql_query", and a "..._name"/justification field.
+        """
+        if not config:
+            return None
+
+        algorithm = (config.get("algorithm") or "").strip()
+        algorithm_gloss = self._ANALYSIS_ALGORITHM_GLOSS.get(algorithm.lower(), None)
+        name = config.get("prediction_name") or config.get("anomaly_name") or config.get("type") or kind
+
+        system = (
+            f"A member of senior management asked: '{question}'\n\n"
+            f"They want to understand HOW this saved {kind} check works — not its "
+            "result, the methodology behind it. Here is the admin-authored "
+            "configuration as ground truth (the reader will never see this "
+            "directly):\n\n"
+            f"Name: {name}\n"
+            f"Algorithm: {algorithm or '(not specified)'}"
+            + (f" — in plain terms, this {algorithm_gloss}.\n" if algorithm_gloss else "\n")
+            + f"Parameters: {json.dumps(config.get('parameters') or {})}\n"
+            f"Why this check exists: {config.get('justification') or '(none provided)'}\n"
+            f"SQL that pulls the data it runs on:\n{config.get('sql_query') or '(none)'}\n\n"
+        )
+
+        user_p = (
+            "Explain the methodology in plain business language, following these "
+            "rules exactly:\n"
+            "1. 2-4 bullets covering: (a) what data it's built on (translate the "
+            "SQL's intent into plain words — what records/time window it pulls, "
+            "never the literal table/column names), (b) what kind of method it "
+            "uses and what that means in practice (use the plain-terms gloss "
+            "given above for the algorithm, phrased naturally — don't just "
+            "repeat it verbatim), and (c) what the parameters control, described "
+            "by what they mean for the result, not their literal field names.\n"
+            "2. NEVER mention SQL, tables, columns, JSON, or any database/"
+            "technical term by its literal name — translate every one into a "
+            "plain business phrase.\n"
+            "3. One point per line, each starting with '• ' — never a hyphen, "
+            "asterisk, numbered list, or narrative paragraph. This text is "
+            "rendered as plain text with no markdown support, so use no bold, "
+            "italics, or headings.\n"
+            "4. Be concrete and specific to the actual configuration above — "
+            "never a generic, could-apply-to-anything explanation.\n"
+            "Respond with ONLY the explanation — no preamble, no closing remark."
+        )
+        user_p += self._response_language()
+
+        messages = [self.system_message(system), self.user_message(user_p)]
+        try:
+            result = self.submit_prompt(messages, **kwargs)
+            text = result[0] if isinstance(result, tuple) and len(result) in (2, 5) else str(result)
+        except Exception as e:
+            logger.warning(f"generate_analysis_methodology_explanation failed: {e}")
+            text = None
+        text = (text or "").strip()
+        if not text:
+            return None
+
+        normalized_lines = []
+        for line in text.splitlines():
+            stripped = line.strip()
+            if not stripped:
+                continue
+            stripped = re.sub(r"^[-*]\s+", "• ", stripped)
+            stripped = re.sub(r"^•\s*", "• ", stripped)
+            stripped = re.sub(r"\*\*(.+?)\*\*", r"\1", stripped)
+            stripped = re.sub(r"(?<!\*)\*([^*]+)\*(?!\*)", r"\1", stripped)
+            normalized_lines.append(stripped)
+        return "\n\n".join(normalized_lines)
+
+    def _get_live_table_columns(self, table, **kwargs) -> dict:
+        """
+        Real, current column names for one or more tables (comma-separated string
+        or list), read straight from INFORMATION_SCHEMA.COLUMNS instead of relying
+        on admin-written table documentation — which may not exist yet for a given
+        table, or may have drifted from the table's actual current schema. Used to
+        ground prediction/anomaly suggestion generation in ground truth, and to
+        validate/repair a suggested query afterward (see _validate_and_repair_suggestions).
+
+        Returns {table_name: [column_name, ...]}; a table that fails to resolve
+        (typo, no access, connection hiccup) is simply omitted rather than raising —
+        the caller still has doc_list as a fallback source of column names.
+        """
+        names = [t.strip() for t in table.split(",")] if isinstance(table, str) else list(table or [])
+        result = {}
+        for name in names:
+            if not name:
+                continue
+            # A strict identifier check, not just a quote-strip — the table name
+            # still gets interpolated into the query text below (run_sql's MSSQL
+            # connection takes no params argument at all), so this is what
+            # actually closes the injection surface rather than just reducing it.
+            if not re.match(r"^[A-Za-z0-9_]+$", name):
+                logger.warning(f"Skipping live-schema lookup for non-identifier table name: {name!r}")
+                continue
+            try:
+                df = self.run_sql(
+                    f"SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_NAME = '{name}'"
+                )
+                if df is not None and not df.empty:
+                    result[name] = df["COLUMN_NAME"].tolist()
+            except Exception as schema_exc:
+                logger.warning(f"Could not read live schema for table {name!r}: {schema_exc}")
+        return result
+
+    def _validate_and_repair_suggestions(self, suggestions: list, table, **kwargs) -> list:
+        """
+        Executes each suggestion's sql_query as a zero-row probe
+        (`SELECT TOP 0 * FROM (<query>) AS _validate_sq`) against the real
+        database — cheap even on a huge table, since SQL Server still has to bind
+        every column/table reference to produce a valid plan, but TOP 0 means it
+        never actually scans data. This is the one way to know for certain the
+        suggested SQL is runnable: the LLM is instructed to use only documented/
+        live-schema columns, but can still hallucinate a plausible-sounding one
+        (seen live: 'task_type'/'task_id' on t_work_q, neither of which exist).
+
+        A suggestion that fails gets exactly one corrective regeneration — the
+        real error and the live column list fed back to the LLM — rather than
+        being silently dropped immediately; still-invalid after that retry IS
+        dropped, so a bad suggestion never reaches the admin UI or a chat answer
+        as if it were trustworthy.
+        """
+        live_columns = self._get_live_table_columns(table, **kwargs)
+        columns_desc = "; ".join(f"{t}: {', '.join(cols)}" for t, cols in live_columns.items()) or "(schema unavailable)"
+
+        def _probe(sql):
+            # T-SQL rejects a bare ORDER BY inside a derived table/subquery unless
+            # that subquery also has its own TOP/OFFSET — found live: wrapping a
+            # perfectly valid "... ORDER BY order_date" suggestion this way made
+            # the probe itself fail with error 1033, which then looked like an
+            # invalid-column problem and got a good suggestion wrongly "repaired"
+            # (badly) and dropped. Strip a trailing ORDER BY for the probe only —
+            # it has no bearing on whether the referenced tables/columns are real,
+            # which is the only thing this probe needs to check — and keep it on
+            # the suggestion's actual sql_query, which runs standalone, not nested.
+            probe_body = re.sub(r'(?is)\s+order\s+by\s+(?:(?!;).)*$', '', sql.rstrip(';'))
+            probe_sql = f"SELECT TOP 0 * FROM ({probe_body}) AS _validate_sq"
+            try:
+                self.run_sql(probe_sql)
+                return True, ""
+            except Exception as probe_exc:
+                return False, str(probe_exc)
+
+        validated = []
+        for suggestion in suggestions:
+            if not isinstance(suggestion, dict) or not suggestion.get("sql_query"):
+                continue
+            ok, error = _probe(suggestion["sql_query"])
+            if not ok:
+                try:
+                    fix_messages = [
+                        {
+                            "role": "system",
+                            "content": (
+                                "The SQL query below failed to run against the real database. Fix it using "
+                                "ONLY the real columns listed — do not invent any column or table not in this "
+                                f"list: {columns_desc}\n\n"
+                                f"Failed query:\n{suggestion['sql_query']}\n\n"
+                                f"Database error:\n{error}\n\n"
+                                "Respond with ONLY the corrected SQL query — no prose, no markdown fences, "
+                                "no explanation."
+                            ),
+                        }
+                    ]
+                    fixed_raw, *_rest = self.submit_prompt(fix_messages, **kwargs)
+                    fixed_sql = self._strip_json_fence(fixed_raw).strip().rstrip(";")
+                    ok, error = _probe(fixed_sql)
+                    if ok:
+                        suggestion["sql_query"] = fixed_sql
+                except Exception as fix_exc:
+                    logger.warning(f"Suggestion SQL repair attempt failed: {fix_exc}")
+                    ok = False
+            if ok:
+                validated.append(suggestion)
+            else:
+                logger.warning(
+                    f"Dropping a {suggestion.get('prediction_name') or suggestion.get('anomaly_name') or 'suggestion'} "
+                    f"— SQL still invalid after one repair attempt: {error}"
+                )
+        return validated
 
     def get_prediction_suggestions(self, table: list[str],user_query: str, **kwargs) -> str:
         """
@@ -1579,16 +2618,27 @@ class VannaBase(ABC):
         # Fetch table documentation
         doc_list = self.get_table_documentation(table, **kwargs)
         logger.info(f"Prediction documentations: Tables: {table} and their {doc_list}")
+        # Documentation is admin-written and can be missing or stale; the live
+        # schema is always accurate and available even when nothing has been
+        # documented yet — ground the LLM in it directly rather than relying on
+        # documentation alone (every generated query is still probed against the
+        # real database afterward — see _validate_and_repair_suggestions — this
+        # just makes a first-try failure far less likely).
+        live_columns = self._get_live_table_columns(table, **kwargs)
+        live_columns_desc = (
+            "; ".join(f"{t}: {', '.join(cols)}" for t, cols in live_columns.items())
+            or "(could not read live schema — rely on documentation only)"
+        )
         system_message_content = (
             f"You are a precise and reliable data assistant tasked with generating prediction configurations for a given table, tailored for warehouse personas (employees, operators, managers)."
             f"\n\nThe user asked: '{user_query}'\n\n"
             f"You are provided with:\n"
             f"- A table name: {table}\n"
-            f"- Table documentation: {doc_list}\n\n"
+            f"- REAL columns that currently exist in this table (ground truth — read live from the database): {live_columns_desc}\n"
+            f"- Table documentation (may be incomplete or absent): {doc_list}\n\n"
             f"The documentation provides technical descriptions, business usage, relationships, and other relevant details strictly related to the specified table(s). You **must**:\n"
-            f"- Use **only** the columns, relationships, and details explicitly listed in the provided documentation for {table}.\n"
-            f"- **Do not** assume or invent any columns, relationships, or attributes not explicitly mentioned in the documentation.\n"
-            f"- Validate that all referenced columns in your SQL queries and parameters exist in the documented schema of {table} or related tables as per the documentation.\n"
+            f"- Use **only** columns that appear in the REAL columns list above — treat it as authoritative over the documentation if the two ever disagree.\n"
+            f"- **Do not** assume or invent any columns, relationships, or attributes not in that list.\n"
             f"- If the documentation is insufficient or unclear, include a note in the justification explaining any limitations and propose solutions based only on available information.\n\n"
             f"Your task is to:\n"
             f"1. Based on the user query and table documentation, identify one or more (up to 5) vital prediction use cases for {table} that can be utilized by warehouse employees, operators, or managers. Focus on predictions that enhance warehouse operations, such as inventory management, order fulfillment, or resource allocation.\n"
@@ -1597,7 +2647,6 @@ class VannaBase(ABC):
             f"   - standard_deviation\n"
             f"   - linear_regression\n"
             f"   - logistic_regression\n"
-            f"   - custom\n"
             f"3. For each use case, generate:\n"
             f"   - A concise and meaningful prediction name relevant to warehouse operations.\n"
             f"   - The selected algorithm.\n"
@@ -1605,7 +2654,6 @@ class VannaBase(ABC):
             f"   - Parameters required for the algorithm, e.g.:\n"
             f"       - For 'mean' or 'standard_deviation': target, inflation_rate\n"
             f"       - For regression: target and features (only documented columns)\n"
-            f"       - For custom: any custom fields inside a dictionary (only documented fields)\n"
             f"   - A clear justification explaining why the prediction is vital for warehouse personas, referencing specific details from the documentation and aligning with the user's query.\n\n"
             f"Return your answer in **valid JSON** as a list of prediction configurations, each with the following structure:\n\n"
             f"["
@@ -1637,6 +2685,8 @@ class VannaBase(ABC):
             parsed_suggestions = json.loads(self._strip_json_fence(suggestions))
             if not isinstance(parsed_suggestions, list):
                 parsed_suggestions = [parsed_suggestions]
+
+            parsed_suggestions = self._validate_and_repair_suggestions(parsed_suggestions, table, **kwargs)
 
             return (
                 json.dumps(parsed_suggestions),
@@ -1673,6 +2723,15 @@ class VannaBase(ABC):
         """
         # Fetch table documentation
         doc_list = self.get_table_documentation(table, **kwargs)
+        # Documentation is admin-written and can be missing or stale; ground the
+        # LLM in the real, live schema too — see get_prediction_suggestions above
+        # for the full rationale (same fix, same failure mode: a plausible but
+        # nonexistent column like t_work_q.task_type).
+        live_columns = self._get_live_table_columns(table, **kwargs)
+        live_columns_desc = (
+            "; ".join(f"{t}: {', '.join(cols)}" for t, cols in live_columns.items())
+            or "(could not read live schema — rely on documentation only)"
+        )
 
         system_message_content = (
             f"You are a precise and reliable data assistant tasked with generating anomaly detection configurations for a given table, tailored for warehouse personas (employees, operators, managers). The user asked: 'Given a table name and its complete documentation, "
@@ -1680,11 +2739,11 @@ class VannaBase(ABC):
             f"\n\nThe user asked: '{user_query}'\n\n"
             f"You are provided with:\n"
             f"- A table name: {table}\n"
-            f"- Table documentation: {doc_list}\n\n"
+            f"- REAL columns that currently exist in this table (ground truth — read live from the database): {live_columns_desc}\n"
+            f"- Table documentation (may be incomplete or absent): {doc_list}\n\n"
             f"The documentation provides technical descriptions, business usage, relationships, and other relevant details strictly related to the specified table(s). You **must**:\n"
-            f"- Use **only** the columns, relationships, and details explicitly listed in the provided documentation for {table}.\n"
-            f"- **Do not** assume or invent any columns, relationships, or attributes not explicitly mentioned in the documentation.\n"
-            f"- Validate that all referenced columns in your SQL queries and parameters exist in the documented schema of {table} or related tables as per the documentation.\n"
+            f"- Use **only** columns that appear in the REAL columns list above — treat it as authoritative over the documentation if the two ever disagree.\n"
+            f"- **Do not** assume or invent any columns, relationships, or attributes not in that list.\n"
             f"- If the documentation is insufficient or unclear, include a note in the justification explaining any limitations and propose solutions based only on available information.\n\n"
             f"Your task is to:\n"
             f"1. Identify one or more (up to 5) vital anomaly detection use cases for {table} that can be utilized by warehouse employees, operators, or managers, based solely on its documented purpose and attributes. Focus on detecting anomalies in warehouse operations, such as unusual inventory levels, order delays, or customer order patterns.\n"
@@ -1741,6 +2800,8 @@ class VannaBase(ABC):
             parsed_suggestions = json.loads(self._strip_json_fence(suggestions))
             if not isinstance(parsed_suggestions, list):
                 parsed_suggestions = [parsed_suggestions]
+
+            parsed_suggestions = self._validate_and_repair_suggestions(parsed_suggestions, table, **kwargs)
 
             return (
                 json.dumps(parsed_suggestions),
@@ -2270,6 +3331,10 @@ class VannaBase(ABC):
                 prompt += f"Relevant tables: {', '.join(tables)}\n"
             if query_mapping:
                 prompt += f"Query mappings: {', '.join(str(m) for m in query_mapping[:10])}\n"
+            for name, detail in list((domain_context.get("query_mapping_details") or {}).items())[:5]:
+                prompt += f"- {name} ({detail.get('table')}): {detail.get('description') or ''}\n"
+                for on in detail.get("joins") or []:
+                    prompt += f"    join used by the trained examples: {on}\n"
             prompt += (
                 "Use this context only to interpret intent — "
                 "NEVER invent schema or joins not supported by examples/documentation.\n\n"
@@ -2513,34 +3578,18 @@ class VannaBase(ABC):
 
         return response
 
-    def _extract_python_code(self, markdown_string: str) -> str:
-        # Strip whitespace to avoid indentation errors in LLM-generated code
-        markdown_string = markdown_string.strip()
-
-        # Regex pattern to match Python code blocks
-        pattern = r"```[\w\s]*python\n([\s\S]*?)```|```([\s\S]*?)```"
-
-        # Find all matches in the markdown string
-        matches = re.findall(pattern, markdown_string, re.IGNORECASE)
-
-        # Extract the Python code from the matches
-        python_code = []
-        for match in matches:
-            python = match[0] if match[0] else match[1]
-            python_code.append(python.strip())
-
-        if len(python_code) == 0:
-            return markdown_string
-
-        return python_code[0]
-
-    def _sanitize_plotly_code(self, raw_plotly_code: str) -> str:
-        # Remove the fig.show() statement from the plotly code
-        plotly_code = raw_plotly_code.replace("fig.show()", "")
-
-        return plotly_code
-
-    def generate_plotly_code(self, question: str = None, sql: str = None, df_metadata: str = None, **kwargs) -> str:
+    def generate_chart_spec(self, question: str = None, sql: str = None, df_metadata: str = None, **kwargs) -> dict:
+        """
+        Asks the LLM to choose a chart type and columns for the result set, as a
+        small JSON spec — never executable code. An earlier version of this
+        method asked for raw Python ("plotly code") and ran it with exec()
+        (render_chart_figure's predecessor, get_plotly_figure) — meaning a
+        successful prompt injection in the user's own chat question could run
+        arbitrary code with the server process's full privileges. A spec can
+        only ever select a chart_type and column names; render_chart_figure
+        validates every one of them against the real DataFrame before use, so
+        there is nothing here that can be executed.
+        """
         if question is not None:
             system_msg = (
                 f"The following is a pandas DataFrame that contains the results of the query "
@@ -2562,28 +3611,27 @@ class VannaBase(ABC):
         message_log = [
             self.system_message(system_msg),
             self.user_message(
-                "Can you generate the Python plotly code to chart the results of the dataframe? "
-                "Assume the data is in a pandas dataframe called 'df'. "
-                "If there is only one value in the dataframe, use an Indicator. "
-                "Respond with only Python code. Do not answer with any explanations -- just the code."
+                "Choose how to chart this data. Respond with ONLY a single JSON object "
+                "(no prose, no markdown fences), matching exactly:\n"
+                '{"chart_type": "bar" | "line" | "scatter" | "pie" | "indicator", '
+                '"x": "<a real column name from df>" or null, '
+                '"y": "<a real column name from df>" or ["<column>", ...] or null, '
+                '"color": "<a real column name from df>" or null, '
+                '"title": "<a short chart title>" or null}\n\n'
+                'Use "indicator" only if the dataframe has a single row and a single '
+                'numeric value to show. Use "pie" only for a small number of categories. '
+                "Only name columns that actually appear in the dataframe described above."
             ),
         ]
 
-        plotly_code = self.submit_prompt(message_log, kwargs=kwargs)
+        response = self.submit_prompt(message_log, **kwargs)
+        if isinstance(response, tuple) and len(response) in (2, 5):
+            response_text = response[0]
+        else:
+            response_text = str(response)
 
-    
-        # If submit_prompt returns (response_text, usage) tuple
-        if isinstance(plotly_code, tuple):
-            plotly_code = plotly_code[0]
-
-        # Ensure it's always a string
-        if not isinstance(plotly_code, str):
-            plotly_code = str(plotly_code)
-    
-
-        return self._sanitize_plotly_code(
-            self._extract_python_code(plotly_code)
-        )
+        spec = self._parse_json_response(response_text)
+        return spec if isinstance(spec, dict) else {}
 
     # ----------------- Connect to Any Database to run the Generated SQL ----------------- #
 
@@ -3229,7 +4277,7 @@ class VannaBase(ABC):
         self.run_sql = run_sql_duckdb
         self.run_sql_is_set = True
 
-    def connect_to_mssql(self, odbc_conn_str: str, pool_size: int = 10, max_overflow: int = 5, query_timeout: int = 15, **kwargs):
+    def connect_to_mssql(self, odbc_conn_str: str, pool_size: int = 10, max_overflow: int = 5, query_timeout: int = 30, **kwargs):
         # Convert pool_size and max_overflow to integers if they're strings
         try:
             pool_size = int(pool_size)
@@ -3642,12 +4690,12 @@ class VannaBase(ABC):
             # Only generate plotly code if visualize is True
             if visualize:
                 try:
-                    plotly_code = self.generate_plotly_code(
+                    chart_spec = self.generate_chart_spec(
                         question=question,
                         sql=sql,
                         df_metadata=f"Running df.dtypes gives:\n {df.dtypes}",
                     )
-                    fig = self.get_plotly_figure(plotly_code=plotly_code, df=df)
+                    fig = self.render_chart_figure(spec=chart_spec, df=df)
                     if print_results:
                         try:
                             display = __import__(
@@ -3952,51 +5000,72 @@ class VannaBase(ABC):
 
         return plan
 
-    def get_plotly_figure(
-        self, plotly_code: str, df: pd.DataFrame, dark_mode: bool = True
+    def render_chart_figure(
+        self, spec: dict, df: pd.DataFrame, dark_mode: bool = True
     ) -> plotly.graph_objs.Figure:
         """
-        **Example:**
-        ```python
-        fig = vn.get_plotly_figure(
-            plotly_code="fig = px.bar(df, x='name', y='salary')",
-            df=df
-        )
-        fig.show()
-        ```
-        Get a Plotly figure from a dataframe and Plotly code.
+        Builds a Plotly figure from a chart spec (see generate_chart_spec) — a
+        plain dispatch over a handful of px./go. calls, never code execution.
+        Every column name in `spec` is checked against the real `df.columns`
+        before use; anything not present (a hallucinated column, or simply a
+        missing/invalid spec) is treated as absent and falls through to the
+        same dtype-based heuristic this always used as its fallback.
 
         Args:
-            df (pd.DataFrame): The dataframe to use.
-            plotly_code (str): The Plotly code to use.
+            spec (dict): {"chart_type", "x", "y", "color", "title"} from generate_chart_spec.
+            df (pd.DataFrame): The dataframe to chart.
 
         Returns:
             plotly.graph_objs.Figure: The Plotly figure.
         """
-        ldict = {"df": df, "px": px, "go": go}
+        spec = spec or {}
+        columns = set(df.columns)
+
+        def _col(value):
+            if isinstance(value, list):
+                picked = [v for v in value if isinstance(v, str) and v in columns]
+                return picked or None
+            return value if isinstance(value, str) and value in columns else None
+
+        chart_type = spec.get("chart_type")
+        x = _col(spec.get("x"))
+        y = _col(spec.get("y"))
+        color = spec.get("color") if spec.get("color") in columns else None
+        title = spec.get("title") if isinstance(spec.get("title"), str) else None
+        y_single = y[0] if isinstance(y, list) else y
+
+        fig = None
         try:
-            exec(plotly_code, globals(), ldict)
+            if chart_type == "indicator":
+                target = y_single or x
+                if target and not df.empty:
+                    fig = go.Figure(go.Indicator(mode="number", value=df[target].iloc[0],
+                                                  title={"text": title or target}))
+            elif chart_type == "bar" and x:
+                fig = px.bar(df, x=x, y=y, color=color, title=title)
+            elif chart_type == "line" and x:
+                fig = px.line(df, x=x, y=y, color=color, title=title)
+            elif chart_type == "scatter" and x and y_single:
+                fig = px.scatter(df, x=x, y=y_single, color=color, title=title)
+            elif chart_type == "pie" and x:
+                fig = px.pie(df, names=x, values=y_single, title=title)
+        except Exception as render_exc:
+            logger.warning(f"Chart spec failed to render ({chart_type}): {render_exc}")
+            fig = None
 
-            fig = ldict.get("fig", None)
-        except Exception as e:
-            # Inspect data types
+        if fig is None:
+            # Same fallback this method has always had — infer a reasonable
+            # chart straight from the dataframe's own dtypes when the spec
+            # is missing, invalid, or fails to render.
             numeric_cols = df.select_dtypes(include=["number"]).columns.tolist()
-            categorical_cols = df.select_dtypes(
-                include=["object", "category"]
-            ).columns.tolist()
-
-            # Decision-making for plot type
+            categorical_cols = df.select_dtypes(include=["object", "category"]).columns.tolist()
             if len(numeric_cols) >= 2:
-                # Use the first two numeric columns for a scatter plot
                 fig = px.scatter(df, x=numeric_cols[0], y=numeric_cols[1])
             elif len(numeric_cols) == 1 and len(categorical_cols) >= 1:
-                # Use a bar plot if there's one numeric and one categorical column
                 fig = px.bar(df, x=categorical_cols[0], y=numeric_cols[0])
             elif len(categorical_cols) >= 1 and df[categorical_cols[0]].nunique() < 10:
-                # Use a pie chart for categorical data with fewer unique values
                 fig = px.pie(df, names=categorical_cols[0])
             else:
-                # Default to a simple line plot if above conditions are not met
                 fig = px.line(df)
 
         if fig is None:

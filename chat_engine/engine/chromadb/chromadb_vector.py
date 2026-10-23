@@ -19,7 +19,7 @@ from functools import wraps
 import threading  # NEW: For thread names in logs
 import logging
 import math
-from fuzzywuzzy import fuzz
+from rapidfuzz import fuzz
 import json
 import os
 
@@ -143,6 +143,25 @@ for k, v in raw_table_relevance.items():
 # FINAL: Assign cleaned & safe dictionary
 # ----------------------------------------
 table_relevance = cleaned_table_relevance
+
+
+def _normalize_keyword(text):
+    """Lowercase, collapse whitespace, strip trailing punctuation — the same
+    normalization ChromaDB_VectorStore.normalize_keyword applies to questions."""
+    if not text:
+        return ""
+    normalized = " ".join(text.lower().split())
+    return re.sub(r'[?.!,;]*$', '', normalized).strip()
+
+
+# Keyword matching compares every glossary term and table-relevance keyword
+# against every question, so normalize them once here rather than per question.
+glossary_normalized = [
+    (key, [(term, _normalize_keyword(term)) for term in (entry.get("terms") or [])])
+    for key, entry in glossary.items()
+]
+for _kw_tuple, _table_entry in table_relevance.items():
+    _table_entry["norm_kws"] = [nk for nk in (_normalize_keyword(k) for k in _kw_tuple) if nk]
 
 
 default_ef = embedding_functions.DefaultEmbeddingFunction()
@@ -765,29 +784,24 @@ class ChromaDB_VectorStore(VannaBase):
         """
         SIMPLE normalization for exact matching - preserves original word structure
         """
-        if not text:
-            return ""
-        
-        # Convert to lowercase only
-        normalized = text.lower()
-        
-        # Remove extra whitespace only
-        normalized = ' '.join(normalized.split())
-        
-        # Remove ONLY trailing punctuation (preserves internal punctuation)
-        normalized = re.sub(r'[?.!,;]*$', '', normalized).strip()
-        
-        return normalized
+        return _normalize_keyword(text)
 
     def get_similar_question_sql(
         self,
         question: str,
         workspace: str = None,
         training_data_type: str = None,
+        keyword_text: str = None,
         **kwargs,
     ) -> dict | list:
         """
         Unified retrieval for SQL + Documentation, including domain context.
+
+        keyword_text: the text glossary/table-relevance/query-mapping matching
+        runs against (defaults to `question`). Callers that retrieve with a long
+        composite query — e.g. question + generated SQL for summaries — pass the
+        plain question here: fuzzy-matching every keyword against kilobytes of
+        SQL was taking ~40 s per call and matched SQL tokens, not intent.
 
         Uses:
         - Exact match on SQL dataset (if available)
@@ -810,8 +824,7 @@ class ChromaDB_VectorStore(VannaBase):
         Returns SQL list when training_data_type == "sql".
         """
 
-        import re, ast, asyncio, traceback
-        from fuzzywuzzy import fuzz
+        import re, ast, traceback
         import threading
 
         thread_name = threading.current_thread().name
@@ -856,7 +869,7 @@ class ChromaDB_VectorStore(VannaBase):
                     )
 
             # === STEP 2: NORMALIZE + TOKENIZE ===
-            normalized_question = self.normalize_keyword(question)
+            normalized_question = self.normalize_keyword(keyword_text or question)
             tokens = re.findall(r"\w+", normalized_question)
             token_set = set(tokens)
             bigrams = {" ".join(tokens[i:i + 2]) for i in range(len(tokens) - 1)}
@@ -878,9 +891,8 @@ class ChromaDB_VectorStore(VannaBase):
 
             # === STEP 3: GLOSSARY MATCHING ===
             matched_glossary_keys, matched_keywords = [], []
-            for key, entry in glossary.items():
-                for term in entry.get("terms", []):
-                    nt = self.normalize_keyword(term)
+            for key, terms in glossary_normalized:
+                for term, nt in terms:
                     if (
                         nt in normalized_question
                         or nt in token_set
@@ -901,6 +913,21 @@ class ChromaDB_VectorStore(VannaBase):
             primary_db_alias = getattr(self, "primary_db_alias", None) or "PRIMARY"
             secondary_db_alias = getattr(self, "secondary_db_alias", None)
 
+            def _resolve_db(tag):
+                """Map a table_relevance/query_mapping "db" tag to this workspace's
+                alias. The JSON files are shared across workspaces, so they tag the
+                second database generically ("secondary") or by database name — an
+                exact match against the alias the admin typed (e.g. "secondarydb ")
+                meant cross-DB detection never fired."""
+                t = str(tag or "").strip().lower()
+                if not t or t in ("primary", str(primary_db_alias).strip().lower(),
+                                  str(getattr(self, "primary_db_name", "") or "").lower()):
+                    return primary_db_alias
+                if secondary_db_alias and t in ("secondary", str(secondary_db_alias).strip().lower(),
+                                                str(getattr(self, "secondary_db_name", "") or "").lower()):
+                    return secondary_db_alias
+                return tag
+
             # Precompute embedding for question only once
             try:
                 q_vec = self.embedding_function.embed_query(question)
@@ -913,9 +940,14 @@ class ChromaDB_VectorStore(VannaBase):
                     return t[:-1]
                 return t
 
+            question_token_bases = {_normalize_token(qt) for qt in token_set}
+            # (table, db) pairs where some keyword fully matched (whole phrase, or
+            # all of its words) — as opposed to a fuzzy/partial/semantic score.
+            strong_hits = set()
+
             for kw_tuple, table_entry in table_relevance.items():
                 table = table_entry["table"]
-                resolved_db = table_entry.get("db") or primary_db_alias
+                resolved_db = _resolve_db(table_entry.get("db"))
                 # kw_tuple is already a tuple/list of cleaned keywords from your loader
                 if isinstance(kw_tuple, str):
                     # safety fallback if something slipped through
@@ -931,8 +963,8 @@ class ChromaDB_VectorStore(VannaBase):
                 rule_score = 0.0
                 kw_count = max(len(kws), 1)
 
-                for kw in kws:
-                    norm_kw = self.normalize_keyword(kw)
+                norm_kws = table_entry.get("norm_kws") or [self.normalize_keyword(k) for k in kws]
+                for norm_kw in norm_kws:
                     if not norm_kw:
                         continue
 
@@ -941,6 +973,7 @@ class ChromaDB_VectorStore(VannaBase):
                     # ----------------------------------------------------
                     if norm_kw in normalized_question:
                         rule_score += 6
+                        strong_hits.add((table, resolved_db))
                         continue
 
                     # ----------------------------------------------------
@@ -950,12 +983,13 @@ class ChromaDB_VectorStore(VannaBase):
                     token_hits = 0
 
                     for t in kw_tokens:
-                        base = _normalize_token(t)
-                        if any(_normalize_token(qt) == base for qt in token_set):
+                        if _normalize_token(t) in question_token_bases:
                             token_hits += 1
 
                     if token_hits > 1:
                         rule_score += 4      # multi-token match
+                        if token_hits == len(kw_tokens):
+                            strong_hits.add((table, resolved_db))
                     elif token_hits == 1:
                         rule_score += 2      # single token hit
 
@@ -1013,6 +1047,15 @@ class ChromaDB_VectorStore(VannaBase):
             # contract for all existing downstream consumers). matched_table_dbs
             # carries the db each one resolved to, used below to detect whether
             # this question needs a cross-DB (linked-server) join.
+            # A table on the secondary database turns the whole question into a
+            # cross-database query, so it needs a real keyword match — fuzzy and
+            # semantic scores alone gave the ERP table a top-5 spot for any
+            # question mentioning "order" or "status".
+            if secondary_db_alias:
+                table_scores = {
+                    key: s for key, s in table_scores.items()
+                    if key[1] != secondary_db_alias or key in strong_hits
+                }
             if table_scores:
                 top_entries = sorted(
                     table_scores.items(), key=lambda x: x[1], reverse=True
@@ -1027,9 +1070,35 @@ class ChromaDB_VectorStore(VannaBase):
             cross_db = bool(secondary_db_alias) and secondary_db_alias in dbs_present and len(dbs_present) > 1
 
             # === STEP 5: QUERY MAPPING MATCH ===
+            def _phrase_hit(phrase):
+                # Whole phrase in the question, or every meaningful word of it
+                # (plural-insensitive) — so "picking not started" also matches
+                # "orders where picking hasn't started yet".
+                np_ = self.normalize_keyword(phrase)
+                if not np_:
+                    return False
+                if np_ in normalized_question:
+                    return True
+                words = [w for w in re.findall(r"\w+", np_) if len(w) > 2]
+                return len(words) > 1 and all(_normalize_token(w) in question_token_bases for w in words)
+
             matched_query_mapping_keys = []
             for key, mapping in query_mapping.items():
                 hit = False
+                if isinstance(mapping, dict) and mapping.get("keywords"):
+                    # Intent patterns mined from the trained dataset match on their
+                    # phrases only — their column lists name everyday words
+                    # ("status", "delivery_date") that would match far too much.
+                    if any(_phrase_hit(k) for k in mapping["keywords"]):
+                        matched_query_mapping_keys.append(key)
+                        for mt, mdb in [(mapping.get("table"), mapping.get("db"))] + [
+                            (j.get("table"), j.get("db")) for j in mapping.get("joins", []) if isinstance(j, dict)
+                        ]:
+                            if mt:
+                                matched_table_dbs.setdefault(mt, _resolve_db(mdb))
+                                if mt not in matched_tables:
+                                    matched_tables.append(mt)
+                    continue
                 if isinstance(mapping, dict):
                     table_name = mapping.get("table")
                     if table_name and (
@@ -1055,7 +1124,7 @@ class ChromaDB_VectorStore(VannaBase):
                     # secondary-DB table still triggers cross_db detection.
                     if isinstance(mapping, dict) and mapping.get("table"):
                         mt = mapping["table"]
-                        matched_table_dbs.setdefault(mt, mapping.get("db") or primary_db_alias)
+                        matched_table_dbs.setdefault(mt, _resolve_db(mapping.get("db")))
 
             dbs_present = set(matched_table_dbs.values())
             cross_db = bool(secondary_db_alias) and secondary_db_alias in dbs_present and len(dbs_present) > 1
@@ -1091,28 +1160,19 @@ class ChromaDB_VectorStore(VannaBase):
             if dbs_present == {secondary_db_alias} and secondary_db_alias:
                 doc_query_kwargs["where"] = {"db": secondary_db_alias}
 
-            async def async_retrieve():
-                sql_task = asyncio.to_thread(
-                    self._submit_to_pool,
-                    self._async_query_collection,
-                    collection,
-                    [query_text],
-                    self.n_results_sql,
-                    **query_kwargs,
-                )
-                doc_task = asyncio.to_thread(
-                    self._submit_to_pool,
-                    self._async_query_collection,
-                    collection,
-                    [query_text],
-                    self.n_results_documentation,
-                    **doc_query_kwargs,
-                )
-                return await asyncio.gather(sql_task, doc_task)
-
+            # Run the SQL and documentation vector queries in parallel on the
+            # thread pool. (This used to go through asyncio.run(), which fails
+            # outright when called from code already running in an event loop —
+            # e.g. the Teams bot — and the failure was swallowed as "no results".)
             sql_results, doc_results = [], []
             try:
-                sql_raw, doc_raw = asyncio.run(async_retrieve())
+                sql_future = self.executor.submit(
+                    self._async_query_collection, collection, [query_text], self.n_results_sql, **query_kwargs
+                )
+                doc_future = self.executor.submit(
+                    self._async_query_collection, collection, [query_text], self.n_results_documentation, **doc_query_kwargs
+                )
+                sql_raw, doc_raw = sql_future.result(timeout=30), doc_future.result(timeout=30)
                 sql_extracted = ChromaDB_VectorStore._extract_documents(sql_raw)
                 doc_extracted = ChromaDB_VectorStore._extract_documents(doc_raw)
                 sql_results = [
@@ -1276,6 +1336,18 @@ class ChromaDB_VectorStore(VannaBase):
                     "glossary": matched_glossary_keys,
                     "tables": matched_tables,
                     "query_mapping": matched_query_mapping_keys,
+                    # What each matched intent pattern is and how its tables join —
+                    # the keys alone told the model nothing. Older entries without
+                    # a description/joins are left out.
+                    "query_mapping_details": {
+                        k: {
+                            "table": query_mapping[k].get("table"),
+                            "description": query_mapping[k].get("description"),
+                            "joins": [j.get("on") for j in query_mapping[k].get("joins", []) if isinstance(j, dict) and j.get("on")],
+                        }
+                        for k in matched_query_mapping_keys
+                        if isinstance(query_mapping.get(k), dict) and query_mapping[k].get("keywords")
+                    },
                     # Dual-DB info: which DB each matched table resolved to, whether
                     # this question needs tables from both (cross_db), and the two
                     # aliases so get_sql_prompt can qualify only the secondary DB's
@@ -1376,10 +1448,45 @@ class ChromaDB_VectorStore(VannaBase):
             logger.error(f"[_enrich_table_documentation] Exception during enrichment: {e}", exc_info=True)
             return doc_results
 
+    @staticmethod
+    def _exact_key(text: str) -> str:
+        """Comparison key for "is this the trained question?": case, runs of
+        whitespace and trailing ?/./! don't change which question was asked.
+        Wording, IDs and inner punctuation still have to match."""
+        return re.sub(r"[?.!\s]+$", "", " ".join((text or "").split()).lower())
+
+    def find_trained_sql(self, question: str, workspace: str):
+        """The stored SQL if `question` is a trained question in this workspace
+        (see _find_exact_matches_first), else None."""
+        matches = self._find_exact_matches_first(question, workspace)
+        if not matches:
+            return None
+        content = matches[0].get("content") or {}
+        return content.get("sql") or None
+
+    def nearest_trained_distance(self, question: str, workspace: str):
+        """Distance from `question` to the closest trained question in this
+        workspace (Chroma's own metric; lower is closer), or None."""
+        if not question or not workspace:
+            return None
+        try:
+            collection = self.chroma_client.get_or_create_collection(
+                name=workspace, embedding_function=self.embedding_function
+            )
+            res = collection.query(query_texts=[question], n_results=1, where={"type": "sql"},
+                                   include=["distances"])
+            distances = (res.get("distances") or [[]])[0]
+            return distances[0] if distances else None
+        except Exception as e:
+            logger.warning(f"nearest_trained_distance failed for workspace {workspace}: {e}")
+            return None
+
     def _find_exact_matches_first(self, question: str, workspace: str) -> list:
         """
-        Find 100% exact matches — not case-insensitive, not normalized.
-        Must match character-for-character, including spaces and case.
+        Find trained questions that ARE this question: same wording, ignoring
+        only case, extra whitespace and trailing ?/./! (see _exact_key). This
+        used to be strictly character-for-character, so "what is the X" or a
+        missing "?" missed the trained SQL and fell through to fresh generation.
         """
         logger.info(f"STEP 1: Searching for exact matches for: '{question}'")
 
@@ -1398,6 +1505,9 @@ class ChromaDB_VectorStore(VannaBase):
             logger.info(f" Scanning {total_records} records for exact matches...")
 
             exact_matches = []
+            question_key = self._exact_key(question)
+            if not question_key:
+                return []
 
             # Scope guard: a query may only touch the database(s)/linked server(s)
             # actually saved in this workspace's config. Nothing else, ever, even if
@@ -1419,8 +1529,7 @@ class ChromaDB_VectorStore(VannaBase):
                         if "question" in parsed_data and "sql" in parsed_data:
                             stored_question = parsed_data["question"]
 
-                            #  PURE CHARACTER-FOR-CHARACTER MATCH
-                            if stored_question == question:
+                            if self._exact_key(stored_question) == question_key:
                                 sql_text = parsed_data.get("sql", "") or ""
                                 scope_ok, scope_err = self.validate_db_scope(sql_text)
                                 if not scope_ok:

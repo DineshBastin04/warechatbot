@@ -770,5 +770,277 @@
       "WHERE": "t_invoice_detail.invoice_number IS NOT NULL"
     },
     "description": "Technical query for invoice line details in the system. The 't_invoice_detail' table stores information about each line in an invoice, including company, warehouse ID, invoice number, line number, item number, ordered quantity, invoiced quantity, backorder quantity, and price. It joins with 't_invoice' to fetch overall invoice information such as customer, totals, and transaction data. This table is used for reporting, billing, and reconciliation in WMS and financial processes."
+  },
+  "erp_order_value": {
+    "table": "t_erpnext_order_stage",
+    "db": "secondary",
+    "keywords": [
+      "order value",
+      "erp order",
+      "expensive order",
+      "largest order",
+      "biggest order",
+      "currency code",
+      "average value",
+      "value of orders",
+      "average order amount",
+      "worth",
+      "priciest",
+      "highest value",
+      "highest-value order",
+      "lowest value",
+      "lowest-value order",
+      "smallest order",
+      "smallest value",
+      "minimum value",
+      "value in erp",
+      "erp system",
+      "entire erp",
+      "overall order",
+      "order price",
+      "average order cost",
+      "highest order amount",
+      "lowest order amount",
+      "lowest order cost",
+      "total sales value",
+      "total sales amount",
+      "total sales cost",
+      "total sales price"
+    ],
+    "columns": [
+      "order_id",
+      "customer_id",
+      "customer_name",
+      "order_value",
+      "currency_code",
+      "status"
+    ],
+    "joins": [],
+    "description": "ERP sales-order value questions — order value per customer, largest/most expensive orders, average order value — from ERPIntegrationDB.t_erpnext_order_stage (one row per order line; group by order_id).",
+    "conditions": {
+      "JOIN": []
+    }
+  },
+  "erp_wms_picking_sla": {
+    "table": "t_erpnext_order_stage",
+    "db": "secondary",
+    "keywords": [
+      "picking sla",
+      "started picking",
+      "picking breach",
+      "picking threshold",
+      "sla breach",
+      "hasn started",
+      "haven started",
+      "stuck in picking",
+      "orders stuck",
+      "after hours",
+      "longer than hours",
+      "picking limit",
+      "zero picks",
+      "picking overdue",
+      "picking waiting",
+      "open orders no picking",
+      "orders breaching sla"
+    ],
+    "columns": [
+      "order_id",
+      "customer_id",
+      "customer_name",
+      "order_value",
+      "currency_code",
+      "status",
+      "delivery_status",
+      "delivery_date",
+      "order_created_at",
+      "order_number",
+      "wh_id",
+      "item_number",
+      "status",
+      "planned_quantity",
+      "picked_quantity",
+      "staged_quantity",
+      "loaded_quantity",
+      "shipped_quantity"
+    ],
+    "joins": [
+      {
+        "table": "t_pick_detail",
+        "db": "primary",
+        "on": "t_pick_detail.order_number COLLATE SQL_Latin1_General_CP1_CI_AS = t_erpnext_order_stage.order_id COLLATE SQL_Latin1_General_CP1_CI_AS"
+      }
+    ],
+    "description": "Open ERP orders whose WMS picking has not started (picked quantity 0) within the SLA window, measured from the ERP order_created_at.",
+    "conditions": {
+      "JOIN": [
+        "t_pick_detail.order_number COLLATE SQL_Latin1_General_CP1_CI_AS = t_erpnext_order_stage.order_id COLLATE SQL_Latin1_General_CP1_CI_AS"
+      ]
+    }
+  },
+  "erp_wms_delivery_risk": {
+    "table": "t_erpnext_order_stage",
+    "db": "secondary",
+    "keywords": [
+      "delivery risk",
+      "late delivery",
+      "delivery deadline",
+      "delivery commitment",
+      "required delivery",
+      "due today",
+      "delivery status",
+      "order risk",
+      "orders at risk",
+      "risk of missing",
+      "miss their delivery",
+      "delivery deadlines",
+      "delivery date missed",
+      "orders due soon",
+      "orders close to delivery",
+      "orders near deadline",
+      "fully loaded"
+    ],
+    "columns": [
+      "order_id",
+      "customer_id",
+      "customer_name",
+      "order_value",
+      "currency_code",
+      "status",
+      "delivery_status",
+      "delivery_date",
+      "order_created_at",
+      "order_number",
+      "wh_id",
+      "item_number",
+      "status",
+      "planned_quantity",
+      "picked_quantity",
+      "staged_quantity",
+      "loaded_quantity",
+      "shipped_quantity"
+    ],
+    "joins": [
+      {
+        "table": "t_pick_detail",
+        "db": "primary",
+        "on": "t_pick_detail.order_number COLLATE SQL_Latin1_General_CP1_CI_AS = t_erpnext_order_stage.order_id COLLATE SQL_Latin1_General_CP1_CI_AS"
+      }
+    ],
+    "description": "ERP orders at risk of missing their delivery_date given how far WMS picking, staging and loading have progressed.",
+    "conditions": {
+      "JOIN": [
+        "t_pick_detail.order_number COLLATE SQL_Latin1_General_CP1_CI_AS = t_erpnext_order_stage.order_id COLLATE SQL_Latin1_General_CP1_CI_AS"
+      ]
+    }
+  },
+  "erp_wms_execution_status": {
+    "table": "t_erpnext_order_stage",
+    "db": "secondary",
+    "keywords": [
+      "order not started",
+      "execution status",
+      "order stage",
+      "erp status",
+      "wms status",
+      "fulfillment status",
+      "sal-ord-",
+      "erp shows",
+      "erp says",
+      "active in wms",
+      "wms still",
+      "erp but still"
+    ],
+    "columns": [
+      "order_id",
+      "customer_id",
+      "customer_name",
+      "order_value",
+      "currency_code",
+      "status",
+      "delivery_status",
+      "delivery_date",
+      "order_created_at",
+      "order_number",
+      "wh_id",
+      "item_number",
+      "status",
+      "planned_quantity",
+      "picked_quantity",
+      "staged_quantity",
+      "loaded_quantity",
+      "shipped_quantity"
+    ],
+    "joins": [
+      {
+        "table": "t_pick_detail",
+        "db": "primary",
+        "on": "t_pick_detail.order_number COLLATE SQL_Latin1_General_CP1_CI_AS = t_erpnext_order_stage.order_id COLLATE SQL_Latin1_General_CP1_CI_AS"
+      }
+    ],
+    "description": "An order's ERP status side by side with its WMS execution status (not yet in WMS, picking, picked, staged, loaded, shipped).",
+    "conditions": {
+      "JOIN": [
+        "t_pick_detail.order_number COLLATE SQL_Latin1_General_CP1_CI_AS = t_erpnext_order_stage.order_id COLLATE SQL_Latin1_General_CP1_CI_AS"
+      ]
+    }
+  },
+  "erp_closed_active_in_wms": {
+    "table": "t_erpnext_order_stage",
+    "db": "secondary",
+    "keywords": [
+      "cancelled orders in wms",
+      "erp cancelled",
+      "erp closed",
+      "still active",
+      "still released",
+      "still being processed",
+      "stopped in wms",
+      "closed but",
+      "cancelled but active",
+      "orders cancelled not done",
+      "cancelled orders still open",
+      "cancelled orders in picking",
+      "orders cancelled not finished",
+      "wms active on closed",
+      "wms active on cancelled",
+      "cancelled orders still staged",
+      "orders cancelled not stopped",
+      "wms work on closed",
+      "wms work on cancelled",
+      "cancelled orders not complete"
+    ],
+    "columns": [
+      "order_id",
+      "customer_id",
+      "customer_name",
+      "order_value",
+      "currency_code",
+      "status",
+      "delivery_status",
+      "delivery_date",
+      "order_created_at",
+      "order_number",
+      "wh_id",
+      "item_number",
+      "status",
+      "planned_quantity",
+      "picked_quantity",
+      "staged_quantity",
+      "loaded_quantity",
+      "shipped_quantity"
+    ],
+    "joins": [
+      {
+        "table": "t_pick_detail",
+        "db": "primary",
+        "on": "t_pick_detail.order_number COLLATE SQL_Latin1_General_CP1_CI_AS = t_erpnext_order_stage.order_id COLLATE SQL_Latin1_General_CP1_CI_AS"
+      }
+    ],
+    "description": "Orders closed or cancelled in ERP that still have open or active work in WMS.",
+    "conditions": {
+      "JOIN": [
+        "t_pick_detail.order_number COLLATE SQL_Latin1_General_CP1_CI_AS = t_erpnext_order_stage.order_id COLLATE SQL_Latin1_General_CP1_CI_AS"
+      ]
+    }
   }
 }

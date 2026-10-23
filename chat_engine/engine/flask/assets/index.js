@@ -228,20 +228,42 @@ function pushFeedbackOnce() {
 // new context-tracking. The backend does exactly one LLM call (only for a
 // free-text request; list/stop/email are handled with no LLM call at all) and
 // always replies with {type:"text",...}, the one shape the feed already renders.
+// The most recent question, if it was answered by the prediction pipeline.
+function _latestPredictionTurn() {
+    const messages = uE(YE);
+    for (let i = messages.length - 1; i >= 0; i--) {
+        const m = messages[i];
+        if (m.type !== "user_question") continue;
+        return m.kind === "prediction" ? m : null;
+    }
+    return null;
+}
+
 async function handleSlashCommand(text) {
+    // Taken before this message joins the feed, so "this" means the turn before it.
+    const lastPrediction = _latestPredictionTurn();
     Se({ type: "user_question", question: text, question_id: null });
-    const prior = fT(); // {question, question_id, sql} or null
+    // A prediction answer has no SQL, so it sends its own question and lets the
+    // server re-run the check that answered it.
+    const prior = lastPrediction ? { question: lastPrediction.question, question_id: null, sql: null } : fT();
     const workspaceId = getWorkspaceIdFromUrl() || getCurrentWorkspaceId();
     try {
         const res = await Pe("slash_command", "POST", {
             workspace_id: workspaceId,
             text,
             prior_question: prior?.question || null,
+            prior_kind: lastPrediction ? "prediction" : null,
             // The prior SQL is the context that makes a follow-up ("show me top 4")
             // resolvable — generate_sql already relies on it for interactive
             // follow-ups. Without it the stored agent re-runs the bare text cold at
             // fire time and the model has nothing to work from.
             prior_sql: prior?.sql || null,
+            // The thread's ORIGINAL question, when prior_question is itself a
+            // follow-up fragment — e.g. scheduling right after "show me top 4"
+            // would otherwise store just that phrase as the agent's question,
+            // meaningless on its own in an email read days later. null when
+            // prior_question already IS the root (nothing to add).
+            main_question: _resolveMainQuestion(prior?.question_id, prior?.question),
         });
         Se({ type: "text", text: res.text || res.error || "Something went wrong." });
     } catch (e) {
@@ -257,7 +279,7 @@ async function handleSlashCommand(text) {
 // calling this again with the user's next reply (classify_message_route
 // forces the "prediction" route while one is open).
 async function handlePredictionQuery(text) {
-    Se({ type: "user_question", question: text, question_id: null });
+    Se({ type: "user_question", question: text, question_id: null, kind: "prediction" });
     const workspaceId = getWorkspaceIdFromUrl() || getCurrentWorkspaceId();
     try {
         const res = await Pe("run_matched_analysis", "POST", {
@@ -367,6 +389,9 @@ async function uT(E, L, existingQuestionId = null) {
         handleSlashCommand(trimmed);
         return;
     }
+    // Set when the backend recognises this message as a trained question — its
+    // stored SQL answers it as asked, so the follow-up rewrite below is skipped.
+    let isTrainedQuestion = false;
     if (trimmed) {
         // "/" is still an accepted fast path above, but it's no longer required —
         // a lightweight server-side classification call decides whether a plain
@@ -378,6 +403,7 @@ async function uT(E, L, existingQuestionId = null) {
         // Pe() never throws (it swallows errors into {type:"error"}), so a
         // classification failure naturally fails open into the RAG flow below.
         const routeRes = await Pe("classify_message_route", "POST", { text: trimmed, workspace_id: workspaceId });
+        isTrainedQuestion = routeRes.trained === true;
         if (routeRes.route === "schedule") {
             handleSlashCommand(trimmed);
             return;
@@ -461,27 +487,44 @@ async function uT(E, L, existingQuestionId = null) {
     // Rewritten question logic (if follow-up) — purely a display/SQL-quality aid
     // (rewrites ambiguous phrasing like "show me top 4" into something standalone);
     // unrelated to the grouping decision above.
-    if (T) {
-        const rewrittenRes = await Pe("generate_rewritten_question", "GET", {
+    //
+    // Nothing downstream reads its result (generate_sql gets E, not the rewrite),
+    // so it used to cost a full LLM round trip before generate_sql even started.
+    // Now: skipped for a trained question, otherwise run alongside generate_sql
+    // and still shown first. get_function is only consulted when function
+    // generation is on, so it's only called then.
+    const rewritePromise = (T && !isTrainedQuestion)
+        ? Pe("generate_rewritten_question", "GET", {
             last_question: T,
             new_question: E,
             sql: L,
             workspace: workspaceName
+        })
+        : Promise.resolve(null);
+    const functionRes = e.function_generation
+        ? await Pe("get_function", "GET", { question: E, workspace: workspaceName })
+        : null;
+    const sqlPromise = (functionRes && functionRes.type === "function")
+        ? null
+        : Pe("generate_sql", "GET", {
+            question: E,
+            workspace: workspaceName,
+            ...(parentQuestionId ? { parent_question_id: parentQuestionId } : {})
         });
-        if (
-            rewrittenRes.type === "rewritten_question" &&
-            rewrittenRes.question !== E
-        ) {
-            Se(rewrittenRes);
-        }
+
+    const rewrittenRes = await rewritePromise;
+    if (
+        rewrittenRes &&
+        rewrittenRes.type === "rewritten_question" &&
+        rewrittenRes.question !== E
+    ) {
+        Se(rewrittenRes);
     }
 
-    // Try to use function first if enabled
-    const functionRes = await Pe("get_function", "GET", { question: E, workspace: workspaceName });
     let r; // backend-generated ID
     let finalSql = null;
 
-    if (e.function_generation && functionRes.type === "function") {
+    if (functionRes && functionRes.type === "function") {
         Se(functionRes);
         r = functionRes.id;
         GE.set(functionRes.id);
@@ -489,11 +532,7 @@ async function uT(E, L, existingQuestionId = null) {
         LAST_USED_SQL = finalSql;
         Et.set(finalSql);
     } else {
-        const sqlRes = await Pe("generate_sql", "GET", {
-            question: E,
-            workspace: workspaceName,
-            ...(parentQuestionId ? { parent_question_id: parentQuestionId } : {})
-        });
+        const sqlRes = await sqlPromise;
         if (sqlRes.type === "write_confirmation") {
             try { renderWriteConfirmationModal(sqlRes, workspaceId); } catch (e) { console.error("write confirmation modal failed:", e); }
             return;
@@ -1131,7 +1170,31 @@ function yn() {
     }
 
     return lastQuestionMsg?.question || null;
-}function fT() {
+}
+
+// Walks parent_question_id back to a thread's first question — same
+// resolution _resolveThreadRoot uses above for FAQ/history grouping — so a
+// scheduled agent created from mid-thread follow-up text ("show me top 4")
+// can report what it was really about in its confirmation and emails, not
+// just that fragment on its own. Returns null (not currentQuestionText) when
+// the root IS the current question, so the caller can tell "no broader
+// thread" apart from "thread root happens to equal this text".
+function _resolveMainQuestion(questionId, currentQuestionText) {
+    if (!questionId) return null;
+    const list = uE(CT);
+    let current = list.find(q => q.question_id === questionId);
+    let guard = 0;
+    while (current && current.parent_question_id && guard < 50) {
+        const next = list.find(q => q.question_id === current.parent_question_id);
+        if (!next) break;
+        current = next;
+        guard++;
+    }
+    if (!current || !current.question) return null;
+    return current.question !== currentQuestionText ? current.question : null;
+}
+
+function fT() {
     const messages = uE(YE);
     let lastQuestionMsg = null;
     let lastSqlMsg = null;
@@ -1381,7 +1444,7 @@ function Yn() {
 
 function wT(){
     
-    Se({type:"feedback_incorrect"}),Se({type:"user_sql"})}function $n(E){at("chart_modification"),Se({type:"user_question",question:"Update the chart with these instructions: "+E}),Pe("generate_plotly_figure","GET",{id:uE(GE),chart_instructions:E}).then(Se)}function xn(){var E=new WebSocket("ws://"+window.location.host+"/api/v0/log");E.onopen=function(){console.log("Connected to WebSocket server at /log.")},E.onmessage=function(e){console.log("Received message:",e.data);try{var T=JSON.parse(e.data)}catch(r){console.error("Error parsing JSON:",r);return}var t=document.getElementById("log-contents");t&&(t.innerHTML+="<details> <summary>"+T.title+"</summary> "+JSON.stringify(T.message)+"</details> <br>")},E.onclose=function(e){console.log("WebSocket connection closed:",e)},E.onerror=function(e){console.error("WebSocket error:",e)}}function $T(E,e,T){const t=E.slice();return t[3]=e[T],t}function xT(E){let e,T,t,r;return{c(){e=f("li"),T=f("button"),T.innerHTML=`<svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="1.5" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M4.26 10.147a60.436 60.436 0 00-.491 6.347A48.627 48.627 0 0112 20.904a48.627 48.627 0 018.232-4.41 60.46 60.46 0 00-.491-6.347m-15.482 0a50.57 50.57 0 00-2.658-.813A59.905 59.905 0 0112 3.493a59.902 59.902 0 0110.399 5.84c-.896.248-1.783.52-2.658.814m-15.482 0A50.697 50.697 0 0112 13.489a50.702 50.702 0 017.74-3.342M6.75 15a.75.75 0 100-1.5.75.75 0 000 1.5zm0 0v-3.675A55.378 55.378 0 0112 8.443m-7.007 11.55A5.981 5.981 0 006.75 15.75v-1.5"></path></svg>
+    Se({type:"feedback_incorrect"}),Se({type:"user_sql"})}function $n(E){at("chart_modification"),Se({type:"user_question",question:"Update the chart with these instructions: "+E}),Pe("generate_plotly_figure","GET",{id:uE(GE),chart_instructions:E}).then(Se)}function xn(){var E=new WebSocket((window.location.protocol==="https:"?"wss://":"ws://")+window.location.host+"/api/v0/log");E.onopen=function(){console.log("Connected to WebSocket server at /log.")},E.onmessage=function(e){console.log("Received message:",e.data);try{var T=JSON.parse(e.data)}catch(r){console.error("Error parsing JSON:",r);return}var t=document.getElementById("log-contents");t&&(t.innerHTML+="<details> <summary>"+T.title+"</summary> "+JSON.stringify(T.message)+"</details> <br>")},E.onclose=function(e){console.log("WebSocket connection closed:",e)},E.onerror=function(e){console.error("WebSocket error:",e)}}function $T(E,e,T){const t=E.slice();return t[3]=e[T],t}function xT(E){let e,T,t,r;return{c(){e=f("li"),T=f("button"),T.innerHTML=`<svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="1.5" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M4.26 10.147a60.436 60.436 0 00-.491 6.347A48.627 48.627 0 0112 20.904a48.627 48.627 0 018.232-4.41 60.46 60.46 0 00-.491-6.347m-15.482 0a50.57 50.57 0 00-2.658-.813A59.905 59.905 0 0112 3.493a59.902 59.902 0 0110.399 5.84c-.896.248-1.783.52-2.658.814m-15.482 0A50.697 50.697 0 0112 13.489a50.702 50.702 0 017.74-3.342M6.75 15a.75.75 0 100-1.5.75.75 0 000 1.5zm0 0v-3.675A55.378 55.378 0 0112 8.443m-7.007 11.55A5.981 5.981 0 006.75 15.75v-1.5"></path></svg>
               Functions`,a(T,"class","flex items-center gap-x-3 py-2 px-3 text-sm text-slate-700 rounded-md hover:bg-gray-100 dark:hover:bg-gray-900 dark:text-slate-400 dark:hover:text-slate-300 border border-gray-200 dark:border-gray-700 w-full")},m(R,n){V(R,e,n),l(e,T),t||(r=Ne(T,"click",cT),t=!0)},d(R){R&&Y(e),t=!1,r()}}}function XT(E){let e,T,t,r;return{c(){e=f("li"),T=f("button"),T.innerHTML=`<svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="1.5" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M4.26 10.147a60.436 60.436 0 00-.491 6.347A48.627 48.627 0 0112 20.904a48.627 48.627 0 018.232-4.41 60.46 60.46 0 00-.491-6.347m-15.482 0a50.57 50.57 0 00-2.658-.813A59.905 59.905 0 0112 3.493a59.902 59.902 0 0110.399 5.84c-.896.248-1.783.52-2.658.814m-15.482 0A50.697 50.697 0 0112 13.489a50.702 50.702 0 017.74-3.342M6.75 15a.75.75 0 100-1.5.75.75 0 000 1.5zm0 0v-3.675A55.378 55.378 0 0112 8.443m-7.007 11.55A5.981 5.981 0 006.75 15.75v-1.5"></path></svg>
               Training Data`,a(T,"class","flex items-center gap-x-3 py-2 px-3 text-sm text-slate-700 rounded-md hover:bg-gray-100 dark:hover:bg-gray-900 dark:text-slate-400 dark:hover:text-slate-300 border border-gray-200 dark:border-gray-700 w-full")},m(R,n){V(R,e,n),l(e,T),t||(r=Ne(T,"click",hR),t=!0)},d(R){R&&Y(e),t=!1,r()}}}function kT(E){let e,T,t,r,R,n=_faqRowLabel(E[3]),s,S,A,o;function i(){const row=E[3];if(_faqChildCount(row)>0&&!row.parent_question_id&&!row._expanded){_faqExpand(row.question_id)}return E[2](row)}return{c(){e=f("li"),T=f("button"),t=OE("svg"),r=OE("path"),R=$(),s=te(n),S=$(),a(r,"stroke-linecap","round"),a(r,"stroke-linejoin","round"),a(r,"d","M7.5 8.25h9m-9 3H12m-9.75 1.51c0 1.6 1.123 2.994 2.707 3.227 1.129.166 2.27.293 3.423.379.35.026.67.21.865.501L12 21l2.755-4.133a1.14 1.14 0 01.865-.501 48.172 48.172 0 003.423-.379c1.584-.233 2.707-1.626 2.707-3.228V6.741c0-1.602-1.123-2.995-2.707-3.228A48.394 48.394 0 0012 3c-2.392 0-4.744.175-7.043.513C3.373 3.746 2.25 5.14 2.25 6.741v6.018z"),a(t,"class","w-3.5 h-3.5"),a(t,"fill","none"),a(t,"stroke","currentColor"),a(t,"stroke-width","1.5"),a(t,"viewBox","0 0 24 24"),a(t,"xmlns","http://www.w3.org/2000/svg"),a(t,"aria-hidden","true"),
               a(T,"class","flex items-center text-left gap-x-3 py-2 px-3 text-sm text-slate-700 rounded-md hover:bg-gray-100 dark:hover:bg-gray-900 dark:text-slate-400 dark:hover:text-slate-300"),a(e,"style",_faqRowHidden(E[3])?"display:none":"")},m(_,c){V(_,e,c),l(e,T),l(T,t),l(t,r),l(T,R),l(T,s),l(e,S),A||(o=Ne(T,"click",i),A=!0)},p(_,c){E=_,c&2&&a(e,"style",_faqRowHidden(E[3])?"display:none":""),c&2&&n!==(n=_faqRowLabel(E[3]))&&Le(s,n)},d(_){_&&Y(e),A=!1,o()}}}function Xn(E){let e,T,t,r,R,n,s,S,A,o,i,_,c,P,p,C,L,I,u,H,b,M=E[0].version+"",O,N,D,B,h,G=E[0].function_generation&&xT(),F=E[0].show_training_data&&XT(),W=De(E[1]),x=[];for(let J=0;J<W.length;J+=1)x[J]=kT($T(E,W,J));return{c(){e=f("div"),T=f("nav"),t=f("div"),r=f("img"),n=$(),s=f("div"),s.innerHTML='<button type="button" class="w-8 h-8 inline-flex justify-center items-center gap-2 rounded-md text-gray-700 align-middle focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-offset-white focus:ring-blue-600 transition-all dark:text-gray-400 dark:focus:ring-offset-gray-800" data-hs-overlay="#application-sidebar" aria-controls="application-sidebar" aria-label="Toggle navigation"><svg class="w-4 h-4" width="16" height="16" fill="currentColor" viewBox="0 0 16 16"><path d="M2.146 2.854a.5.5 0 1 1 .708-.708L8 7.293l5.146-5.147a.5.5 0 0 1 .708.708L8.707 8l5.147 5.146a.5.5 0 0 1-.708.708L8 8.707l-5.146 5.147a.5.5 0 0 1-.708-.708L7.293 8 2.146 2.854Z"></path></svg> <span class="sr-only">Sidebar</span></button>',S=$(),A=f("div"),o=f("ul"),G&&G.c(),i=$(),F&&F.c(),_=$(),c=f("li"),P=f("button"),P.innerHTML=`<svg class="w-3.5 h-3.5" xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="currentColor" viewBox="0 0 16 16"><path fill-rule="evenodd" clip-rule="evenodd" d="M8 2C8.47339 2 8.85714 2.38376 8.85714 2.85714V7.14286L13.1429 7.14286C13.6162 7.14286 14 7.52661 14 8C14 8.47339 13.6162 8.85714 13.1429 8.85714L8.85714 8.85715V13.1429C8.85714 13.6162 8.47339 14 8 14C7.52661 14 7.14286 13.6162 7.14286 13.1429V8.85715L2.85714 8.85715C2.38376 8.85715 2 8.4734 2 8.00001C2 7.52662 2.38376 7.14287 2.85714 7.14287L7.14286 7.14286V2.85714C7.14286 2.38376 7.52661 2 8 2Z" fill="currentColor"></path></svg>
@@ -1406,13 +1469,16 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
 const voices = [];
  
 function loadVoices() {
+    // Guarded: some embedded webviews (e.g. Teams mobile) have no speechSynthesis
+    // at all, and an unguarded access here would stop the whole bundle loading.
+    if (!window.speechSynthesis) return;
     const availableVoices = window.speechSynthesis.getVoices();
     voices.push(...availableVoices);
     voicesLoaded = true;
 }
  
 // Listen for voices to be loaded
-if (window.speechSynthesis.onvoiceschanged !== undefined) {
+if (window.speechSynthesis && window.speechSynthesis.onvoiceschanged !== undefined) {
     window.speechSynthesis.onvoiceschanged = loadVoices;
 }
  
@@ -1422,6 +1488,12 @@ loadVoices();
          
  
          function er(E){
+    // In Teams (and wherever the browser can't speak) replies are read out by
+    // the server's text-to-speech instead — see window.waiVoice in index.html.
+    if(window.waiVoice && window.waiVoice.useServerSpeech()){
+        window.waiVoice.speak(E);
+        return;
+    }
     if("speechSynthesis"in window){
         const e=new SpeechSynthesisUtterance(E);
         const voiceSelect = document.getElementById('voice-language-select');

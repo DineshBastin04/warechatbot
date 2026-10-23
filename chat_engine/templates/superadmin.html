@@ -819,9 +819,10 @@
             throw new Error(`Server returned ${resp.status}: ${errTxt || resp.statusText}`);
           }
 
-          // expecting a JSON array of workspace names: ["ISN-TEST","Dummy1","Dummy2"]
+          // /api/workspaces returns [{id, name}] (older servers returned bare names)
           const data = await resp.json();
-          const workspaces = Array.isArray(data) ? data : [];
+          const workspaces = (Array.isArray(data) ? data : [])
+            .map(w => (w && typeof w === 'object') ? w : { id: w, name: w });
 
           if (!workspaces || workspaces.length === 0) {
             [document.getElementById('workspaceSelectPrediction'), document.getElementById('workspaceSelectAnomaly'), document.getElementById('workspaceSelect')].forEach(s => { if (s) s.innerHTML = '<option disabled>No workspaces found</option>'; });
@@ -829,17 +830,16 @@
             return;
           }
 
-          // helper label (here the item is already a name string)
-          const getLabel = (w) => (w || '(no name)').toString();
+          const getLabel = (w) => (w.name || '(no name)').toString();
 
           // populate prediction select (if present)
           const wsPred = document.getElementById('workspaceSelectPrediction');
           if (wsPred) {
             workspaces.forEach(w => {
               const opt = document.createElement('option');
-              opt.value = w || '';
-              opt.textContent = getLabel(w) + (w ? ` — ${w}` : '');
-              opt.title = getLabel(w);
+              opt.value = w.id || '';
+              opt.textContent = getLabel(w);
+              opt.title = w.id || '';
               wsPred.appendChild(opt);
             });
             wsPred.selectedIndex = 0;
@@ -850,9 +850,9 @@
           if (wsAnom) {
             workspaces.forEach(w => {
               const opt = document.createElement('option');
-              opt.value = w || '';
-              opt.textContent = getLabel(w) + (w ? ` — ${w}` : '');
-              opt.title = getLabel(w);
+              opt.value = w.id || '';
+              opt.textContent = getLabel(w);
+              opt.title = w.id || '';
               wsAnom.appendChild(opt);
             });
             wsAnom.selectedIndex = 0;
@@ -862,10 +862,10 @@
           const wsAdd = document.getElementById('workspaceSelect');
           if (wsAdd) {
             workspaces.forEach(w => {
+              // users are assigned to a workspace by name
               const opt = document.createElement('option');
-              opt.value = w || '';
-              opt.textContent = getLabel(w) + (w ? ` — ${w}` : '');
-              opt.title = getLabel(w);
+              opt.value = w.name || '';
+              opt.textContent = getLabel(w);
               wsAdd.appendChild(opt);
             });
             wsAdd.selectedIndex = 0;
@@ -1129,6 +1129,9 @@
               <label for="password">Password</label>
               <input type="password" id="password" placeholder="Enter password" required>
 
+              <label for="email">Email (used to sign in from Microsoft Teams)</label>
+              <input type="email" id="email" placeholder="name@company.com">
+
               <label for="roleSelect">Role</label>
               <select id="roleSelect" required>
                 <option value="" disabled selected>Select role</option>
@@ -1299,6 +1302,7 @@
               <tr>
                 <th>Username</th>
                 <th>Workspace</th>
+                <th>Teams email</th>
                 <th>Access</th>
                 <th>Actions</th>
               </tr>
@@ -1321,6 +1325,37 @@
             const tdWs = document.createElement('td');
             tdWs.textContent = workspace;
             tr.appendChild(tdWs);
+
+            // Teams email (links the account to a Microsoft Teams sign-in)
+            const tdEmail = document.createElement('td');
+            const emailText = document.createElement('span');
+            emailText.textContent = (u.email || 'not set') + (u.teams_linked ? ' ✔' : '');
+            const emailBtn = document.createElement('button');
+            emailBtn.type = 'button';
+            emailBtn.textContent = 'Edit';
+            emailBtn.style.marginLeft = '6px';
+            emailBtn.addEventListener('click', async () => {
+              const next = prompt('Email this user signs in to Microsoft Teams with (leave empty to clear):', u.email || '');
+              if (next === null) return;
+              try {
+                const resp = await fetch('/api/update_user', {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify({ user_id: id, email: next.trim() })
+                });
+                const body = await resp.json().catch(() => ({}));
+                if (!resp.ok || body.error) throw new Error(body.error || resp.statusText);
+                u.email = body.email || '';
+                u.teams_linked = false;
+                emailText.textContent = u.email || 'not set';
+                showToast('Email updated');
+              } catch (err) {
+                showToast('Error updating email: ' + err.message);
+              }
+            });
+            tdEmail.appendChild(emailText);
+            tdEmail.appendChild(emailBtn);
+            tr.appendChild(tdEmail);
 
             // Access toggle cell
             const tdToggle = document.createElement('td');
@@ -1434,12 +1469,13 @@
           const password = document.getElementById("password").value.trim();
           const role = document.getElementById("roleSelect").value;
           const workspace = document.getElementById("workspaceSelect").value;
+          const email = document.getElementById("email").value.trim();
           // const tables = Array.from(document.querySelectorAll('input[name="allowedTables"]:checked')).map(checkbox => checkbox.value);
 
           fetch("/api/add_user", {
               method: "POST",
               headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({ username, password, role, workspace }) // , tables
+              body: JSON.stringify({ username, password, role, workspace, email }) // , tables
           })
           .then(res => res.json())
           .then(data => {
