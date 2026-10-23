@@ -10039,7 +10039,7 @@ Runs {e(schedule_desc)}.</div></td></tr>
             # does before treating it as a plain data question.
             if analysis is None and question_en:
                 schedule_ws_meta = get_workspace_metadata(self, workspace_id) or {}
-                matched_perf_cfgs = _match_performance_configs(
+                matched_perf_cfgs = self._match_performance_configs(
                     question_en, schedule_ws_meta, schedule_ws_meta.get("name") or str(workspace_id)
                 )
                 if matched_perf_cfgs:
